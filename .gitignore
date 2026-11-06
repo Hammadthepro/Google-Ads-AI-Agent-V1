@@ -1,0 +1,47 @@
+# Secrets & local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+client_secret*.json
+google-ads.yaml
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+.vite/
+coverage/
+
+# Playwright / test output
+playwright-report/
+test-results/
+e2e/.auth/
+
+# Celery / runtime
+celerybeat-schedule*
+*.pid
+*.log
+
+# Editors & OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
