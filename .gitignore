@@ -45,3 +45,7 @@ celerybeat-schedule*
 *.swp
 .DS_Store
 Thumbs.db
+
+# Local Supabase / database credentials
+.env.supabase
+*.env.local
