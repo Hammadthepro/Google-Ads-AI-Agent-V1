@@ -62,7 +62,7 @@ def create_app() -> FastAPI:
                   docs_url="/api/docs" if s.APP_ENV != "production" else None, openapi_url="/api/openapi.json")
     app.add_middleware(CORSMiddleware, allow_origins=s.cors_origins, allow_credentials=True,
                        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"], allow_headers=["Content-Type", "X-CSRF-Token"])
-    limiter = RateLimiter()
+    limiter = RateLimiter(limit=s.RATE_LIMIT_PER_MINUTE)
     app.state.limiter = limiter
 
     @app.middleware("http")
@@ -72,7 +72,7 @@ def create_app() -> FastAPI:
         ip = request.client.host if request.client else ""
         ip_var.set(ip)
         strict = "/auth/" in request.url.path
-        if not limiter.hit(f"{'auth' if strict else 'api'}:{ip}", 30 if strict else None):
+        if not limiter.hit(f"{'auth' if strict else 'api'}:{ip}", s.AUTH_RATE_LIMIT_PER_MINUTE if strict else None):
             return JSONResponse({"error": {"code": "rate_limited", "message": "Too many requests"}}, status_code=429)
         response = await call_next(request)
         response.headers["X-Request-ID"] = rid

@@ -122,6 +122,17 @@ def reset(include_users: bool = False) -> None:
 def _mock_world(db) -> None:
     today = clock.today()
     db.add(MockCustomer(customer_id=MCC, descriptive_name="Napollo Agency MCC (SIMULATED)", is_manager=True))
+    # an empty, unlinked account used when onboarding a brand-new client
+    db.add(MockCustomer(customer_id="1110000004", descriptive_name="New Client Sandbox (SIMULATED)", manager_customer_id=MCC,
+                        auto_tagging_enabled=True))
+    db.add(MockResource(customer_id="1110000004", resource_type="conversion_action", resource_id=9001,
+                        resource_name="customers/1110000004/conversionActions/9001", status="ENABLED",
+                        data={"name": "Website lead form", "type": "WEBPAGE", "category": "SUBMIT_LEAD_FORM", "counting_type": "ONE_PER_CLICK",
+                              "primary_for_goal": True, "origin": "WEBSITE"}))
+    db.add(MockResource(customer_id="1110000004", resource_type="conversion_action", resource_id=9002,
+                        resource_name="customers/1110000004/conversionActions/9002", status="ENABLED",
+                        data={"name": "Calls from ads", "type": "AD_CALL", "category": "PHONE_CALL_LEAD", "counting_type": "ONE_PER_CLICK",
+                              "primary_for_goal": True, "phone_call_duration_seconds": 60, "origin": "CALL_FROM_ADS"}))
     rid = 10000
     for acc in ACCOUNTS:
         cid = acc["cid"]

@@ -79,30 +79,60 @@ def _existing_identity(res: dict) -> tuple:
 
 
 def reconcile(db: Session, op_row: Operation) -> Operation:
-    """Read the account and decide whether an UNKNOWN operation was applied. Never re-sends blindly."""
+    """Read the account and decide whether an UNKNOWN operation was applied. Never re-sends blindly.
+
+    Mutates are atomic, so the decision is made on uniquely identifiable ANCHOR resources (budget, campaign,
+    ad groups, criteria and ads under resolved parents). Assets (not unique by content) are resolved only through
+    their link to the reconciled campaign.
+    """
     ads = registry.get("google_ads")
     cid = op_row.request_payload["customer_id"]
     ops = op_row.request_payload["operations"]
     creates = [o for o in ops if o["op"] == "create"]
     cache: dict[str, list[dict]] = {}
-    temp_map: dict[str, str] = {}
-    found = []
-    for o in creates:
-        rt = o["resource"]
+
+    def listing(rt):
         if rt not in cache:
             cache[rt] = ads.list_resources(cid, rt)
+        return cache[rt]
+    temp_map: dict[str, str] = {}
+    found: dict[int, str] = {}
+    anchors = [i for i, o in enumerate(creates) if o["resource"] not in ("asset", "campaign_asset")]
+    for i in anchors:
+        o = creates[i]
         ident = _identity(o, temp_map)
-        match = next((r for r in cache[rt] if _existing_identity(r) == ident), None)
+        match = next((r for r in listing(o["resource"]) if _existing_identity(r) == ident), None)
         if match:
-            found.append({"op": "create", "resource": rt, "resource_name": match["resource_name"], "temp_id": o.get("temp_id")})
+            found[i] = match["resource_name"]
             if o.get("temp_id"):
                 temp_map[str(o["temp_id"])] = match["resource_name"]
+    for i, o in enumerate(creates):  # assets: only via the reconciled campaign's links
+        if o["resource"] != "asset":
+            continue
+        link = next((x for x in creates if x["resource"] == "campaign_asset" and (x.get("fields") or {}).get("asset") == f"temp:{o.get('temp_id')}"), None)
+        camp = temp_map.get(((link or {}).get("fields") or {}).get("campaign", "")[5:]) if link else None
+        if not camp:
+            continue
+        linked = {r.get("asset") for r in listing("campaign_asset") if r.get("campaign") == camp
+                  and r.get("field_type") == link["fields"].get("field_type")}
+        match = next((r for r in listing("asset") if r["resource_name"] in linked and _existing_identity(r) == _identity(o, temp_map)), None)
+        if match:
+            found[i] = match["resource_name"]
+            temp_map[str(o["temp_id"])] = match["resource_name"]
+    for i, o in enumerate(creates):
+        if o["resource"] == "campaign_asset":
+            match = next((r for r in listing("campaign_asset") if _existing_identity(r) == _identity(o, temp_map)), None)
+            if match:
+                found[i] = match["resource_name"]
     op_row.reconciled_at = clock.now()
+    anchors_found = sum(1 for i in anchors if i in found)
     if creates and len(found) == len(creates):
         op_row.state = "SUCCEEDED"
-        op_row.external_resource_names = [f["resource_name"] for f in found]
-        op_row.external_response = {"reconciled": True, "results": found}
-    elif not found:
+        results = [{"op": "create", "resource": o["resource"], "resource_name": found[i], "temp_id": o.get("temp_id")}
+                   for i, o in enumerate(creates)]
+        op_row.external_resource_names = [r["resource_name"] for r in results]
+        op_row.external_response = {"reconciled": True, "results": results}
+    elif anchors_found == 0:
         op_row.state = "NOT_APPLIED"
         op_row.error = "Reconciliation: nothing from this operation exists in the account; safe to re-submit."
     else:

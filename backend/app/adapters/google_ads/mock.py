@@ -249,7 +249,7 @@ class MockGoogleAdsAdapter(GoogleAdsAdapter):
     # ------------------------------------------------------------------ writes
     def mutate(self, customer_id: str, operations: list[dict], *, validate_only: bool = False,
                request_id: str = "") -> dict:
-        self._fail("mutate", customer_id)
+        self._fail("mutate", f"{customer_id}:{'validate' if validate_only else 'write'}")
         if not operations:
             raise InvalidInput("No operations", adapter=self.name)
         results: list[dict] = []

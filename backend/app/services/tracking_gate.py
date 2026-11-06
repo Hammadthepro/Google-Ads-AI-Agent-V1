@@ -138,15 +138,25 @@ def evaluate(db: Session, business: Business, actor: User | None = None) -> Trac
             conv = round(sum(r["conversions"] or 0 for r in rows), 1)
             clicks = sum(r["clicks"] for r in rows)
             recent = [r for r in rows if r["date"] >= (end - timedelta(days=6)).isoformat()]
-            recent_conv = sum(r["conversions"] or 0 for r in recent)
-            recent_clicks = sum(r["clicks"] for r in recent)
-            if conv >= need and not (recent_clicks >= 60 and recent_conv == 0):
+            sum(r["conversions"] or 0 for r in recent)
+            sum(r["clicks"] for r in recent)
+            cutoff = (end - timedelta(days=6)).isoformat()
+            broken_campaigns = []
+            for cid_ in ids:
+                c_rows = [r for r in rows if r["campaign_id"] == cid_]
+                c_recent = [r for r in c_rows if r["date"] >= cutoff]
+                if (sum(r["clicks"] for r in c_recent) >= 30 and sum(r["conversions"] or 0 for r in c_recent) == 0
+                        and sum(r["conversions"] or 0 for r in c_rows if r["date"] < cutoff) >= 2):
+                    broken_campaigns.append(cid_)
+            broken_recently = bool(broken_campaigns)
+            if conv >= need and not broken_recently:
                 recorded_status = "PASS"
                 ev = f"{conv} conversions from {clicks} clicks in the last 30 days"
-            elif (clicks >= 100 and conv == 0) or (recent_clicks >= 60 and recent_conv == 0):
+            elif (clicks >= 100 and conv == 0) or broken_recently:
                 recorded_status = "FAIL_CRITICAL"
-                ev = (f"{clicks} clicks, {conv} conversions in 30 days; last 7 days {recent_clicks} clicks / {recent_conv} conversions "
-                      "— tracking appears broken")
+                names = {c.external_id: c.name for c in camps}
+                ev = (f"{clicks} clicks, {conv} conversions in 30 days; conversions stopped in the last 7 days despite clicks in "
+                      f"{', '.join(names.get(x, x) for x in broken_campaigns) or 'all campaigns'} — tracking appears broken")
             else:
                 recorded_status = "FAIL"
                 ev = f"Only {conv} conversions recorded in 30 days (need {need} to verify)"

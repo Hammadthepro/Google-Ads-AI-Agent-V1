@@ -58,6 +58,17 @@ def check_url_safe(url: str, resolver=socket.getaddrinfo) -> None:
     host = p.hostname.lower()
     if host in ("localhost", "metadata.google.internal") or host.endswith((".internal", ".local", ".localhost")):
         raise SSRFBlocked(f"Host not allowed: {host}")
+    def _bad(ip) -> bool:
+        return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+                or ip.is_unspecified or str(ip) == "169.254.169.254")
+    try:
+        literal = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _bad(literal):
+            raise SSRFBlocked(f"IP address not allowed: {literal}")
+        return
     try:
         infos = resolver(host, p.port or (443 if p.scheme == "https" else 80))
     except socket.gaierror as exc:

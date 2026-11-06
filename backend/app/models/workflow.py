@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, JSONType, TimestampMixin, utcnow
@@ -211,7 +211,7 @@ class Operation(TimestampMixin, Base):
     operation_type: Mapped[str] = mapped_column(String(30))
     request_payload: Mapped[dict] = mapped_column(JSONType)
     payload_hash: Mapped[str] = mapped_column(String(64), default="")
-    state: Mapped[str] = mapped_column(String(16), default="PENDING")
+    state: Mapped[str] = mapped_column(String(24), default="PENDING")
     external_response: Mapped[dict] = mapped_column(JSONType, default=dict)
     external_resource_names: Mapped[list] = mapped_column(JSONType, default=list)
     verification_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

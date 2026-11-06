@@ -282,7 +282,7 @@ def upgrade() -> None:
     sa.Column('operation_type', sa.String(length=30), nullable=False),
     sa.Column('request_payload', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
     sa.Column('payload_hash', sa.String(length=64), nullable=False),
-    sa.Column('state', sa.String(length=16), nullable=False),
+    sa.Column('state', sa.String(length=24), nullable=False),
     sa.Column('external_response', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
     sa.Column('external_resource_names', sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), 'postgresql'), nullable=False),
     sa.Column('verification_passed', sa.Boolean(), nullable=True),

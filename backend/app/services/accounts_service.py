@@ -155,6 +155,9 @@ def sync_account(db: Session, account: GoogleAdsAccount) -> dict:
                 if h in by_host:
                     row.business_id = by_host[h].id
                     break
+        if row.business_id:
+            owner = db.get(Business, row.business_id)
+            row.client_id = owner.client_id if owner else account.client_id
         if row.landing_page_url == "" and hosts:
             row.landing_page_url = f"https://{sorted(hosts)[0]}/"
     for ca in ads.list_conversion_actions(cid):

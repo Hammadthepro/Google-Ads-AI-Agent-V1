@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173"
     SESSION_COOKIE_SECURE: bool = False
     SESSION_TTL_HOURS: int = 12
+    RATE_LIMIT_PER_MINUTE: int = 300
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 30
 
     # Login
     BOOTSTRAP_ADMIN_EMAIL: str = ""
