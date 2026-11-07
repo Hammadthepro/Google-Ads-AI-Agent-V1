@@ -6,6 +6,7 @@ import traceback
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.adapters import registry
 from app.adapters.base import AdapterError
@@ -119,7 +120,7 @@ class Runner:
 
     def step(self, name: str, fn):
         entry = {"name": name, "status": "RUNNING", "started_at": clock.now().isoformat()}
-        self.task.steps = [*self.task.steps, entry]
+        self.task.steps = [*self.task.steps, dict(entry)]  # store a copy: in-place mutation would hide the change
         self.task.current_step = name
         self.db.commit()
         try:
@@ -133,7 +134,8 @@ class Runner:
             raise
         finally:
             entry["finished_at"] = clock.now().isoformat()
-            self.task.steps = [*self.task.steps[:-1], dict(entry)]  # reassign so the JSON column is flagged dirty
+            self.task.steps = [*self.task.steps[:-1], dict(entry)]
+            flag_modified(self.task, "steps")
             self.db.commit()
 
     # ---------------------------------------------------------------- steps

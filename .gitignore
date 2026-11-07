@@ -49,3 +49,8 @@ Thumbs.db
 # Local Supabase / database credentials
 .env.supabase
 *.env.local
+
+# Redis local persistence
+dump.rdb
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo

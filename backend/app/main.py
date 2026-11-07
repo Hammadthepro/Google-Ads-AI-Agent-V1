@@ -71,7 +71,8 @@ def create_app() -> FastAPI:
         request_id_var.set(rid)
         ip = request.client.host if request.client else ""
         ip_var.set(ip)
-        strict = "/auth/" in request.url.path
+        # strict limit only for sign-in attempts (not for /auth/me or /auth/config, which every page loads)
+        strict = request.method == "POST" and request.url.path.rstrip("/").endswith(("/auth/dev-login", "/auth/google"))
         if not limiter.hit(f"{'auth' if strict else 'api'}:{ip}", s.AUTH_RATE_LIMIT_PER_MINUTE if strict else None):
             return JSONResponse({"error": {"code": "rate_limited", "message": "Too many requests"}}, status_code=429)
         response = await call_next(request)

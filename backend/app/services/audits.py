@@ -163,7 +163,9 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
         entry = {"name": c["name"], "website_url": c["website_url"]}
         if c["website_url"]:
             crawl = crawler_service.crawl(c["website_url"], max_pages=8, max_depth=1)
-            svc_pages = [p for p in crawl["pages"] if p["h1"] and " in " in p["h1"][0]]
+            # service pages only: skip the home page and brand headings ("X — trusted in City")
+            svc_pages = [p for p in crawl["pages"] if p["h1"] and " in " in p["h1"][0] and urlparse(p["url"]).path not in ("", "/")
+                         and "—" not in p["h1"][0] and normalize_term(c["name"]) not in normalize_term(p["h1"][0])]
             entry["services"] = sorted({p["h1"][0].split(" in ")[0] for p in svc_pages})
             entry["content_scores"] = [content_score(p, p["h1"][0].split(" in ")[0], ctx["city"]) for p in svc_pages[:4]]
             entry["offers_on_site"] = sorted({s for p in crawl["pages"] for s in re.findall(r"[^.]*(?:\$\d+|free|24/7|warranty|no fee)[^.]*\.",

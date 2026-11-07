@@ -87,6 +87,7 @@ def test_website_gbp_competitor_and_keyword_audits():
     comp = by_type["COMPETITOR"]["result"]
     rapid = next(c for c in comp["competitors"] if c["name"] == "Rapid Rooter Columbus")
     assert "Hydro Jetting" in rapid["services_client_lacks"]
+    assert all("—" not in s and "Rapid Rooter" not in s for s in rapid["services"])  # brand headings are not services
     assert comp["pasted_ads_analysis"]["verification"].startswith("Pasted by the team")
     assert any("$49" in o for o in comp["pasted_ads_analysis"]["offers"])
     kw = ana.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD"}).json()[0]["result"]

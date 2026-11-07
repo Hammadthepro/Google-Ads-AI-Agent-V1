@@ -203,6 +203,12 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
     monthly = float(fields.get("monthly_budget") or 0)
     daily_micros = to_micros(round(monthly / 30.4, 2))
     b_ref, c_ref = t.next(), t.next()
+    existing_names = {c.get("name") for c in registry.get("google_ads").list_campaigns(account.customer_id)}
+    name, n = draft["campaign_name"], 2
+    while name in existing_names:  # Google Ads requires unique campaign names; renaming is recorded on the card
+        name, n = f"{draft['campaign_name']} #{n}", n + 1
+    renamed = name != draft["campaign_name"]
+    draft = {**draft, "campaign_name": name}
     bidding = ({"maximize_conversions": {}} if draft["bidding_strategy"] == "MAXIMIZE_CONVERSIONS"
                else {"target_spend": {"cpc_bid_ceiling_micros": to_micros(float(fields.get("max_cpc") or 15))}})
     ops = [
@@ -269,7 +275,8 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
                         "keywords": sum(len(g.get("keywords", [])) for g in draft["ad_groups"]),
                         "negatives": len(negs) + len(PATTERN_NEGATIVES), "status_on_create": "PAUSED",
                         "network": "Google Search only (Search Partners and Display off)", "geo_target_type": "PRESENCE",
-                        "locations": fields.get("zip_codes") or f"{fields.get('radius_miles') or business.default_radius_miles} mile radius"},
+                        "locations": fields.get("zip_codes") or f"{fields.get('radius_miles') or business.default_radius_miles} mile radius",
+                        **({"renamed_to_avoid_duplicate": True} if renamed else {})},
             "internal": {"weekly_conversion_target": float(fields.get("weekly_target") or 0), "monthly_budget": monthly,
                          "business_id": business.id, "services": [g["service"] for g in draft["ad_groups"]]},
             "draft_ref": {"campaign_name": draft["campaign_name"]}}
