@@ -36,7 +36,7 @@ Without a Celery worker, set `CELERY_TASK_ALWAYS_EAGER=true`. Tasks then run in 
 Useful commands: `make reset-mock` (deterministic reseed), `python -m app.cli advance 7` (advance the simulated clock 7 days and run the daily jobs), `python -m app.cli create-super-admin you@company.com`.
 
 ## 3. Supabase as the primary database
-Project: **google-ads-ai-agent-v1** (ref `extfrctastbodivhiiei`, us-east-1). Schema already applied (Alembic head `0002`).
+Project: **google-ads-ai-agent-v1** (ref `extfrctastbodivhiiei`, us-east-1). Schema already applied (Alembic head `0003`).
 
 1. In Supabase → Project Settings → Database, **reset the database password** (the old one was shared in chat).
 2. Put the Session Pooler URL in your `.env` / server secrets, never in code. Percent-encode special characters (`@` → `%40`):
@@ -45,7 +45,7 @@ Project: **google-ads-ai-agent-v1** (ref `extfrctastbodivhiiei`, us-east-1). Sch
    ```
 3. Verify connectivity and migration state from your machine:
    ```bash
-   cd backend && .venv/bin/alembic current        # expect: 0002 (head)
+   cd backend && .venv/bin/alembic current        # expect: 0003 (head)
    .venv/bin/alembic check                        # expect: No new upgrade operations detected.
    curl -s localhost:8000/readyz                  # after starting the API: database ok
    ```

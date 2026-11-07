@@ -107,4 +107,25 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
         return self.ads._wrap(run)
 
     def suggest_geo_targets(self, zip_codes, country="US"):
-        raise AdapterError("GeoTargetConstantService lookup not yet verified for the real adapter", adapter=self.name)
+        """GeoTargetConstantService.SuggestGeoTargetConstants — ZIP codes -> Google location IDs (postal codes preferred)."""
+        def run():
+            client = self.ads.client()
+            svc = client.get_service("GeoTargetConstantService")
+            req = client.get_type("SuggestGeoTargetConstantsRequest")
+            req.locale = "en"
+            req.country_code = country
+            req.location_names.names.extend(zip_codes)
+            resp = svc.suggest_geo_target_constants(request=req)
+            best: dict[str, dict] = {}
+            for sug in resp.geo_target_constant_suggestions:
+                g = sug.geo_target_constant
+                term = sug.search_term or ""
+                row = {"zip": term, "geo_target_constant": g.resource_name, "name": g.canonical_name,
+                       "target_type": g.target_type, "simulated": False}
+                if term not in best or (g.target_type == "Postal Code" and best[term]["target_type"] != "Postal Code"):
+                    best[term] = row
+            missing = [z for z in zip_codes if z not in best]
+            if missing:
+                raise AdapterError(f"No Google location found for: {', '.join(missing)}", adapter=self.name)
+            return [best[z] for z in zip_codes]
+        return self.ads._wrap(run)

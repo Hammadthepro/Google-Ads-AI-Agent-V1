@@ -191,6 +191,7 @@ class Keyword(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("ad_group_id", "external_id"),)
     ad_group_id: Mapped[str] = mapped_column(ForeignKey("ad_groups.id", ondelete="CASCADE"), index=True)
     external_id: Mapped[str] = mapped_column(String(40))
+    external_resource_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
     text: Mapped[str] = mapped_column(String(200))
     match_type: Mapped[str] = mapped_column(String(10))
     status: Mapped[str] = mapped_column(String(16), default="PAUSED")

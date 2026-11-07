@@ -146,6 +146,7 @@ def sync_account(db: Session, account: GoogleAdsAccount) -> dict:
                     krow = Keyword(ad_group_id=grow.id, external_id=k["id"], text=kw.get("text", ""), match_type=kw.get("match_type", "EXACT"))
                     db.add(krow)
                 krow.text, krow.match_type, krow.status = kw.get("text", ""), kw.get("match_type", "EXACT"), k.get("status", "PAUSED")
+                krow.external_resource_name = k.get("resource_name", "")  # real API: customers/{cid}/adGroupCriteria/{adGroupId}~{criterionId}
                 counts["keywords"] += 1
         for cc in [cc for cc in camp_criteria if cc["parent"] == c["resource_name"] and cc.get("type") == "KEYWORD" and cc.get("negative")]:
             _upsert_negative(db, account, "CAMPAIGN", row.id, None, cc["id"], cc.get("keyword") or {})

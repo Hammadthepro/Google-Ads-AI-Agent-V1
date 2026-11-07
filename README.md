@@ -5,7 +5,7 @@ An AI-assisted, **safety-first** Google Ads management platform for marketing te
 > **Core rule:** nothing changes in Google Ads without approval, except safe negative keywords after every check passes. V1 runs those in shadow mode too. **Real Google Ads writes are disabled.**
 
 ## Status
-V1 is implemented and tested in **mock mode**. Backend: 83 passed, 1 skipped (live Groq, not configured). Frontend: 13 passed. Browser E2E: passed. See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+V1 is implemented and tested in **mock mode**. Backend: 86 passed, 1 skipped (live Groq, not configured). Frontend: 13 passed. Browser E2E: passed. GitHub Actions CI (backend, frontend, Docker image build): passing. See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
 ## Run it in GitHub Codespaces (recommended)
 1. On the repository page, click the green **Code** button → **Codespaces** tab → **Create codespace on main**.

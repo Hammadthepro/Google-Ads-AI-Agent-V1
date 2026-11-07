@@ -142,3 +142,63 @@ def test_keyword_research_contract():
     assert ideas == MockKeywordResearchAdapter().generate_ideas("1110000001", ["drain cleaning"], city="Columbus")  # deterministic
     geos = MockKeywordResearchAdapter().suggest_geo_targets(["43215"])
     assert geos[0]["geo_target_constant"].startswith("geoTargetConstants/")
+
+
+# ------------------------------------------------------------------ real-adapter pieces with fake Google clients
+class _FakeAdsClient:
+    """Minimal stand-in for google.ads.googleads.client.GoogleAdsClient (no network)."""
+
+    def __init__(self, service):
+        self._service = service
+
+    def get_service(self, name):
+        return self._service
+
+    def get_type(self, name):
+        class _Names:
+            def __init__(self):
+                self.names = []
+        class _Req:
+            def __init__(self):
+                self.location_names = _Names()
+        return _Req()
+
+
+def test_real_geo_target_lookup_prefers_postal_codes():
+    from types import SimpleNamespace as NS
+    from app.adapters.google_ads.real import RealGoogleAdsAdapter
+    from app.adapters.keyword_research import GoogleKeywordPlannerAdapter
+
+    class Svc:
+        def suggest_geo_target_constants(self, request):
+            assert request.location_names.names == ["43215", "43004"] and request.country_code == "US"
+            g = lambda rn, name, t: NS(resource_name=rn, canonical_name=name, target_type=t)  # noqa: E731
+            return NS(geo_target_constant_suggestions=[
+                NS(search_term="43215", geo_target_constant=g("geoTargetConstants/1023640", "Columbus,Ohio", "City")),
+                NS(search_term="43215", geo_target_constant=g("geoTargetConstants/9019312", "43215,Ohio", "Postal Code")),
+                NS(search_term="43004", geo_target_constant=g("geoTargetConstants/9019101", "43004,Ohio", "Postal Code"))])
+    ads = RealGoogleAdsAdapter(client_factory=lambda: _FakeAdsClient(Svc()))
+    out = GoogleKeywordPlannerAdapter(ads).suggest_geo_targets(["43215", "43004"])
+    assert [o["geo_target_constant"] for o in out] == ["geoTargetConstants/9019312", "geoTargetConstants/9019101"]
+    assert all(o["simulated"] is False for o in out)
+
+
+def test_real_geo_target_lookup_reports_unknown_zip():
+    from types import SimpleNamespace as NS
+    from app.adapters.base import AdapterError
+    from app.adapters.google_ads.real import RealGoogleAdsAdapter
+    from app.adapters.keyword_research import GoogleKeywordPlannerAdapter
+
+    class Svc:
+        def suggest_geo_target_constants(self, request):
+            return NS(geo_target_constant_suggestions=[])
+    ads = RealGoogleAdsAdapter(client_factory=lambda: _FakeAdsClient(Svc()))
+    with pytest.raises(AdapterError):
+        GoogleKeywordPlannerAdapter(ads).suggest_geo_targets(["00000"])
+
+
+def test_keyword_mirror_stores_resource_name_used_by_pause_proposals(db):
+    from sqlalchemy import select
+    from app.models import Keyword
+    kws = list(db.scalars(select(Keyword).limit(20)))
+    assert kws and all(k.external_resource_name.endswith(f"/{k.external_id}") for k in kws)

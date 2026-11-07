@@ -317,7 +317,8 @@ def create_approval_for(db: Session, actor: User, rec_id: str):
         g = db.get(AdGroup, k.ad_group_id)
         payload = {"kind": "PAUSE_KEYWORD", "customer_id": account.customer_id,
                    "operations": [{"resource": "ad_group_criterion", "op": "update",
-                                   "resource_name": _criterion_rn(account.customer_id, k.external_id), "fields": {"status": "PAUSED"}}],
+                                   "resource_name": k.external_resource_name or _criterion_rn(account.customer_id, k.external_id),
+                                   "fields": {"status": "PAUSED"}}],
                    "summary": {"keyword": k.text, "match_type": k.match_type}, "internal": {}}
         atype = "PAUSE"
     else:
