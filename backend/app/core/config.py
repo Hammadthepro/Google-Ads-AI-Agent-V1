@@ -11,7 +11,8 @@ Mode = Literal["mock", "real"]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # blank values (e.g. "GOOGLE_ADS_MODE=" in .env.example) mean "use the default"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
 
     APP_ENV: Literal["development", "test", "staging", "production"] = "development"
     INTEGRATION_MODE: Mode = "mock"

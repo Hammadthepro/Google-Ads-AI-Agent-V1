@@ -2,13 +2,14 @@
 #   cp .env.example .env   (set APP_SECRET_KEY)
 #   docker compose up --build -d
 #   docker compose exec backend python -m app.cli seed
-# To use Supabase instead of the bundled Postgres, set DATABASE_URL in .env to the Supabase
+# To use Supabase instead of the bundled Postgres, set COMPOSE_DATABASE_URL in .env to the Supabase
 # Session Pooler URL (postgresql+psycopg://...?sslmode=require). The bundled postgres then stays unused.
 x-backend: &backend
   build: ./backend
   env_file: .env
   environment:
-    DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:app@postgres:5432/google_ads_agent}
+    # COMPOSE_DATABASE_URL (not DATABASE_URL, which .env sets for non-Docker runs) selects the database for containers.
+    DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+psycopg://app:app@postgres:5432/google_ads_agent}
     REDIS_URL: redis://redis:6379/0
   depends_on:
     postgres: { condition: service_healthy }
