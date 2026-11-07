@@ -1,16 +1,25 @@
 {
+  // Google Ads AI Agent V1 — GitHub Codespaces / Dev Containers configuration.
+  //
+  // Why this image and NO "features":
+  //   The previous config (python:1-3.12-bookworm + docker-in-docker/node features) ran `apt-get update`
+  //   while the Codespace was being created. That image ships a Yarn APT source whose signing key was
+  //   rotated (NO_PUBKEY 62D54FD4003F6525), so apt failed, the feature install aborted and Codespaces
+  //   fell back to a minimal recovery container without Docker.
+  //   The official "universal" image (the Codespaces default) already contains Docker Engine, the Docker
+  //   CLI + Compose v2, Python and Node, all installed when the image was built. Its image metadata applies
+  //   `privileged: true` and the `docker-init.sh` entrypoint, which starts dockerd on every container start.
+  //   Nothing is installed with apt during Codespace creation.
   "name": "Google Ads AI Agent V1",
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
-    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
-  },
-  "hostRequirements": { "cpus": 4, "memory": "8gb" },
+  "image": "mcr.microsoft.com/devcontainers/universal:6-noble",
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32gb" },
   "forwardPorts": [5173, 8000],
   "portsAttributes": {
     "5173": { "label": "Web app (frontend)", "onAutoForward": "openBrowser" },
-    "8000": { "label": "API (FastAPI) — /readyz, /api/docs", "onAutoForward": "silent" }
+    "8000": { "label": "API (FastAPI) - /readyz, /api/docs", "onAutoForward": "silent" }
   },
+  "otherPortsAttributes": { "onAutoForward": "ignore" },
+  // .env is created once (mock mode, real Google Ads writes disabled); the stack starts on every Codespace start.
   "postCreateCommand": "bash scripts/create-env.sh",
   "postStartCommand": "bash scripts/start-demo.sh",
   "customizations": {

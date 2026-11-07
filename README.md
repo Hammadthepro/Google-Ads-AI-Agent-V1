@@ -5,12 +5,12 @@ An AI-assisted, **safety-first** Google Ads management platform for marketing te
 > **Core rule:** nothing changes in Google Ads without approval, except safe negative keywords after every check passes. V1 runs those in shadow mode too. **Real Google Ads writes are disabled.**
 
 ## Status
-V1 is implemented and tested in **mock mode**. Backend: 86 passed, 1 skipped (live Groq, not configured). Frontend: 13 passed. Browser E2E: passed. GitHub Actions CI (backend, frontend, Docker image build): passing. See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
+V1 is implemented and tested in **mock mode**. Backend: 86 passed, 1 skipped (live Groq, not configured). Frontend: 13 passed. Browser E2E: passed. GitHub Actions CI (backend, frontend, Docker image build) and a dev-container workflow that builds `.devcontainer` and runs the Codespaces startup sequence. See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) and [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
 ## Run it in GitHub Codespaces (recommended)
 1. On the repository page, click the green **Code** button → **Codespaces** tab → **Create codespace on main**.
    For a bigger machine: **⋯ → New with options…** → 4-core or larger.
-2. Wait for the codespace to finish building. The dev container installs Docker, Python 3.12 and Node 20. Then `scripts/start-demo.sh` runs automatically: it creates `.env` (mock mode, writes disabled), builds and starts all containers, waits for the API and seeds the demo data. **The first start takes about 5–10 minutes**; watch the progress in the terminal ("postStartCommand").
+2. Wait for the codespace to start. It uses the official `mcr.microsoft.com/devcontainers/universal:6-noble` image, which already contains Docker Engine, Docker Compose v2, Python and Node, so nothing is installed while the Codespace is created. Then `scripts/start-demo.sh` runs automatically. It waits for the Docker daemon, creates `.env` (mock mode, writes disabled), builds and starts the six services (postgres, redis, backend with automatic database migrations, worker, beat, frontend), waits for the API health check and seeds the demo data. **The first start takes about 5–10 minutes**; follow it in the terminal ("postStartCommand").
 3. When the terminal prints **"Ready."**, open the **Ports** tab (bottom panel) and click the 🌐 globe icon next to **5173 – Web app (frontend)**. It usually opens automatically.
 4. On the sign-in page, click a demo user.
 
@@ -43,11 +43,20 @@ docker compose down -v && bash scripts/start-demo.sh     # start completely fres
 ```
 API docs: open port **8000** and go to `/api/docs`.
 
+### Check that the Codespace is healthy
+```bash
+docker version && docker compose version      # Docker CLI, daemon and Compose v2 are present
+docker compose ps                             # 6 services: postgres, redis, backend, worker, beat, frontend
+curl -s localhost:8000/readyz                 # {"status":"ready","checks":{"database":"ok","redis":"ok"}}
+docker compose exec backend alembic current   # 0003 (head)
+```
+
 ### Troubleshooting
 | Symptom | Fix |
 |---|---|
 | Port 5173 shows "502 Bad Gateway" or doesn't load | The stack is still starting. Wait for "Ready." or run `bash scripts/start-demo.sh`; check `docker compose ps`. |
-| `docker: command not found` or "Cannot connect to the Docker daemon" | The dev container is still provisioning. Wait, or run **Codespaces: Rebuild Container** from the command palette (F1). |
+| Codespace opens in **recovery mode** / `docker: command not found` | The dev container failed to build, so Codespaces started a minimal fallback container without Docker. F1 → **Codespaces: View Creation Log** shows why. Make sure the codespace was created from the latest `main` (older commits used a Docker-in-Docker feature that failed on a Yarn APT key, `NO_PUBKEY 62D54FD4003F6525`), then F1 → **Codespaces: Full Rebuild Container**, or delete the codespace and create a new one. |
+| "Cannot connect to the Docker daemon" | Docker starts with the container; `start-demo.sh` waits up to 3 minutes. If it still fails: F1 → **Codespaces: Rebuild Container**. |
 | API never becomes ready | `docker compose logs --tail=100 backend`. Usually Postgres is still starting; rerun `bash scripts/start-demo.sh`. |
 | Sign-in page says "This account has not been invited" | Seed didn't run: `docker compose exec backend python -m app.cli seed`. |
 | "Too many requests" | The sign-in rate limit is 30/min per IP. Wait a minute, or raise `AUTH_RATE_LIMIT_PER_MINUTE` in `.env` and run `docker compose up -d`. |
