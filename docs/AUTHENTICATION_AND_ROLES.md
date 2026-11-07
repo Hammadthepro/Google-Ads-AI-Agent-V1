@@ -1,6 +1,6 @@
 # Authentication and Roles
 
-Status: **Phase 0 — design.** Built in Phase 2.
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md). Built in Phase 2.
 
 ## 1. Login
 - **Development:** `MockAuthenticationProvider` — login screen listing seeded users; available only when `APP_ENV != production` and `AUTH_PROVIDER=mock` (startup fails otherwise).

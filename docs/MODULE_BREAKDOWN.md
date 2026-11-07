@@ -1,6 +1,6 @@
 # Module Breakdown
 
-Status: **Phase 0 — plan.** Each module lists its responsibility, key rules, dependencies and build phase.
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 
 | # | Module | Responsibility | Key deterministic rules | Depends on | Phase |
 |---|---|---|---|---|---|

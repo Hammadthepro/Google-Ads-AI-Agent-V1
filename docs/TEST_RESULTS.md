@@ -1,7 +1,59 @@
 # Test Results
 
-No tests have been run. Phase 0 produced documentation only; no application code exists.
+Last full run: 2026-11-07, mock mode, local PostgreSQL 16 + Redis 7, Python 3.13, Node 22, Chromium (Playwright).
 
-| Date | Phase | Command | Passed | Failed | Skipped | Notes |
-|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — |
+| Suite | Command | Result |
+|---|---|---|
+| Backend (unit, contract, API, integration, security, E2E) | `cd backend && .venv/bin/pytest` | **81 passed, 1 skipped** (≈40 s) |
+| Lint | `ruff check app tests --select F,E9` | All checks passed |
+| Migrations | `alembic downgrade base && alembic upgrade head && alembic check` | Upgrade/downgrade clean; models match schema |
+| Frontend type-check | `cd frontend && npx tsc -b` | Passed |
+| Frontend components | `npx vitest run` | **13 passed** |
+| Browser E2E | `node e2e/ui-smoke.mjs` (stack running) | **Passed**: 16 pages render; UI task → approval → execute (PAUSED, verified) → enable gated |
+| Supabase schema | applied via connector, verified with SQL | 51 tables, 51 with RLS, 139 indexes, 40 FKs, head `0002`, 0 anon/authenticated grants |
+| Docker images | `docker compose build` | **Not run**: sandbox blocks Docker Hub (see KNOWN_ISSUES). `docker compose config` is valid. |
+
+**Skipped (1):** `test_live_groq_draft`, scenario #16. Groq is not configured here. It runs when `GROQ_API_KEY` and `GROQ_MODEL` are set and is never reported as passed when skipped.
+
+## Backend tests per file
+| File | Tests |
+|---|---|
+| tests/unit/test_core_logic.py | 11 |
+| tests/security/test_security.py | 21 (incl. 11 parametrised SSRF cases) |
+| tests/api/test_auth_rbac_clients.py | 6 |
+| tests/contract/test_adapter_contracts.py | 11 |
+| tests/integration/test_tracking_audits_ai.py | 10 (1 skipped) |
+| tests/integration/test_approvals_execution.py | 13 |
+| tests/integration/test_monitoring_optimization.py | 9 |
+| tests/e2e/test_full_workflow.py | 1 |
+
+## Required scenarios (Master Prompt §26)
+| # | Scenario | Test |
+|---|---|---|
+| 1 | Development login | `test_dev_login_and_me`, UI smoke |
+| 2 | Unauthorized blocked | `test_unauthorized_blocked`, `test_deactivated_user_loses_access`, `test_csrf_required_for_state_changes` |
+| 3 | Role permissions | `test_role_based_permissions_matrix` |
+| 4–5 | Create client / business | `test_create_client_and_business_with_validation` |
+| 6–9 | Website / GBP / competitor audits, keyword research | `test_website_gbp_competitor_and_keyword_audits`, `test_landing_page_outage_detected_by_website_audit` |
+| 10–12 | GREEN / AMBER / RED | `test_tracking_green_amber_red` |
+| 13 | Admin override | `test_red_gate_blocks_build_and_admin_override_behaves_like_amber` |
+| 14 | Feasibility | `test_feasibility_*` (incl. PDF $1,500 / 50 leads ≈ $6.90 example) |
+| 15 | AI draft (Mock) | `test_mock_ai_draft_is_schema_valid_and_recorded` |
+| 16 | AI draft (Groq) | `test_live_groq_draft` — **SKIPPED**; `test_groq_provider_contract_with_fake_client` passes |
+| 17 | Challenger disagreement | `test_challenger_disagrees_with_bad_draft` |
+| 18 | Invalid AI JSON | `test_invalid_ai_json_is_retried_then_rejected` |
+| 19 | Validation failure | `test_validation_failures_are_reported` |
+| 20 | Approval workflow | `test_approval_workflow_approve_reject_request_changes`, `test_self_approval_blocked_and_expiry_escalates`, `test_budget_increase_over_threshold_requires_super_admin` |
+| 21 | Invalidation after payload change | `test_approval_bound_to_exact_payload_version` |
+| 22–24 | Mock creation, paused-first, read-back | E2E test, `test_read_back_verification_detects_mismatch` |
+| 25 | Reconciliation after timeout | `test_timeout_after_commit_is_reconciled_not_retried`, `test_timeout_before_commit_reconciles_as_not_applied_then_resubmits` |
+| 26 | Emergency brake | `test_emergency_brake_rules_and_simulated_actions`, `test_global_kill_switch_halts_brake_automation` |
+| 27 | Negative keyword safety | `test_negative_keyword_safety_checks`, `test_shadow_mode_proposes_only_and_active_mode_needs_green` |
+| 28 | Enough-data hold | `test_enough_data_hold_for_new_campaign` |
+| 29 | Weekly reporting | `test_weekly_report_numbers_and_diagnosis` |
+| 30 | Experiment workflow | `test_experiment_workflow_human_picks_winner` |
+| 31 | Learning loop | `test_learning_loop_playbook_feedback_and_regression` |
+| 32 | Integration failure handling | `test_integration_failures_are_handled_and_never_faked`, contract failure-injection tests |
+| E2E-A | New client → campaign created and verified PAUSED | `test_e2e_new_client_to_paused_campaign_then_enable_requires_approval`, UI smoke |
+| E2E-B | Cannot enable without approval | same test (423 before approval), UI smoke |
+| SEC-W | Real write impossible while disabled | `test_sec_w_real_adapter_cannot_write_while_disabled` |

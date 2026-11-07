@@ -1,6 +1,8 @@
 # Database Schema — Entity Plan
 
-Status: **Phase 0 — plan.** Final columns are fixed in each phase's Alembic migration.
+Status: **Implemented** — `backend/app/models/*.py`, migrations `backend/migrations/versions/0001_initial_schema.py` and `0002_row_level_security.py`. 50 application tables + `alembic_version`; RLS enabled on all (Supabase Data API denied). Applied to Supabase project `google-ads-ai-agent-v1`.
+
+Differences from the plan: the simulated Google Ads entities are stored in one generic `mock_gads_resources` table; `job_runs` and `alerts` record background jobs and notifications; `user_client_assignments` handles row-level client scoping.
 
 ## Conventions (every table unless noted)
 

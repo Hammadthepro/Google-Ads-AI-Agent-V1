@@ -1,6 +1,6 @@
 # Approval Workflow
 
-Status: **Phase 0 — design.**
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 
 ## 1. State machine
 

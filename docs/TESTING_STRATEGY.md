@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Status: **Phase 0 — plan.**
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 
 ## 1. Layers
 | Layer | Tool | Scope |
@@ -39,5 +39,5 @@ Coverage target: ≥ 85% for `safety`, `approvals`, `execution`, `feasibility`, 
 | E2E-B | Campaign cannot be enabled without ENABLE approval | 15 |
 | SEC-W | Real write impossible while `GOOGLE_ADS_WRITES_ENABLED=false` (even with real adapter loaded) | 11 |
 
-## 3. Commands (to be created in Phase 1)
-`make test` · `make test-backend` · `make test-frontend` · `make e2e` · `make lint`. Results recorded verbatim in TEST_RESULTS.md each phase.
+## 3. Commands
+`make test` · `make test-backend` (needs a disposable Postgres via `TEST_DATABASE_URL`, which is wiped and reseeded) · `make test-frontend` · `make e2e` (stack running) · `make lint`. Results: TEST_RESULTS.md.

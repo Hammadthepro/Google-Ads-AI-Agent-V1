@@ -1,0 +1,42 @@
+# Local / single-server deployment. Mock mode by default — no external credentials needed.
+#   cp .env.example .env   (set APP_SECRET_KEY)
+#   docker compose up --build -d
+#   docker compose exec backend python -m app.cli seed
+# To use Supabase instead of the bundled Postgres, set DATABASE_URL in .env to the Supabase
+# Session Pooler URL (postgresql+psycopg://...?sslmode=require). The bundled postgres then stays unused.
+x-backend: &backend
+  build: ./backend
+  env_file: .env
+  environment:
+    DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:app@postgres:5432/google_ads_agent}
+    REDIS_URL: redis://redis:6379/0
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: google_ads_agent }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U app"], interval: 5s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 20 }
+  backend:
+    <<: *backend
+    ports: ["8000:8000"]
+  worker:
+    <<: *backend
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2
+  beat:
+    <<: *backend
+    command: celery -A app.workers.celery_app beat -l info --schedule /tmp/celerybeat-schedule
+  frontend:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:

@@ -1,6 +1,6 @@
 # Google Ads Safety Rules
 
-Status: **Phase 0 — binding design rules.** Every rule below becomes an automated test.
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 
 ## 1. The core rule
 Nothing changes in Google Ads without an approval for the exact payload, **except** safe negative keywords that pass every deterministic check in §5 under an active auto-negative policy. In V1 the auto-negative policy starts in **shadow mode** (proposals only).

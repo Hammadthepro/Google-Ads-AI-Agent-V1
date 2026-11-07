@@ -1,6 +1,6 @@
 # System Architecture
 
-Status: **Phase 0 — proposed design.** Not implemented.
+Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 
 ## 1. Runtime components
 

@@ -1,6 +1,6 @@
 # Project Overview
 
-Status: **Phase 0 — planning document.** Nothing described here is implemented yet.
+Status: **Implemented in V1 (mock mode).** See IMPLEMENTATION_PROGRESS.md and KNOWN_ISSUES.md.
 
 ## 1. Objective
 

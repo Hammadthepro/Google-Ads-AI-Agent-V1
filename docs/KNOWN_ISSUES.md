@@ -1,0 +1,42 @@
+# Known Issues & Limitations
+
+Honest list of what is NOT done, NOT verified, or deliberately limited in V1. Nothing below is hidden behind a fake success.
+
+## Not verified against live services (no credentials were available)
+| Area | State |
+|---|---|
+| `RealGoogleAdsAdapter` (official `google-ads` library) | Implemented (GAQL reads, atomic `GoogleAdsService.Mutate`, `validate_only`, error mapping, in-adapter write lock). Unit-tested with fakes only. Field mappings (e.g. `contains_eu_political_advertising`, asset field names) must be confirmed against the API version in use. |
+| `GoogleKeywordPlannerAdapter` | Implemented, not run live. `suggest_geo_targets` (GeoTargetConstantService) is **not implemented** for real mode — ZIP targeting raises an adapter error until it is. |
+| Real experiments | `ExperimentService` / `ExperimentArmService` are **not implemented** in the real adapter (raises a clear error). Experiments work end-to-end in mock mode only. |
+| `RealGooglePlacesAdapter`, `RealPageSpeedAdapter` | Implemented; tested with fake HTTP transports only. |
+| `GroqAIProvider` | Implemented with the official SDK (JSON-object mode + strict Pydantic validation). The live Groq test is **SKIPPED** (no `GROQ_API_KEY`/`GROQ_MODEL` in this environment). Tested with a fake client. |
+| Google sign-in (OIDC) | Backend verification implemented and unit-tested with signed-claim fakes; not exercised with a real Google client ID. |
+| Google Ads OAuth | Authorization URL (PKCE, offline access), code exchange, encrypted storage, revoke — mock flow tested; real flow not exercised. |
+| Live website crawling | Implemented with SSRF protection; tests use mock transports. Playwright rendering is optional (`pip install ".[browser]"`) and not included in the Docker image. |
+
+## Supabase
+- The schema (migrations 0001 + 0002, RLS on all 51 tables) was applied to project `google-ads-ai-agent-v1` through the Supabase connector and verified there.
+- The application's **runtime connection** to Supabase could **not** be tested from the build environment: the sandbox only allows outbound HTTPS, and the pooler host does not resolve there. Verify from your machine/server (see DEPLOYMENT_GUIDE.md §3).
+- The database password was shared in chat. **Reset it in Supabase** (Project Settings → Database) and update your local `.env` / server secret.
+- Supabase's advisor reports "RLS enabled, no policy" (INFO) for every table. This is intentional: the public Data API must not read app data; the backend connects as the table owner.
+
+## Docker
+- `docker compose config` validates. The images could **not** be built in the development sandbox, because its network policy blocks Docker Hub (`registry-1.docker.io` → 403). Build them on your machine or server with `docker compose up --build`.
+
+## Functional limitations (by design or deferred)
+- **Location changes** add new targets only. Removing old location criteria would be a delete, which the app never performs; the approval card lists the existing targets to remove manually in Google Ads.
+- **Real keyword pause** recommendations build mock-format criterion resource names (`…/adGroupCriteria/{id}`). Real Google Ads uses `{adGroupId}~{criterionId}`. Store the real resource name in the keyword mirror before enabling real writes.
+- **Mobile above-the-fold check** is a deterministic DOM heuristic (phone link, form, H1), not a rendered-screenshot analysis (decision D-12).
+- **Emergency brake**: real Google Ads emergency writes are intentionally not executed. Pause/lower-budget actions are recorded as SIMULATED; freezing automation is applied internally.
+- **Auto-negatives** run in SHADOW mode. ACTIVE mode needs both `AUTO_NEGATIVES_MODE=active` and the `negatives.mode` setting, plus GREEN tracking and the enough-data gate. ACTIVE mode was tested only against the mock.
+- **Thresholds** (enough-data, emergency, budget approval, wasted spend, tracking GREEN criteria) are documented TEST VALUES from DECISIONS_REQUIRED.md, editable in System Settings. They are not final policy.
+- **Notifications** are stored as alerts (MOCK_DELIVERED). Real email needs `NOTIFIER_MODE=real` and SMTP variables.
+- **Mock simulator** is deterministic but simplified: conversion lag curve, calls, impression share jitter and experiment effects are modelled, not realistic forecasts.
+- **Mock validate-only** applies a subset of Google editorial policy (length, punctuation, capitalisation, phone numbers in text). Real policy review can still disapprove ads.
+- **Rate limiting** uses Redis when reachable, otherwise per-process memory.
+- **Live preview** in the Claude Code session exists only while the session runs. Use Docker Compose for a persistent install.
+- Web font (Inter) loads from Google Fonts. Where blocked, the UI falls back to the system font.
+- Frontend tested in Chromium (Playwright) only; no i18n.
+
+## Fixed during development (found by tests)
+Duplicate simulated search terms; Decimal aggregates; validation of status-only ad updates; integer conversion truncation; SSRF IP literals; per-campaign tracking-outage detection; anchor-based reconciliation; failure-injection counter rollback; login rate-limit scope; JSON step-status persistence; duplicate campaign names; competitor brand headings parsed as services; checkbox accessibility.

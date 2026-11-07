@@ -1,6 +1,6 @@
 # Mock API Guide
 
-Status: **Phase 0 — design.** Built in Phase 3.
+Status: **Implemented.** Code: `backend/app/mock_world/` (seed, simulator, fixtures, failures) and `backend/app/adapters/*`.
 
 ## 1. How the full app runs without credentials
 - `INTEGRATION_MODE=mock` → registry loads every mock adapter. `AUTH_PROVIDER=mock` gives a dev login screen (pick a seeded user). `AI_PROVIDER=mock` returns schema-valid fixture JSON per purpose and scenario.
@@ -42,3 +42,12 @@ Accessible customers, hierarchy, campaigns/budgets/ad groups/keywords/negatives/
 
 ## 6. What the mock cannot prove
 It cannot prove real Google policy approval, real auction behaviour, Keyword Planner accuracy, real tag firing, or real API quotas. Results from mock mode are never presented as forecasts of real performance.
+
+## 7. As built
+- **Accounts:** MCC `1000000000`; `1110000001` Northside Home Services, `1110000002` Brightsmile Dental Group, `1110000003` Summit Legal Partners, `1110000004` *New Client Sandbox* (empty, unlinked: use it to onboard a brand-new client).
+- **Storage:** simulated Google Ads resources live in one generic table, `mock_gads_resources` (resource_type + JSON data, using Google-style resource names), with daily metrics, search terms, calls and change events in their own `mock_gads_*` tables.
+- **Scenario per campaign:** healthy · budget_limited (+ manual changes) · insufficient_data (new, learning) · broken_tracking (conversions stop 12 days ago) · irrelevant_terms · overspend (today's spend spike) · landing_outage (`/personal-injury` → 503) · Performance Max (read-only).
+- **Tracking states at seed:** Northside Plumbing GREEN · Northside Heating & Air AMBER (no call length, too few leads) · Brightsmile Dental RED (no Ads tag, MANY_PER_CLICK counting, duplicate GA4 import, conversions stopped) · Summit Injury Law GREEN.
+- **Conversion lag:** a day's conversions are reported at 55% / 70% / 85% / 100% on days 0–3, so the 30-day re-download changes recent numbers.
+- **Failure kinds:** `auth_failure, permission_denied, rate_limited, timeout, timeout_after_commit, not_found, missing_data, invalid_input, outage, empty, partial_data, invalid_json, schema_mismatch`. Target writes only with entity `:write`, or validate-only calls with `:validate`.
+- **Controls:** System Settings → advance time / reset / inject failures, or CLI `python -m app.cli advance N` and `reset-mock`.

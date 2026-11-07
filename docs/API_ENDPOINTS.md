@@ -1,6 +1,8 @@
 # API Endpoints (planned)
 
-Status: **Phase 0 — plan.** Prefix `/api/v1`. Every route except health and login requires a session; state-changing routes require CSRF. OpenAPI docs served at `/api/docs` (disabled in production unless authenticated).
+Status: **Implemented** — interactive OpenAPI docs at `/api/docs` (disabled in production). Routers: `backend/app/api/routers/{auth_users,core,workflow,ops}.py`. Additions beyond the plan: `POST /tasks?sync=true`, `GET /tasks/types`, `GET /plans`, `GET /ai-runs`, `POST /approvals/{id}/execute`, `GET /clients/{id}/structure`, `GET /campaigns/{id}/enough-data`, `POST /recommendations/{id}/approval`, `POST /clients/{id}/unfreeze`, `GET /alerts`, `GET /monitor/campaign/{id}/series`.
+
+Original plan: Prefix `/api/v1`. Every route except health and login requires a session; state-changing routes require CSRF. OpenAPI docs served at `/api/docs` (disabled in production unless authenticated).
 
 | Group | Endpoints | Min role |
 |---|---|---|

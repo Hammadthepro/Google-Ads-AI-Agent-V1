@@ -1,6 +1,8 @@
 # Decisions Required & Risk Register
 
-Status: **Open.** Each decision has a recommended default. Phases that depend on a decision will use the recommended default as a *configurable test value* until you confirm — it will never be treated as final production policy.
+Status: **Defaults applied as configurable test values** (you authorised using the recommended defaults). Change them anytime in System Settings; none is final production policy.
+
+Previous status: Open. Each decision has a recommended default. Phases that depend on a decision will use the recommended default as a *configurable test value* until you confirm — it will never be treated as final production policy.
 
 ## 1. Decisions
 

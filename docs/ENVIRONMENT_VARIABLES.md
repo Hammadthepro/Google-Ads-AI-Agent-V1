@@ -1,6 +1,6 @@
 # Environment Variables
 
-Status: **Phase 0 — plan.** `.env.example` will be created in Phase 1. Never commit `.env`.
+Status: **Implemented.** See `.env.example` (placeholders only). Never commit `.env`.
 
 | Variable | Default (dev) | Required in mock | Notes |
 |---|---|:-:|---|
@@ -38,3 +38,14 @@ Status: **Phase 0 — plan.** `.env.example` will be created in Phase 1. Never c
 | `LOG_LEVEL` | `INFO` | | Tokens always redacted |
 
 Business thresholds (enough-data, emergency, approvals) live in `system_settings` (editable, audited), seeded from documented test defaults — not in env.
+
+## Added during implementation
+| Variable | Default | Notes |
+|---|---|---|
+| `CELERY_TASK_ALWAYS_EAGER` | `false` | `true` = tasks run in an API background thread (no worker needed) |
+| `SESSION_TTL_HOURS` | `12` | Session lifetime |
+| `RATE_LIMIT_PER_MINUTE` | `300` | Per IP, all API routes |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `30` | Per IP, sign-in endpoints only |
+| `TEST_DATABASE_URL` | local `google_ads_agent_test` | Tests wipe and reseed this database |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | — | Only with `NOTIFIER_MODE=real` |
+| `DATABASE_URL` (Supabase) | — | `postgresql+psycopg://postgres.<ref>:<url-encoded-password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require` — secrets only, never committed |
