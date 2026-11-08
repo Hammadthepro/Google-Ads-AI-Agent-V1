@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require
-from app.core.errors import NotFound
+from app.core.errors import NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models import User
 from app.services import activity, integrations_service as svc
@@ -97,6 +97,8 @@ class ConfigIn(BaseModel):
 
 @router.put("/integrations/{provider}")
 def put_integration(provider: str, body: ConfigIn, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    if svc.PROVIDERS[_provider(provider)].get("readonly"):
+        raise ValidationFailed("This component is configured through environment variables (.env), not on this page")
     svc.save(db, _provider(provider), settings=body.settings, secrets=body.secrets, user_id=user.id)
     activity.log(db, "integrations.configured", actor=user, entity="integration", entity_id=provider,
                  details={"settings": sorted(body.settings), "secrets_changed": sorted(k for k, v in body.secrets.items() if v)})
@@ -105,10 +107,11 @@ def put_integration(provider: str, body: ConfigIn, user: User = Depends(require(
 
 
 @router.post("/integrations/{provider}/test")
-def test_integration(provider: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
-    res = svc.test_connection(db, _provider(provider), user_id=user.id)
+def test_integration(provider: str, target: str = "all", user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    """Real request(s) to the provider. `target` narrows google_ads (manager|client) or groq (primary|challenger)."""
+    res = svc.test_connection(db, _provider(provider), user_id=user.id, target=target)
     activity.log(db, "integrations.tested", actor=user, entity="integration", entity_id=provider,
-                 details={"ok": res["ok"], "status": res["status"]})
+                 details={"ok": res["ok"], "connected": res["connected"], "status": res["status"], "target": target})
     db.commit()
     return {**res, "integration": svc.serialize(db, provider)}
 
@@ -127,6 +130,8 @@ def enable_integration(provider: str, body: EnableIn, user: User = Depends(requi
 
 @router.post("/integrations/{provider}/disconnect")
 def disconnect_integration(provider: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    if svc.PROVIDERS[_provider(provider)].get("readonly"):
+        raise ValidationFailed("This component is configured through environment variables (.env) and cannot be disconnected here")
     svc.disconnect(db, _provider(provider), user.id)
     if provider == "google_ads":
         from app.services import settings_service

@@ -3,6 +3,7 @@ records every attempt as an AIRun. Malformed output is rejected and never execut
 from __future__ import annotations
 
 import json
+import time
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -48,7 +49,9 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
     system = system_prompt(purpose)
     user = dict(payload)
     last_error = ""
-    for attempt in range(1, max_attempts + 1):
+    attempt = 0
+    while attempt < max_attempts:  # (max_attempts can grow when a rate-limit window is being waited out)
+        attempt += 1
         if last_error:
             user = {**payload, "previous_attempt_error": last_error[:1500],
                     "instruction": "Your previous output was rejected. Return valid JSON matching the schema exactly."}
@@ -60,7 +63,13 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         except AdapterError as exc:
             run.error = f"{exc.kind}: {exc.message}"
             db.flush()
-            if exc.retryable and attempt < max_attempts:
+            if exc.retryable and exc.kind == "rate_limited" and not exc.details.get("too_large"):
+                max_attempts = max(max_attempts, 3)  # a per-minute window usually clears: wait for it instead of failing instantly
+                if attempt < max_attempts:
+                    last_error = run.error
+                    time.sleep(min(max(float(exc.details.get("retry_after") or 0), 2.0 * attempt), 30.0))
+                    continue
+            if exc.retryable and attempt < max_attempts and exc.kind != "rate_limited":
                 last_error = run.error
                 continue
             raise AIOutputInvalid(f"AI provider error ({exc.kind}); nothing was executed", details=exc.to_dict()) from exc

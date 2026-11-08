@@ -62,7 +62,6 @@ REGISTRY: list[dict] = [
     _v("ALLOWED_LOGIN_DOMAINS", "App login (Google)", "optional", "Comma-separated email domains allowed to sign in (blank = any invited account).", "adapters/auth (allowed_login_domains)"),
     _v("GOOGLE_CLIENT_ID", "App login (Google)", "conditional", "OAuth Web client ID for Google SIGN-IN (ID-token flow). The only Google sign-in credential the app uses.", "adapters/auth/__init__.py, auth_users.py", when="AUTH_PROVIDER=google"),
     # ---- google ads
-    _v("GOOGLE_ADS_DEVELOPER_TOKEN", "Google Ads", "conditional", "Google Ads API developer token (from the manager account's API Center).", "integrations_service.py", secret=True, when="real Google Ads (or enter it on the Integrations page)"),
     _v("GOOGLE_ADS_CLIENT_ID", "Google Ads", "conditional", "OAuth client ID used to authorise Google Ads (and GA4 / Business Profile). NOT the sign-in client.", "integrations_service.py", when="real Google Ads"),
     _v("GOOGLE_ADS_CLIENT_SECRET", "Google Ads", "conditional", "OAuth client secret for the Google Ads client above.", "integrations_service.py", secret=True, when="real Google Ads"),
     _v("GOOGLE_ADS_REDIRECT_URI", "Google Ads", "optional", "OAuth redirect URI registered for the Ads client. Blank = <app origin>/api/v1/integrations/google/callback.", "integrations_service.py (oauth_redirect_uri)"),
@@ -93,6 +92,7 @@ BY_NAME = {v["name"]: v for v in REGISTRY}
 
 # Variables that older versions (and some .env files) still contain. They do nothing; the audit says so.
 RETIRED = {
+    "GOOGLE_ADS_DEVELOPER_TOKEN": "Not needed: Google sunset developer tokens on 2026-09-09. API access is now tied to the Google Cloud project that owns your OAuth client (see the Google Ads API overview page in Cloud Console). The app no longer sends or requires it. Remove it from .env.",
     "GOOGLE_CLIENT_SECRET": "Not used: sign-in verifies Google ID tokens with the client ID only (no authorization-code exchange). Remove it from .env. Do not confuse it with GOOGLE_ADS_CLIENT_SECRET.",
     "GOOGLE_REDIRECT_URI": "Not used: Google sign-in has no redirect (the Google button returns a token to the page). The Ads redirect is GOOGLE_ADS_REDIRECT_URI.",
     "KEYWORD_RESEARCH_MODE": "Not used: Keyword Planner follows the Google Ads operating mode on the Integrations page.",
@@ -101,9 +101,9 @@ RETIRED = {
 EXTERNAL = {"VITE_API_TARGET": "Vite dev server: where /api is proxied (default http://localhost:8000).", "CODESPACES": "Set by GitHub Codespaces; read by scripts/start-demo.sh.",
             "GAA_ENV_FILE": "Overrides which .env file the backend loads (none = no file; used by tests)."}
 
-# Groq production chat models from https://console.groq.com/docs/models (checked 2026-11-08). The Integrations page verifies the
-# exact name live against your key (GET /openai/v1/models); this list only drives a soft warning.
-GROQ_KNOWN_CHAT = {"llama-3.1-8b-instant", "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b"}
+# Groq chat models seen on https://console.groq.com/docs/models and on a real key (2026-11-08). Availability depends on the Groq plan; the
+# Integrations page verifies the exact name live against your key (GET /openai/v1/models); this list only drives a soft warning.
+GROQ_KNOWN_CHAT = {"llama-3.1-8b-instant", "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"}
 GROQ_NOT_CHAT = ("whisper", "orpheus", "prompt-guard", "safeguard", "tts", "guard")
 PLACEHOLDER = re.compile(r"^(<.*>|changeme|change-me|your[-_ ].*|xxx+|todo|example|replace.*|\.\.\.)$", re.I)
 TRUE = {"true", "1", "yes", "on"}
@@ -277,7 +277,7 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
     if cid and ads_cid and cid == ads_cid:
         add("warn", "GOOGLE_ADS_CLIENT_ID", "Same OAuth client as Google sign-in. The app treats them as separate: sign-in needs an authorised JavaScript origin, Ads needs an authorised redirect URI and scopes.", "Prefer two separate OAuth clients.")
     # -- google ads
-    ads_vars = ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN")
+    ads_vars = ("GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN")
     if any(g(k) for k in ads_vars):
         for k in ads_vars:
             if not g(k):
@@ -293,7 +293,7 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
     if cust and not mcc:
         add("info", "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Blank. Needed only if this client account is accessed through a manager (MCC); leave blank for a directly accessible account.", "")
     if g("GOOGLE_ADS_MODE").lower() == "real" and not all(g(k) for k in ads_vars):
-        add("error", "GOOGLE_ADS_MODE", "real needs developer token, client ID, client secret and refresh token.", "Fill them in or set GOOGLE_ADS_MODE blank.")
+        add("error", "GOOGLE_ADS_MODE", "real needs the OAuth client ID, client secret and refresh token.", "Fill them in or set GOOGLE_ADS_MODE blank.")
     # -- groq
     groq_in_use = flag("GROQ_ENABLED") or ap == "groq" or bool(g("GROQ_API_KEY") or g("GROQ_MODEL"))
     if (g("AI_PROVIDER") or "mock").lower() == "groq" and not flag("GROQ_ENABLED"):
@@ -306,17 +306,17 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
         elif not g("GROQ_API_KEY").startswith("gsk_"):
             add("warn", "GROQ_API_KEY", "Groq keys start with gsk_.", "Check you pasted the right key.")
         if not g("GROQ_MODEL"):
-            add("error", "GROQ_MODEL", "No model configured.", "Use an exact Groq model ID, e.g. llama-3.3-70b-versatile.")
+            add("error", "GROQ_MODEL", "No model configured.", "Use an exact Groq model ID your key can access (the Integrations page lists them), e.g. openai/gpt-oss-120b.")
     for k in ("GROQ_MODEL", "GROQ_CHALLENGER_MODEL"):
         m = g(k)
         if not m:
             continue
         if any(x in m.lower() for x in GROQ_NOT_CHAT):
-            add("error", k, f"'{m}' is not a chat model (speech/safety/guard models cannot write ad plans).", "Use a chat model such as llama-3.3-70b-versatile or openai/gpt-oss-120b.")
+            add("error", k, f"'{m}' is not a chat model (speech/safety/guard models cannot write ad plans).", "Use a chat model such as openai/gpt-oss-120b or qwen/qwen3.8-27b.")
         elif m not in GROQ_KNOWN_CHAT:
             add("warn", k, f"'{m}' is not one of the production chat models verified on 2026-11-08 ({', '.join(sorted(GROQ_KNOWN_CHAT))}). It may be valid, preview, or retired.", "Run Test Connection on the Integrations page: it checks the exact name against your key.")
     if g("GROQ_CHALLENGER_MODEL") and g("GROQ_CHALLENGER_MODEL") == g("GROQ_MODEL"):
-        add("info", "GROQ_CHALLENGER_MODEL", "Same model as GROQ_MODEL: the critic shares the drafter's blind spots.", "Prefer a different model family (e.g. openai/gpt-oss-120b vs llama-3.3-70b-versatile).")
+        add("info", "GROQ_CHALLENGER_MODEL", "Same model as GROQ_MODEL: the critic shares the drafter's blind spots.", "Prefer a different model family (e.g. openai/gpt-oss-120b and qwen/qwen3.8-27b).")
     if groq_in_use and not g("GROQ_CHALLENGER_MODEL"):
         add("info", "GROQ_CHALLENGER_MODEL", "Blank: the challenger falls back to GROQ_MODEL.", "Optional but recommended: set a different model.")
     # -- email
@@ -356,6 +356,92 @@ def _needed(k: str, g, flag, ap: str, groq: bool, prod: bool) -> bool:
     if k.startswith("GOOGLE_ADS_"):
         return False  # entered on the Integrations page, or reported as 'partly set'
     return False
+
+
+# -------------------------------------------------------------------------------------------------- populate .env
+# Never copied from the environment unless the value is the safe one: the test environment stays a test environment.
+SAFE_VALUES = {"GOOGLE_ADS_WRITES_ENABLED": {"false"}, "EMERGENCY_BRAKE_WRITE_MODE": {"simulate", "disabled"}, "AUTO_NEGATIVES_MODE": {"shadow"},
+               "TEST_MODE": {"true"}, "INTEGRATION_MODE": {"mock"}, "AUTH_PROVIDER": {"mock"}, "APP_ENV": {"development", "test"}}
+
+
+def _quote(v: str) -> str:
+    """Write a value so python-dotenv AND docker compose's env_file read it back unchanged."""
+    if v == "" or not re.search(r"[\s#$\"'`\\]", v):
+        return v
+    return f"'{v}'" if "'" not in v else '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
+
+
+def populate(env_path: str | Path, environ: dict | None = None, *, dry_run: bool = False) -> dict:
+    """Fill blank or missing variables in `.env` from the process environment. NAMES ONLY are returned or printed.
+
+    - an existing non-blank value in the file always wins (reported under `differs` if the environment disagrees)
+    - safety switches are only copied when the value is the safe one
+    - duplicate keys in the file are collapsed to one line (the effective value)
+    - retired / unknown / external variables are never copied
+    """
+    env = os.environ if environ is None else environ
+    path = Path(env_path)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    parsed: dict[str, list[tuple[int, str]]] = {}
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip().removeprefix("export ").strip(), v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        parsed.setdefault(k, []).append((i, v))
+    out = {"copied": [], "kept": [], "differs": [], "refused": [], "unavailable": [], "deduplicated": [], "added": []}
+    drop: set[int] = set()
+    replace: dict[int, str] = {}
+    append: list[str] = []
+    for var in REGISTRY:
+        name = var["name"]
+        occ = parsed.get(name, [])
+        env_val = (env.get(name) or "").strip()
+        file_vals = [v for _, v in occ]
+        effective_file = next((v for v in reversed(file_vals) if v), "")
+        if len(occ) > 1:
+            out["deduplicated"].append(name)
+            drop.update(i for i, _ in occ[1:])
+            replace[occ[0][0]] = f"{name}={_quote(effective_file)}"
+        if effective_file:
+            out["kept"].append(name)
+            if env_val and env_val != effective_file:
+                out["differs"].append(name)
+            continue
+        if not env_val:
+            out["unavailable"].append(name)
+            continue
+        if name in SAFE_VALUES and env_val.lower() not in SAFE_VALUES[name]:
+            out["refused"].append(name)
+            continue
+        line = f"{name}={_quote(env_val)}"
+        if occ:
+            replace[occ[0][0]] = line
+        else:
+            append.append(line)
+            out["added"].append(name)
+        out["copied"].append(name)
+    if not dry_run and (replace or drop or append):
+        new = [replace.get(i, l) for i, l in enumerate(lines) if i not in drop]
+        if append:
+            new += ["", "# --- added from the environment by `python -m app.cli populate-env` ---"] + append
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text("\n".join(new) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(path)
+    return out
+
+
+def render_populate(res: dict, path: str) -> str:
+    def row(label, names):
+        return f"  {label:34} {len(names):2}  {', '.join(names) if names else '—'}"
+    return "\n".join([f"populate-env → {path} (names only; no values are printed)",
+                      row("copied from the environment", res["copied"]), row("already in the file (kept)", res["kept"]),
+                      row("file value differs from env (file kept)", res["differs"]), row("refused (not the safe value)", res["refused"]),
+                      row("duplicates collapsed", res["deduplicated"]), row("unavailable (blank everywhere)", res["unavailable"])])
 
 
 # -------------------------------------------------------------------------------------------------- output

@@ -74,7 +74,6 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
 
     # Google Ads
-    GOOGLE_ADS_DEVELOPER_TOKEN: str = ""
     GOOGLE_ADS_CLIENT_ID: str = ""
     GOOGLE_ADS_CLIENT_SECRET: str = ""
     GOOGLE_ADS_REDIRECT_URI: str = ""

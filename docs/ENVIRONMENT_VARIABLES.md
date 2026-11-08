@@ -1,29 +1,36 @@
 # Environment variables
 
-Generated from `backend/app/core/env_audit.py` (the single registry; a unit test keeps it in sync with `Settings`, `.env.example` and every `os.environ` read).
+Generated from `backend/app/core/env_audit.py` by `python -m app.cli docs-env` (a unit test fails if this file is out of date).
 
 **Check your own file at any time (prints no values):** `bash scripts/check-env.sh` (or `cd backend && python -m app.cli check-env`). Exit code 1 means an error. `--file-only` audits just the file, `--json` is machine-readable.
+**Fill blank values from your environment variables / Codespaces secrets:** `cd backend && python -m app.cli populate-env` (names only are printed; existing values are kept; safety switches are never loosened).
 
 ## How configuration is loaded
 1. `<repo root>/.env`, then `./.env` (e.g. `backend/.env`); later files win. This works wherever the backend is started from.
-2. Real environment variables (Docker Compose `env_file`, Codespaces/cloud secrets, your shell) override the files.
+2. Real environment variables (Docker Compose `env_file`, Codespaces/cloud secrets, your shell) override the files. If a variable is set in both, the environment wins — change it where it is set.
 3. Blank values mean “use the default”. Quotes and surrounding spaces are trimmed. `GAA_ENV_FILE=<path>` loads only that file; `GAA_ENV_FILE=none` loads none (tests).
 4. Credentials entered on the **Integrations** page are stored encrypted in the database and win over these variables. The page refuses to save credentials until `TOKEN_ENCRYPTION_KEY` (or a random 32+ character `APP_SECRET_KEY`) is set.
 
 ## Google sign-in is not Google Ads OAuth
 | | App login (Google sign-in) | Google Ads / GA4 / Business Profile |
 |---|---|---|
-| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CUSTOMER_ID` |
+| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CUSTOMER_ID` |
 | Flow | Google Identity Services returns an ID token; the backend verifies signature, issuer, audience, expiry, verified email and domain. **Only the client ID is needed** — no secret, no redirect URI. | Authorization-code flow with PKCE; needs client ID + secret + redirect URI and yields a refresh token. |
 | Grants | Access to this app only. Never grants Google Ads access. | Access to Google Ads data (read-only unless writes are separately enabled). |
-| Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; developer token from the manager account |
+| Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; API access for the Cloud project |
 Google sign-in is optional for V1: with `AUTH_PROVIDER=mock` (development only) a demo-user picker is shown. `AUTH_PROVIDER=mock` is refused when `APP_ENV=production`.
 
+## Google Ads: no developer token
+Google **sunset developer tokens on 2026-09-09** ([official guide](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)). Sending one is optional and ignored, so the app neither requires nor sends `GOOGLE_ADS_DEVELOPER_TOKEN`. What matters now is the **API access level of the Google Cloud project that owns your OAuth client** (Test, Explorer, Basic or Standard), shown on the Google Ads API Overview page in Cloud Console:
+- Test access works with Google Ads *test accounts* only. Calling a production account returns `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; the Integrations page then tells you to apply for **Explorer access** (automatic) for that project.
+- The Google Ads API must be enabled in that project; the connection test says so if it is not.
+- The Google API does not expose the access level, so the dashboard shows what the real responses prove (API enabled; test-only / production account readable) and links to the Overview page.
+
 ## Google Ads IDs
-`GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account under it, used by the connection test. Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).
+`GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header; a manager account is no longer required unless you manage several accounts through it. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account (the one the connection test must read). Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).
 
 ## Groq
-Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=groq`, `GROQ_API_KEY`, `GROQ_MODEL` (or it is enabled on the Integrations page). `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). The code uses Groq JSON-object mode, which Groq supports on its chat models. Model names are not hard-coded; production chat models listed at https://console.groq.com/docs/models on 2026-11-08: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`. A different model family for the challenger (e.g. `GROQ_MODEL=llama-3.3-70b-versatile`, `GROQ_CHALLENGER_MODEL=openai/gpt-oss-120b`) gives a more independent critique. Test Connection on the Integrations page checks the exact name against your key.
+Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=groq`, `GROQ_API_KEY`, `GROQ_MODEL` — or it is enabled on the Integrations page after its test passes. `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.
 
 ## Checklist
 
@@ -100,7 +107,6 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
-| `GOOGLE_ADS_DEVELOPER_TOKEN` 🔒 | when: real Google Ads (or enter it on the Integrations page) | — | Google Ads API developer token (from the manager account's API Center). | integrations_service.py |
 | `GOOGLE_ADS_CLIENT_ID` | when: real Google Ads | — | OAuth client ID used to authorise Google Ads (and GA4 / Business Profile). NOT the sign-in client. | integrations_service.py |
 | `GOOGLE_ADS_CLIENT_SECRET` 🔒 | when: real Google Ads | — | OAuth client secret for the Google Ads client above. | integrations_service.py |
 | `GOOGLE_ADS_REDIRECT_URI` | optional | — | OAuth redirect URI registered for the Ads client. Blank = <app origin>/api/v1/integrations/google/callback. | integrations_service.py (oauth_redirect_uri) |
@@ -155,6 +161,7 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 
 | Variable | Why |
 |---|---|
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Not needed: Google sunset developer tokens on 2026-09-09. API access is now tied to the Google Cloud project that owns your OAuth client (see the Google Ads API overview page in Cloud Console). The app no longer sends or requires it. Remove it from .env. |
 | `GOOGLE_CLIENT_SECRET` | Not used: sign-in verifies Google ID tokens with the client ID only (no authorization-code exchange). Remove it from .env. Do not confuse it with GOOGLE_ADS_CLIENT_SECRET. |
 | `GOOGLE_REDIRECT_URI` | Not used: Google sign-in has no redirect (the Google button returns a token to the page). The Ads redirect is GOOGLE_ADS_REDIRECT_URI. |
 | `KEYWORD_RESEARCH_MODE` | Not used: Keyword Planner follows the Google Ads operating mode on the Integrations page. |

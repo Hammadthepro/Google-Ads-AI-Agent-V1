@@ -1,6 +1,6 @@
 ---
 name: google-ads-api
-description: Use when working on this repo's Google Ads API integration — the RealGoogleAdsAdapter, OAuth / refresh tokens, developer token and access levels, GAQL queries, account discovery (MCC / login-customer-id), campaign creation via GoogleAdsService.Mutate, validate_only, and mapping API errors. Google Search campaigns only.
+description: Use when working on this repo's Google Ads API integration — the RealGoogleAdsAdapter, OAuth / refresh tokens, API access levels (Google Cloud project; developer tokens are sunset), GAQL queries, account discovery (MCC / login-customer-id), campaign creation via GoogleAdsService.Mutate, validate_only, and mapping API errors. Google Search campaigns only.
 ---
 
 # Google Ads API (this project)
@@ -26,8 +26,8 @@ description: Use when working on this repo's Google Ads API integration — the 
 6. Never log tokens; use `core.util.redact` and `fingerprint`.
 
 ## Authentication facts (official docs)
-- Every request needs a **developer token** (from a manager account's API Center) plus **OAuth 2.0** credentials for a Google account with access to the customer. Docs: https://developers.google.com/google-ads/api/docs/oauth/overview
-- Developer token **access levels** (Test / Explorer / Basic / Standard) limit which accounts and how many operations you can use. Check the current rules before promising anything: https://developers.google.com/google-ads/api/docs/api-policy/access-levels
+- **Developer tokens were sunset on 2026-09-09**: sending one is optional and ignored, so this app neither requires nor sends one. Every request needs **OAuth 2.0** credentials for a Google account with access to the customer; the optional `login-customer-id` header is the manager (MCC) account. Docs: https://developers.google.com/google-ads/api/docs/oauth/overview
+- **API access levels** (Test / Explorer / Basic / Standard) now belong to the **Google Cloud project that owns the OAuth client** (see the Google Ads API Overview page in Cloud Console, https://developers.google.com/google-ads/api/docs/api-policy/developer-token). Check the current rules before promising anything: https://developers.google.com/google-ads/api/docs/api-policy/access-levels
 - When the authenticated user reaches a client **through a manager account**, send `login-customer-id` = the manager's ID (digits only). Docs: https://developers.google.com/google-ads/api/docs/concepts/call-structure
 - OAuth scope: `https://www.googleapis.com/auth/adwords`. Use `access_type=offline` + `prompt=consent` to receive a refresh token; validate `state`; PKCE is supported by Google's OAuth server.
 
@@ -48,7 +48,7 @@ description: Use when working on this repo's Google Ads API integration — the 
 - [ ] Map `GoogleAdsException` failures to adapter errors (`AuthError`, `PermissionDenied`, `RateLimited`, `AdapterTimeout`, `InvalidInput`, `ServiceUnavailable`) in `real.py::_map_error`
 - [ ] Surface `request_id` and the failing field path (never the token) in diagnostics
 - [ ] `AUTHENTICATION_ERROR` / `invalid_grant` → status **Authorization Expired** → reconnect via OAuth
-- [ ] `DEVELOPER_TOKEN_NOT_APPROVED` / access-level errors → explain the access level needed; don't retry
+- [ ] `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (v25+; older versions `ACTION_NOT_PERMITTED`) → the Cloud project has Test access only: apply for Explorer access on the Google Ads API Overview page; don't retry
 - [ ] `USER_PERMISSION_DENIED` → usually a missing `login-customer-id` or no access to that customer
 - [ ] `RESOURCE_EXHAUSTED` / quota → back off; don't hammer
 - [ ] Policy violations on ads → show the policy topic; human edit; never auto-exempt

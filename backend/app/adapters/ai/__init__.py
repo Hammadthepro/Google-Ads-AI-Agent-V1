@@ -356,6 +356,23 @@ class MockAIProvider(AIProvider):
 # =====================================================================================================
 # Groq provider
 # =====================================================================================================
+def _groq_rate_limit(exc, adapter: str, model: str) -> RateLimited:
+    """Tell a transient limit (wait `retry_after`) from a request that can NEVER fit the plan's tokens-per-minute limit."""
+    import re as _re
+    text = str(getattr(exc, "message", "") or exc)
+    headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+    try:
+        retry_after = float(headers.get("retry-after", 0) or 0)
+    except ValueError:
+        retry_after = 0.0
+    m = _re.search(r"Limit\s+(\d+).*?Requested\s+(\d+)", text, _re.S)
+    limit, requested = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    too_large = bool(limit and requested > limit)
+    msg = (f"Groq rejected the request: it needs ~{requested} tokens but {model} allows {limit} per minute on this plan. Use a smaller prompt or a higher Groq tier."
+           if too_large else "Groq rate limit reached")
+    return RateLimited(msg, adapter=adapter, details={"retry_after": retry_after, "too_large": too_large, "limit": limit, "requested": requested, "model": model})
+
+
 class GroqAIProvider(AIProvider):
     """Uses the official `groq` SDK with JSON-object mode. Model names come from configuration only."""
 
@@ -389,7 +406,7 @@ class GroqAIProvider(AIProvider):
         except groq.AuthenticationError as exc:
             raise AuthError("Groq authentication failed", adapter=self.name) from exc
         except groq.RateLimitError as exc:
-            raise RateLimited("Groq rate limit reached", adapter=self.name) from exc
+            raise _groq_rate_limit(exc, self.name, model) from exc
         except groq.APITimeoutError as exc:
             raise AdapterTimeout("Groq request timed out", adapter=self.name) from exc
         except groq.APIConnectionError as exc:

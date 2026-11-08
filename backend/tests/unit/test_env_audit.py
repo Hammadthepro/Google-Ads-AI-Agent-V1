@@ -17,7 +17,7 @@ EXAMPLE = REPO_ROOT / ".env.example"
 NOT_SETTINGS = {"COMPOSE_DATABASE_URL"}  # read by docker-compose.yml, not by the backend
 DYNAMIC = {"CORS_ORIGINS", "ALLOWED_LOGIN_DOMAINS"}  # read through Settings properties (cors_origins / allowed_login_domains)
 FAKE = {"GROQ_API_KEY": "gsk_FAKE_SECRET_VALUE_1234567890", "GOOGLE_ADS_CLIENT_SECRET": "GOCSPX-fake-secret-value-abcdef",
-        "GOOGLE_ADS_REFRESH_TOKEN": "1//0fake-refresh-token-value-zzzzzz", "GOOGLE_ADS_DEVELOPER_TOKEN": "fakeDevTokenValue123456"}
+        "GOOGLE_ADS_REFRESH_TOKEN": "1//0fake-refresh-token-value-zzzzzz", "PAGESPEED_API_KEY": "AIzaFAKEfakeFAKEfakeFAKEfakeFAKE12345"}
 
 
 def names_in_example() -> list[str]:
@@ -106,7 +106,7 @@ def test_rules_google_signin_vs_ads_oauth():
     same = "abc.apps.googleusercontent.com"
     assert lv(run({"AUTH_PROVIDER": "google", "GOOGLE_CLIENT_ID": same, "GOOGLE_ADS_CLIENT_ID": same, "BOOTSTRAP_ADMIN_EMAIL": "a@b.co"}), "GOOGLE_ADS_CLIENT_ID", "warn")
     r = run({"GOOGLE_CLIENT_SECRET": "x", "GOOGLE_REDIRECT_URI": "https://x/y", "KEYWORD_RESEARCH_MODE": "real"})
-    assert {p["var"] for p in r["problems"] if "Not used" in p["message"]} == set(RETIRED)
+    assert {p["var"] for p in r["problems"] if p["var"] in RETIRED} >= {"GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI", "KEYWORD_RESEARCH_MODE"}
     assert lv(run({"ALLOWED_LOGIN_DOMAINS": "@example.com"}), "ALLOWED_LOGIN_DOMAINS", "error")
 
 
@@ -117,7 +117,7 @@ def test_rules_google_ads_ids():
     assert lv(dup, "GOOGLE_ADS_CUSTOMER_ID", "warn") and "manager" in lv(dup, "GOOGLE_ADS_CUSTOMER_ID", "warn")[0]["message"]
     assert lv(run({"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "12345"}), "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "error")
     partly = run({"GOOGLE_ADS_CLIENT_ID": "a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s"})
-    assert lv(partly, "GOOGLE_ADS_DEVELOPER_TOKEN", "warn") and lv(partly, "GOOGLE_ADS_REFRESH_TOKEN", "warn")
+    assert lv(partly, "GOOGLE_ADS_REFRESH_TOKEN", "warn") and not lv(partly, "GOOGLE_ADS_DEVELOPER_TOKEN", "warn")  # no developer token needed
     assert lv(run({"GOOGLE_ADS_MODE": "real"}), "GOOGLE_ADS_MODE", "error")
 
 
@@ -186,3 +186,52 @@ def test_exit_codes_and_json(tmp_path, capsys):
 def test_retired_variables_are_not_silently_accepted():
     rep = run({"GOOGLE_CLIENT_SECRET": "x"})
     assert lv(rep, "GOOGLE_CLIENT_SECRET", "warn") and "ID tokens" in lv(rep, "GOOGLE_CLIENT_SECRET", "warn")[0]["message"]
+
+
+def test_developer_token_is_retired_not_required():
+    """Google sunset developer tokens on 2026-09-09: never required, never validated, only flagged for removal."""
+    assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in BY_NAME and "GOOGLE_ADS_DEVELOPER_TOKEN" in RETIRED
+    assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in Settings.model_fields
+    complete = {"GOOGLE_ADS_CLIENT_ID": "1-a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s", "GOOGLE_ADS_REFRESH_TOKEN": "r",
+                "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890", "GOOGLE_ADS_MODE": "real"}
+    r = run(complete)
+    assert r["counts"]["error"] == 0 and not [p for p in r["problems"] if p["var"].startswith("GOOGLE_ADS_") and p["level"] in ("warn", "error")]  # complete without a token
+    r = run({**complete, "GOOGLE_ADS_DEVELOPER_TOKEN": "abc"})
+    msg = lv(r, "GOOGLE_ADS_DEVELOPER_TOKEN", "warn")[0]["message"]
+    assert "2026-09-09" in msg and r["counts"]["error"] == 0
+    text = (REPO_ROOT / ".env.example").read_text()
+    assert "DEVELOPER_TOKEN" not in text
+
+
+def test_populate_env_copies_names_only_and_never_overwrites(tmp_path, capsys):
+    f = tmp_path / ".env"
+    f.write_text("APP_ENV=development\nTEST_MODE=true\nGOOGLE_ADS_WRITES_ENABLED=false\nGROQ_MODEL=keep-me\nGROQ_API_KEY=\nGROQ_API_KEY=\nMOCK_SEED=42\n")
+    env = {"GROQ_API_KEY": "gsk_FAKE_SECRET_VALUE_1234567890", "GROQ_MODEL": "other", "GOOGLE_ADS_CLIENT_SECRET": "has space #and$dollar",
+           "GOOGLE_ADS_WRITES_ENABLED": "true", "TEST_MODE": "false", "PAGESPEED_API_KEY": "", "GOOGLE_ADS_DEVELOPER_TOKEN": "retired", "SOMETHING_ELSE": "x"}
+    res = env_audit.populate(f, env)
+    out = env_audit.render_populate(res, str(f))
+    assert "gsk_FAKE" not in out and "has space" not in out
+    assert "GROQ_API_KEY" in res["copied"] and "GOOGLE_ADS_CLIENT_SECRET" in res["added"]
+    assert "GROQ_MODEL" in res["kept"] and "GROQ_MODEL" in res["differs"]            # existing value wins
+    assert "GROQ_API_KEY" in res["deduplicated"]
+    assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in res["copied"] + res["added"]          # retired
+    from dotenv import dotenv_values
+    got = dotenv_values(f)
+    assert got["GROQ_API_KEY"] == env["GROQ_API_KEY"] and got["GROQ_MODEL"] == "keep-me"
+    assert got["GOOGLE_ADS_CLIENT_SECRET"] == "has space #and$dollar"                # quoting round-trips
+    assert got["GOOGLE_ADS_WRITES_ENABLED"] == "false" and got["TEST_MODE"] == "true"  # safety switches are never loosened
+    assert f.read_text().count("GROQ_API_KEY=") == 1 and "SOMETHING_ELSE" not in f.read_text()
+    assert oct(f.stat().st_mode & 0o777) == "0o600"
+    again = env_audit.populate(f, env)
+    assert not again["copied"] and not again["deduplicated"]                          # idempotent
+    dry = tmp_path / "d.env"
+    dry.write_text("APP_ENV=development\n")
+    env_audit.populate(dry, env, dry_run=True)
+    assert dry.read_text() == "APP_ENV=development\n"
+    refused = env_audit.populate(tmp_path / "new.env", {"GOOGLE_ADS_WRITES_ENABLED": "true", "EMERGENCY_BRAKE_WRITE_MODE": "real"})
+    assert set(refused["refused"]) == {"GOOGLE_ADS_WRITES_ENABLED", "EMERGENCY_BRAKE_WRITE_MODE"}
+
+
+def test_generated_files_are_current():
+    from app.core import env_docs
+    assert env_docs.is_current(), "run: cd backend && python -m app.cli docs-env"

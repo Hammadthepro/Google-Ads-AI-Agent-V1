@@ -61,3 +61,10 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 - Competitor discovery uses a Google Places text search (listings, not rankings); who actually advertises or ranks needs the Ads Transparency Center or a paid tool (not connected).
 - Services marked "do not advertise" and per-service landing pages are edited on the Business page, not in the new-client form (the form keeps them intact on edit).
 - Multi-business clients: the form edits the first business unless `business_id` is passed; the Business page still edits the others.
+
+## Integrations dashboard (V2.2)
+- **Google Ads access level is not readable through the API.** The dashboard shows what real responses prove (API enabled; Test-only if Google answers `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; production account readable) and links to the Overview page in Cloud Console.
+- Google Ads is **Connected only after the client account is read**; a manager-only test never makes it Connected. Without `GOOGLE_ADS_CUSTOMER_ID` it stays "Not tested".
+- Google sign-in has no automatic test (it is verified by signing in). The crawler in fixture mode is never "Connected".
+- Which Groq models work depends on the Groq plan; the dashboard lists the chat models your key can use and sends a real JSON-mode request to the primary and challenger.
+- Credentials from environment variables win over `.env`; if `AI_PROVIDER` is set in the environment, change it there. Enabling Groq on the Integrations page activates it regardless.

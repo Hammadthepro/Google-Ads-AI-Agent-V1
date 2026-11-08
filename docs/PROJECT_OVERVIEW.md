@@ -65,7 +65,7 @@ Build a working, testable, modular platform that lets a marketing team run Googl
 | C5 | Step 8: "edit inline, then approve" | Approval applies only to the exact version reviewed | Inline edit creates a **new payload version**, re-runs validation, then that version is approved. |
 | C6 | Step 4a: Claude vision checks above-the-fold mobile content | Groq is the AI provider | Use a **deterministic Playwright check** (element positions in the first mobile viewport) as primary; optional Groq vision if a supported model is configured (D-12). |
 | C7 | Step 7: on failure "AI fixes it (max 2 tries)" | Never execute malformed output; controlled retry | Keep max 2 AI fix attempts; each attempt is fully re-validated; then flag to a human. |
-| C8 | PDF does not list a Google Ads developer token | `.env` list omits it | `GOOGLE_ADS_DEVELOPER_TOKEN` added — the Google Ads API requires one for every real call. |
+| C8 | PDF does not list a Google Ads developer token | `.env` list omits it | Correct: Google sunset developer tokens on 2026-09-09. API access levels belong to the Google Cloud project that owns the OAuth client; the app neither requires nor sends a token. |
 
 ## 6. Success criteria for V1
 

@@ -6,6 +6,13 @@ from __future__ import annotations
 
 import os
 
+# Hermetic: real credentials in the developer's environment (cloud env vars, shell) must never reach the tests,
+# otherwise "not configured" cases would call real Google/Groq/PageSpeed endpoints.
+for _k in list(os.environ):
+    if _k.startswith(("GOOGLE_", "GROQ_", "SMTP_", "ANTHROPIC_")) or _k in ("PAGESPEED_API_KEY", "BOOTSTRAP_ADMIN_EMAIL", "ALLOWED_LOGIN_DOMAINS", "APP_SECRET_KEY",
+                                                                             "COMPOSE_DATABASE_URL", "GOOGLE_ADS_MODE", "PLACES_MODE", "PAGESPEED_MODE", "NOTIFIER_MODE"):
+        os.environ.pop(_k)
+
 os.environ.setdefault("TEST_DATABASE_URL", "postgresql+psycopg://app:app@localhost:5432/google_ads_agent_test")
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 os.environ.update({"GAA_ENV_FILE": "none", "TOKEN_ENCRYPTION_KEY": "9ZKj5vNq0y3uW8cFhB2tXsL1mP6dRaQe4oYiTnVgHwE=", "APP_ENV": "test", "INTEGRATION_MODE": "mock", "TEST_MODE": "true", "GOOGLE_ADS_WRITES_ENABLED": "false",

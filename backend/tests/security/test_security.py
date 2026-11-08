@@ -65,14 +65,14 @@ def test_layering_contract_business_logic_never_imports_vendor_sdks_or_concrete_
 
 def test_secrets_never_returned_by_api(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "gsk_TESTSECRET1234567890")
-    monkeypatch.setenv("GOOGLE_ADS_DEVELOPER_TOKEN", "devtoken-SECRET-abc")
+    monkeypatch.setenv("GOOGLE_ADS_CLIENT_SECRET", "adssecret-SECRET-abc")
     from app.core.config import reset_settings_cache
     reset_settings_cache()
     try:
         sup = Api(SUPER)
         for path in ("/integrations", "/settings", "/auth/me", "/auth/config", "/dashboard"):
             body = sup.get(path).text
-            assert "gsk_TESTSECRET" not in body and "devtoken-SECRET" not in body, path
+            assert "gsk_TESTSECRET" not in body and "adssecret-SECRET" not in body, path
         groq = next(i for i in sup.get("/integrations").json()["integrations"] if i["provider"] == "groq")
         assert groq["secrets"]["api_key"]["saved"] is True and groq["secrets"]["api_key"]["source"] == "environment"
     finally:

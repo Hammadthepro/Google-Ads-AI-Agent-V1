@@ -17,8 +17,8 @@ Status: **Real adapters implemented, not verified live.** No real integration is
 | Google Cloud project | OAuth clients, API enablement, billing | One project can host all |
 | OAuth consent screen + OAuth client (web) for app login | Sign in with Google (OIDC) | Scopes: `openid email profile` |
 | OAuth client for Google Ads access | Google Ads OAuth (`https://www.googleapis.com/auth/adwords`) | Separate consent from login |
-| Google Ads **manager account (MCC)** | Required to apply for a developer token; manage client accounts | Normal accounts are linked under it |
-| Google Ads API **developer token** | Required on every Google Ads API call (read and write) | Applied for in the MCC's API Center; access level determines whether production accounts can be used — verify current levels and approval process |
+| Google Ads **manager account (MCC)** | Optional: only needed to manage several client accounts through one login (`login-customer-id`) | Normal accounts are linked under it |
+| Google Ads API **access level** | Test / Explorer / Basic / Standard, granted to the Google Cloud project that owns the OAuth client | Apply on the Google Ads API Overview page in Cloud Console (developer tokens are sunset) |
 | Google Places API (New) key + billing | Business Profile & competitor audits | Paid per request; restrict key by API + IP |
 | PageSpeed Insights API key | Speed audits | Free with quota |
 | Hosting (VPS/cloud), domain, TLS | Production | |
@@ -45,7 +45,7 @@ Status: **Real adapters implemented, not verified live.** No real integration is
 ## 3. Per-integration checklists
 1. **Google authentication** — consent screen; client id/secret; redirect URI; backend ID-token verification (signature, `aud`, `iss`, `exp`, `email_verified`, optional `hd` domain restriction); first-admin bootstrap by email.
 2. **Google Ads OAuth** — authorization + callback with `state`/PKCE; offline access for refresh token; encrypted storage; account discovery (`ListAccessibleCustomers`); permission status; disconnect (revoke + delete ciphertext).
-3. **Google Ads API** — google-ads library pinned to a supported API version; developer token; `login_customer_id` for MCC; read-only GAQL first (accounts, campaigns, metrics, search terms, change events); then `validate_only` mutates; writes last.
+3. **Google Ads API** — google-ads library pinned to a supported API version (35.x runs without a developer token); `login_customer_id` for MCC; read-only GAQL first (accounts, campaigns, metrics, search terms, change events); then `validate_only` mutates; writes last.
 4. **Google Places API** — Text Search + Place Details (New); field masks to control cost; label LIVE; handle missing listings.
 5. **PageSpeed API** — `runPagespeed` mobile + desktop separately; timeouts (it is slow); cache results.
 6. **Live website crawling** — SSRF guard, robots.txt, depth 2, page cap, timeouts, Playwright only when content is JS-rendered.
@@ -69,9 +69,9 @@ Do these in order. Each step is reversible by setting its `*_MODE` back to `mock
 
 **C. Google Ads API — read-only first**
 1. Create or use a Google Ads **manager account (MCC)** and link the client accounts under it.
-2. MCC → Tools → API Center → apply for a **developer token**. Check the access level Google grants: production accounts need more than test access.
+2. Google Cloud Console → **Google Ads API Overview** for the project that owns your OAuth client: check the API access level. Production accounts need **Explorer** access or higher (apply there; no developer token — they were sunset on 2026-09-09).
 3. Google Cloud → enable the *Google Ads API* → create an OAuth client for Google Ads (redirect URI `https://<host>/api/v1/ads-oauth/callback`).
-4. `.env`: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (MCC, digits only), `TOKEN_ENCRYPTION_KEY` (Fernet key).
+4. `.env`: `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (MCC, digits only), `TOKEN_ENCRYPTION_KEY` (Fernet key).
 5. Set `GOOGLE_ADS_MODE=real` and `KEYWORD_RESEARCH_MODE=real`, keep **`GOOGLE_ADS_WRITES_ENABLED=false`**, restart.
 6. **Integrations → Connect Google Ads (OAuth)** as Super Admin → **Test** → **Google Ads Accounts → Discover** → link accounts → **Sync (read)**. Compare campaigns/metrics with the Google Ads UI.
 7. Run **Audit only** tasks and the daily sync for a week. Validation now calls Google's `validate_only` (creates nothing).

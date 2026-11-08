@@ -112,7 +112,7 @@ if (await page.getByRole("button", { name: "Approve this version" }).count()) er
 await ctx.clearCookies();
 await login(page, "admin@napollo.example");
 await page.goto(approvalUrl);
-await page.getByText("Tracking status").waitFor();
+await page.locator("h2", { hasText: "Tracking status" }).waitFor();
 if (shots) await page.screenshot({ path: `${shots}/approval.png`, fullPage: true });
 await page.getByRole("button", { name: "Approve this version" }).click();
 await page.getByRole("button", { name: "Approve", exact: true }).click();

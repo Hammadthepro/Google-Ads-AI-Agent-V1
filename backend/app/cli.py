@@ -6,6 +6,8 @@
   create-super-admin   EMAIL [NAME]
   daily-cycle          run one daily job cycle now
   advance DAYS         TEST_MODE: advance the simulated clock and run daily cycles
+  docs-env             regenerate .env.example and docs/ENVIRONMENT_VARIABLES.md from the variable registry
+  populate-env         fill blank .env values from the environment (names only): [--env-file PATH] [--dry-run]
   check-env            audit the environment/.env (never prints values): [--env-file PATH] [--file-only] [--json] [--brief] [--strict]
 """
 from __future__ import annotations
@@ -19,6 +21,17 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 1
     cmd = argv[0]
+    if cmd == "docs-env":
+        from app.core import env_docs
+        print("wrote: " + ", ".join(env_docs.write_all()))
+        return 0
+    if cmd == "populate-env":
+        from app.core import env_audit
+        from app.core.config import REPO_ROOT
+        path = argv[argv.index("--env-file") + 1] if "--env-file" in argv else str(REPO_ROOT / ".env")
+        res = env_audit.populate(path, dry_run="--dry-run" in argv)
+        print(env_audit.render_populate(res, path) + ("\n(dry run: nothing was written)" if "--dry-run" in argv else ""))
+        return 0
     if cmd == "check-env":  # no database or logging needed
         from app.core import env_audit
         path = argv[argv.index("--env-file") + 1] if "--env-file" in argv else None

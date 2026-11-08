@@ -40,7 +40,7 @@ Previous status: Open. Each decision has a recommended default. Phases that depe
 | ID | Risk | Impact | Mitigation |
 |---|---|---|---|
 | R-01 | Container is ephemeral; no git remote attached | Loss of all work | Attach a GitHub repo before Phase 1; push at each phase end |
-| R-02 | Developer-token access approval may take time or be limited | Delays real integration | Mock-first; start the application early once MCC exists |
+| R-02 | Google Cloud project API access (Explorer/Basic/Standard) may take time or be limited | Delays real integration | Mock-first; start the application early once MCC exists |
 | R-03 | Normal Google Ads account has no test protections | Real spend from a bug | Two-key writes, account allowlist, paused-first, adapter-level guard |
 | R-04 | Groq model availability/deprecation; structured-output support varies per model | AI failures | Configurable model, schema validation, MockAIProvider fallback for tests only (never silent in production) |
 | R-05 | Groq rate limits on lower tiers | Slow/failed drafts | Queue AI calls in Celery, backoff, show status |
