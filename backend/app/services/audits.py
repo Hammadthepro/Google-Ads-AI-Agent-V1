@@ -52,6 +52,26 @@ def content_score(page: dict, service: str, city: str) -> dict:
             "notes": notes, "method": "deterministic DOM heuristics (mobile above-the-fold is a proxy, see KNOWN_ISSUES)"}
 
 
+def page_signals(pages: list[dict], base_url: str) -> dict:
+    """Deterministic, evidence-backed signals from the crawled pages (used by the website & landing page audit)."""
+    text = " ".join((p.get("text_excerpt") or "").lower() for p in pages)
+    links = [u.lower() for p in pages for u in p.get("internal_links", [])]
+    heads = " ".join(h.lower() for p in pages for h in (p.get("h2") or []) + (p.get("h3") or []))
+    return {
+        "https": base_url.lower().startswith("https://"),
+        "has_faq": "faq" in text or "frequently asked" in text or "?" in heads,
+        "has_privacy_link": any("privacy" in u for u in links), "has_terms_link": any("terms" in u for u in links),
+        "has_pricing_or_offers": bool(re.search(r"\$\s?\d|free estimate|free quote|free consultation|financing|discount|% off|coupon", text)),
+        "has_testimonials": any(w in text for w in ("testimonial", "reviews", "5-star", "five star", "what our customers")),
+        "has_credentials": any(w in text for w in ("licensed", "insured", "certified", "accredited", "bbb")),
+        "has_process_steps": any(w in text for w in ("how it works", "our process", "step 1", "what to expect")),
+        "phones_on_site": sorted({ph for p in pages for ph in p.get("phones", [])})[:10],
+        "pages_with_tel_link": sum(1 for p in pages if p.get("tel_links")), "pages_with_form": sum(1 for p in pages if p.get("forms")),
+        "pages_with_viewport": sum(1 for p in pages if p.get("has_viewport")), "pages": len(pages),
+        "site_text_sample": text[:4000],
+    }
+
+
 # ------------------------------------------------------------------ 4a website
 def website_audit(ctx: dict, task_id: str | None) -> dict:
     url = ctx["website_url"]
@@ -99,6 +119,7 @@ def website_audit(ctx: dict, task_id: str | None) -> dict:
             ps[strategy] = {"error": exc.kind, "message": exc.message}
     tags = sorted({t for p in pages for t in p["google_tags"]})
     seeds = sorted({*form_services, *[s["name"] for s in site_services]} - set(ctx["excluded"]))
+    signals = page_signals(pages, url)
     claims_unverified = [c for c in extraction.claims
                          if not any(normalize_term(v) in normalize_term(c) for v in ctx["verified_claims"])]
     return {
@@ -113,7 +134,7 @@ def website_audit(ctx: dict, task_id: str | None) -> dict:
         "landing_page_map": page_for, "thin_pages": thin, "seo_issues": seo_issues, "content_scores": scores,
         "pagespeed": ps, "google_tags_detected": tags, "gtm_detected": sorted({g for p in pages for g in p["gtm_containers"]}),
         "schema_types": sorted({str(s.get("@type")) for p in pages for s in p["schema"] if isinstance(s, dict)}),
-        "keyword_seeds": seeds,
+        "keyword_seeds": seeds, "signals": signals, "crawled_url": url,
         "landing_page_recommendations": [f"Use {u} for '{s}' ads" for s, u in page_for.items()] +
                                         [f"Create a dedicated page for '{s}' (ads would land on the homepage)" for s in services_without_page],
         "tag_note": "Tag detection shows likely installation only; it does not prove conversions are recorded.",
@@ -284,11 +305,15 @@ def build_context(db: Session, business: Business) -> dict:
             "excluded": clients_service.excluded_services(business), "verified_claims": business.verified_claims or [],
             "competitors": [{"name": c.name, "website_url": c.website_url} for c in business.competitors],
             "competitor_ads_text": business.competitor_ads_text or "", "customer_id": acct.customer_id if acct else "",
-            "radius_miles": business.default_radius_miles, "business_type": business.business_type}
+            "radius_miles": business.default_radius_miles, "business_type": business.business_type,
+            "category": business.category or business.business_type, "service_areas": business.service_areas or [],
+            "states": business.states or [], "has_gbp": business.has_gbp, "gtm_id": business.gtm_id,
+            "email": business.email, "monthly_budget": business.monthly_budget_usd,
+            "lead_form_url": business.lead_form_url, "thank_you_url": business.thank_you_url}
 
 
 def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_id: str | None,
-                 focus_service: str | None = None) -> dict:
+                 focus_service: str | None = None, on_done=None) -> dict:
     ctx = build_context(db, business)
     if focus_service:
         ctx["focus_service"] = focus_service
@@ -314,6 +339,8 @@ def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_
             rows[k].source_type = results[k].get("source", "MOCK")
             rows[k].finished_at = clock.now()
             rows[k].summary = _summary(k, results[k])
+            if on_done:
+                on_done(k, results[k], rows[k].summary)
     db.flush()
     return {"context": ctx, "website": results["WEBSITE"], "gbp": results["GBP"], "competitor": results["COMPETITOR"],
             "audit_ids": {k: r.id for k, r in rows.items()}}

@@ -53,6 +53,7 @@ class Client(TimestampMixin, Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     flag_reason: Mapped[str] = mapped_column(Text, default="")
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    client_code: Mapped[str] = mapped_column(String(16), unique=True, index=True, default="")  # human-readable unique ID, e.g. CL-000007
     # client-level weekly lead target (all campaigns combined) and agreed monthly ad budget
     weekly_conversion_target: Mapped[float] = mapped_column(Float, default=0)
     monthly_budget_usd: Mapped[float] = mapped_column(Float, default=0)
@@ -76,6 +77,16 @@ class Business(TimestampMixin, Base):
     verified_claims: Mapped[list] = mapped_column(JSONType, default=list)
     brand_rules: Mapped[list] = mapped_column(JSONType, default=list)
     competitor_ads_text: Mapped[str] = mapped_column(Text, default="")
+    # --- intake form (V2.1)
+    category: Mapped[str] = mapped_column(String(120), default="")          # free text, e.g. "plumber"
+    email: Mapped[str] = mapped_column(String(320), default="")             # form leads land here
+    gtm_id: Mapped[str] = mapped_column(String(40), default="")             # GTM-XXXX / G-XXXX / AW-XXXX
+    has_gbp: Mapped[bool | None] = mapped_column(Boolean, nullable=True)    # None = not answered
+    service_areas: Mapped[list] = mapped_column(JSONType, default=list)     # [{"label","city","state","zip"}]
+    states: Mapped[list] = mapped_column(JSONType, default=list)            # ["TX"]; empty = nationwide
+    targeting_mode: Mapped[str] = mapped_column(String(12), default="AREAS")  # AREAS | RADIUS
+    monthly_budget_usd: Mapped[float] = mapped_column(Float, default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
     google_ads_account_id: Mapped[str | None] = mapped_column(ForeignKey("google_ads_accounts.id"), nullable=True)
     client: Mapped[Client] = relationship(back_populates="businesses")
     services: Mapped[list["BusinessService"]] = relationship(cascade="all, delete-orphan")
@@ -96,6 +107,7 @@ class Competitor(IdMixin, Base):
     name: Mapped[str] = mapped_column(String(200))
     website_url: Mapped[str] = mapped_column(String(500), default="")
     place_id: Mapped[str] = mapped_column(String(200), default="")
+    maps_url: Mapped[str] = mapped_column(String(500), default="")
 
 
 # ---------------------------------------------------------------- google ads mirror
@@ -115,22 +127,6 @@ class GoogleAdsAccount(TimestampMixin, Base):
     integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
     access_level: Mapped[str] = mapped_column(String(16), default="READ_ONLY")  # READ_ONLY / STANDARD (app-side)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class IntegrationConnection(TimestampMixin, Base):
-    __tablename__ = "integration_connections"
-    provider: Mapped[str] = mapped_column(String(40), index=True)
-    account_ref: Mapped[str] = mapped_column(String(100), default="")
-    status: Mapped[str] = mapped_column(String(32), default="DISCONNECTED")
-    integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
-    scopes: Mapped[list] = mapped_column(JSONType, default=list)
-    encrypted_refresh_token: Mapped[str] = mapped_column(Text, default="")  # ciphertext only
-    token_fingerprint: Mapped[str] = mapped_column(String(32), default="")
-    connected_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_error: Mapped[str] = mapped_column(Text, default="")
-    oauth_state: Mapped[str] = mapped_column(String(100), default="")
 
 
 class Campaign(TimestampMixin, Base):
@@ -265,3 +261,16 @@ class ActivityLog(IdMixin, Base):
     request_id: Mapped[str] = mapped_column(String(40), default="")
     ip: Mapped[str] = mapped_column(String(64), default="")
 
+
+
+from sqlalchemy import event, text  # noqa: E402
+
+
+@event.listens_for(Client, "before_insert")
+def _assign_client_code(mapper, connection, target: Client) -> None:
+    """Every client gets a unique, human-readable ID (CL-000001, CL-000002, …). The DB unique index is the final guard."""
+    if target.client_code:
+        return
+    last = connection.execute(text("SELECT COALESCE(MAX(CAST(SUBSTRING(client_code FROM 4) AS INTEGER)), 0) "
+                                   "FROM clients WHERE client_code ~ '^CL-[0-9]+$'")).scalar() or 0
+    target.client_code = f"CL-{last + 1:06d}"

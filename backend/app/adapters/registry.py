@@ -83,19 +83,13 @@ def auth():
 
 
 @lru_cache
-def ads_oauth():
-    from app.adapters.ads_oauth import GoogleAdsOAuthAdapter, MockAdsOAuthAdapter
-    return GoogleAdsOAuthAdapter() if get_settings().mode_for("GOOGLE_ADS") == "real" else MockAdsOAuthAdapter()
-
-
-@lru_cache
 def notifier():
     from app.adapters.notifications import EmailNotifier, MockNotifier
     return EmailNotifier() if get_settings().mode_for("NOTIFIER") == "real" else MockNotifier()
 
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
-       "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "ads_oauth": ads_oauth, "notifier": notifier}
+       "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier}
 
 
 def reset() -> None:

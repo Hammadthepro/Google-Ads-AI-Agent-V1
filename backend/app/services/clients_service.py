@@ -25,7 +25,7 @@ def _check_url(value: str, field: str) -> None:
 
 
 def serialize_client(c: Client, with_businesses: bool = True) -> dict:
-    data = {"id": c.id, "name": c.name, "owner_user_id": c.owner_user_id, "backup_owner_user_id": c.backup_owner_user_id,
+    data = {"id": c.id, "client_code": c.client_code, "name": c.name, "owner_user_id": c.owner_user_id, "backup_owner_user_id": c.backup_owner_user_id,
             "owner_contact": c.owner_contact, "backup_contact": c.backup_contact, "tag_access_contact": c.tag_access_contact,
             "weekly_conversion_target": c.weekly_conversion_target, "monthly_budget_usd": c.monthly_budget_usd,
             "automation_frozen": c.automation_frozen, "flagged": c.flagged, "flag_reason": c.flag_reason,
