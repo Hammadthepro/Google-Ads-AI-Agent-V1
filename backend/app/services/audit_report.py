@@ -670,8 +670,19 @@ def snapshot(biz: Business, client: Client) -> dict:
     return client_profile.to_form(client, biz)
 
 
+def _norm(v):
+    """20.0 and 20 are the same value (JSON storage turns one into the other), so hash them identically."""
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    return v
+
+
 def _hash(d: dict) -> str:
-    d = {k: v for k, v in d.items() if k not in ("updated_at", "created_at")}
+    d = _norm({k: v for k, v in d.items() if k not in ("updated_at", "created_at")})
     return hashlib.sha256(canonical_json(d).encode()).hexdigest()
 
 

@@ -1,3 +1,5 @@
+import { NewClient, EditClient } from "./pages/ClientForm";
+import { AuditReportPage } from "./pages/AuditReportPage";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
 import { Spinner } from "./components/ui";
@@ -36,7 +38,10 @@ export default function App() {
         <Route element={<Protected><Layout /></Protected>}>
           <Route index element={<Dashboard />} />
           <Route path="clients" element={<Clients />} />
+          <Route path="clients/new" element={<NewClient />} />
           <Route path="clients/:id" element={<ClientDetail />} />
+          <Route path="clients/:id/edit" element={<EditClient />} />
+          <Route path="audit-reports/:id" element={<AuditReportPage />} />
           <Route path="businesses" element={<Businesses />} />
           <Route path="businesses/:id" element={<BusinessDetail />} />
           <Route path="accounts" element={<Accounts />} />

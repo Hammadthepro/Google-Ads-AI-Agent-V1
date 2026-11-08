@@ -148,7 +148,7 @@ export function Table({ columns, rows, empty = "Nothing here yet.", onRowClick }
   );
 }
 
-export function fmt(v: unknown): ReactNode {
+function fmt(v: unknown): ReactNode {
   if (v === null || v === undefined || v === "") return <span className="text-slate-400">—</span>;
   if (typeof v === "boolean") return v ? "Yes" : "No";
   if (typeof v === "number") return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });

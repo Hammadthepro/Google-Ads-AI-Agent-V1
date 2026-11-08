@@ -55,3 +55,9 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 - Claude requests use `fallbacks: "default"` (server-side refusal fallback, beta `server-side-fallback-2026-07-01`) for Opus 5.x models.
 - Accounts page: multiple accounts and MCC discovery exist from V1; the per-account `access_level` column was added but is not yet editable in the UI.
 - Playwright smoke covers the main flow and the Integrations page; the new plan editor and budget-decision screens are covered by API tests, not yet by browser tests.
+
+## Client profile and audit report (V2.1)
+- The audit's website, Business Profile and competitor evidence comes from the mock adapters until real integrations are connected; such findings are labelled "simulated data".
+- Competitor discovery uses a Google Places text search (listings, not rankings); who actually advertises or ranks needs the Ads Transparency Center or a paid tool (not connected).
+- Services marked "do not advertise" and per-service landing pages are edited on the Business page, not in the new-client form (the form keeps them intact on edit).
+- Multi-business clients: the form edits the first business unless `business_id` is passed; the Business page still edits the others.

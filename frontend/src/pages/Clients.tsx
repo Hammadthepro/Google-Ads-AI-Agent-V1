@@ -1,37 +1,23 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction, useClients } from "../lib/hooks";
-import { Badge, Button, Card, ErrorBox, Field, Input, KV, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
+import { Badge, Button, Card, dt, ErrorBox, Field, Input, KV, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
 
 export function Clients() {
   const { data, isLoading } = useClients();
   const { can } = useAuth();
   const nav = useNavigate();
-  const [form, setForm] = useState({ name: "", owner_contact: "", backup_contact: "", tag_access_contact: "" });
-  const create = useAction((b) => api.post("/clients", b), [["clients"]]);
   return (
     <div className="space-y-6">
-      <PageHeader title="Clients" subtitle="A client can have several businesses; a business with its own Google Ads account is a separate client." />
-      {can("clients.create") && (
-        <Card title="New client">
-          <div className="grid gap-3 md:grid-cols-4">
-            <Field label="Client name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-            <Field label="Client owner"><Input value={form.owner_contact} onChange={(e) => setForm({ ...form, owner_contact: e.target.value })} placeholder="name / email" /></Field>
-            <Field label="Backup contact"><Input value={form.backup_contact} onChange={(e) => setForm({ ...form, backup_contact: e.target.value })} /></Field>
-            <Field label="Website / tag access contact"><Input value={form.tag_access_contact} onChange={(e) => setForm({ ...form, tag_access_contact: e.target.value })} /></Field>
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            <Button variant="primary" disabled={!form.name || create.isPending} onClick={() => create.mutate(form, { onSuccess: (c: any) => nav(`/clients/${c.id}`) })}>Create client</Button>
-            <ErrorBox error={create.error} />
-          </div>
-        </Card>
-      )}
+      <PageHeader title="Clients" subtitle="Every client has a unique ID. A business with its own Google Ads account is a separate client."
+        actions={can("clients.create") && <Link to="/clients/new"><Button variant="primary">New client</Button></Link>} />
       <Card title="All clients">
         {isLoading ? <Spinner /> : (
-          <Table rows={data ?? []} onRowClick={(c) => nav(`/clients/${c.id}`)} columns={[
+          <Table rows={data ?? []} onRowClick={(c) => nav(`/clients/${c.id}`)} empty="No clients yet — create the first one." columns={[
+            { key: "client_code", label: "Client ID", render: (c) => <code className="text-xs">{c.client_code}</code> },
             { key: "name", label: "Client", render: (c) => <span className="font-medium text-slate-900">{c.name}</span> },
             { key: "businesses", label: "Businesses", render: (c) => c.businesses.map((b: any) => b.name).join(", ") || "—" },
             { key: "owner_contact", label: "Owner" },
@@ -44,13 +30,37 @@ export function Clients() {
   );
 }
 
+function AuditReports({ clientId, canRun, highlight }: { clientId: string; canRun: boolean; highlight?: string | null }) {
+  const nav = useNavigate();
+  const list = useQuery({ queryKey: ["audit-reports", clientId], queryFn: () => api.get(`/clients/${clientId}/audit-reports`), refetchInterval: (q) => ((q.state.data as any[])?.some((r) => r.status === "RUNNING") ? 3000 : false) });
+  const run = useAction(() => api.post(`/clients/${clientId}/audit-reports`), [["audit-reports", clientId]]);
+  const last = (list.data ?? []).find((r: any) => r.status === "COMPLETED");
+  return (
+    <Card title="Audits" actions={canRun && <Button size="sm" variant="primary" disabled={run.isPending || (list.data ?? []).some((r: any) => r.status === "RUNNING")}
+      onClick={() => run.mutate({}, { onSuccess: (r: any) => nav(`/audit-reports/${r.id}`) })}>{run.isPending ? "Starting…" : "Run new audit"}</Button>}>
+      <p className="mb-3 text-sm text-slate-600">{last ? <>Last audit: <b>{dt(last.finished_at)}</b> (v{last.version}).{last.profile_changed_since && <span className="ml-1 text-amber-700"> The profile was edited since — run a new audit to refresh.</span>}</> : "No completed audit yet."} Earlier audits are always kept.</p>
+      <ErrorBox error={run.error} />
+      <Table rows={list.data ?? []} onRowClick={(r) => nav(`/audit-reports/${r.id}`)} empty="No audits yet." columns={[
+        { key: "version", label: "Version", render: (r) => <span className={r.id === highlight ? "font-semibold text-brand-700" : ""}>v{r.version}</span> },
+        { key: "status", label: "Status", render: (r) => <StatusBadge value={r.status} /> },
+        { key: "started_at", label: "Started", render: (r) => dt(r.started_at) },
+        { key: "overall", label: "Overall", render: (r) => r.scores?.overall?.score ?? "—" },
+        { key: "website", label: "Website", render: (r) => r.scores?.website?.score ?? "—" },
+        { key: "gbp", label: "Profile", render: (r) => r.scores?.gbp?.score ?? "—" },
+        { key: "competitors", label: "Competitors", render: (r) => r.scores?.competitors?.score ?? "—" },
+        { key: "keywords", label: "Keywords", render: (r) => r.scores?.keywords?.score ?? "—" },
+        { key: "stale", label: "", render: (r) => r.profile_changed_since ? <Badge tone="amber">profile edited since</Badge> : null },
+      ]} />
+    </Card>
+  );
+}
+
 export function ClientDetail() {
   const { id } = useParams();
   const { can } = useAuth();
   const q = useQuery({ queryKey: ["client", id], queryFn: () => api.get(`/clients/${id}`) });
   const structure = useQuery({ queryKey: ["structure", id], queryFn: () => api.get(`/clients/${id}/structure`) });
-  const [b, setB] = useState({ name: "", website_url: "", phone: "", address: "", business_type: "home_services" });
-  const addBiz = useAction((v) => api.post(`/clients/${id}/businesses`, v), [["client", id!], ["businesses"]]);
+  const [params] = useSearchParams();
   const unfreeze = useAction(() => api.post(`/clients/${id}/unfreeze`), [["client", id!]]);
   const [tg, setTg] = useState<{ weekly?: string; budget?: string }>({});
   const saveTargets = useAction((v) => api.patch(`/clients/${id}`, v), [["client", id!], ["clients"]]);
@@ -58,7 +68,19 @@ export function ClientDetail() {
   const c = q.data;
   return (
     <div className="space-y-6">
-      <PageHeader title={c.name} subtitle="Client profile" actions={<>
+      {params.get("created") && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4" role="status">
+          <div className="font-semibold text-emerald-900">Client created · {c.client_code}</div>
+          <p className="mt-1 text-sm text-emerald-800">{params.get("report") ? "The analysis has started. Watch it run, or come back to the results here." : "The profile is saved. Run an audit when you are ready."}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {params.get("report") && <Link to={`/audit-reports/${params.get("report")}`}><Button variant="primary">Watch the analysis live</Button></Link>}
+            <Link to="/"><Button>Open the dashboard</Button></Link>
+            <Link to="/clients/new"><Button>Add another client</Button></Link>
+          </div>
+        </div>)}
+      {params.get("saved") && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-900">Profile saved. Earlier audits are kept — run a new audit to refresh the findings.</div>}
+      <PageHeader title={c.name} subtitle={<>Client ID <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">{c.client_code}</code> · created {dt(c.created_at)}</>} actions={<>
+        {can("clients.edit") && <Link to={`/clients/${c.id}/edit`}><Button>Edit client information</Button></Link>}
         {c.automation_frozen && <Badge tone="red">automation frozen by emergency brake</Badge>}
         {c.automation_frozen && can("killswitch.client") && <Button size="sm" onClick={() => unfreeze.mutate({})}>Unfreeze automation</Button>}
         <Link to={`/tasks?client=${c.id}`}><Button variant="primary">Run a task</Button></Link></>} />
@@ -93,20 +115,8 @@ export function ClientDetail() {
           { key: "services", label: "Services", render: (x) => x.services.filter((s: any) => !s.is_excluded).map((s: any) => s.name).join(", ") },
           { key: "tracking", label: "Tracking", render: (x) => <StatusBadge value={c.tracking[x.id]?.effective_state} /> },
         ]} />
-        {can("clients.edit") && (
-          <div className="mt-5 border-t border-slate-100 pt-4">
-            <div className="mb-2 text-sm font-medium">Add business</div>
-            <div className="grid gap-3 md:grid-cols-5">
-              <Input placeholder="Business name" value={b.name} onChange={(e) => setB({ ...b, name: e.target.value })} />
-              <Input placeholder="https://website" value={b.website_url} onChange={(e) => setB({ ...b, website_url: e.target.value })} />
-              <Input placeholder="Phone" value={b.phone} onChange={(e) => setB({ ...b, phone: e.target.value })} />
-              <Input placeholder="Address (street, city, state)" value={b.address} onChange={(e) => setB({ ...b, address: e.target.value })} />
-              <Button variant="primary" disabled={!b.name || addBiz.isPending} onClick={() => addBiz.mutate(b)}>Add business</Button>
-            </div>
-            <div className="mt-2"><ErrorBox error={addBiz.error} /></div>
-          </div>
-        )}
       </Card>
+      <AuditReports clientId={c.id} canRun={can("audits.run")} highlight={params.get("report")} />
       <Card title="Campaign structure" actions={structure.data && <Badge tone="violet">{structure.data.source} DATA</Badge>}>
         {structure.isLoading ? <Spinner /> : (
           <Table rows={structure.data?.campaigns ?? []} empty="No campaigns." columns={[

@@ -75,3 +75,11 @@ describe("formatting & errors", () => {
     expect(screen.getByText("hi")).toBeInTheDocument();
   });
 });
+
+import { EvidenceBadge } from "../pages/AuditReportPage";
+describe("EvidenceBadge", () => {
+  it("labels the five evidence types", () => {
+    render(<>{["VERIFIED", "ESTIMATED", "AI_GENERATED", "UNAVAILABLE", "NOT_APPLICABLE"].map((v) => <EvidenceBadge key={v} v={v} />)}</>);
+    for (const t of ["Verified", "Estimated", "AI-generated", "Unavailable", "Not applicable"]) expect(screen.getByText(t)).toBeInTheDocument();
+  });
+});

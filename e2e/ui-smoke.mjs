@@ -7,6 +7,8 @@ const { chromium } = require("playwright");
 const BASE = process.argv[2] || "http://localhost:5173";
 const shots = process.env.SHOTS_DIR;
 const errors = [];
+let lastValidation = "";
+
 
 async function login(page, email) {
   await page.goto(`${BASE}/login`);
@@ -17,6 +19,7 @@ async function login(page, email) {
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 const page = await ctx.newPage();
+page.on("response", async (r) => { if (r.url().includes("client-profiles/validate")) lastValidation = JSON.stringify((await r.json().catch(() => ({}))).errors); });
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 // ignored: blocked web fonts in sandboxed networks, favicon, and the expected 401 from /auth/me before sign-in
 page.on("console", (m) => {
@@ -48,6 +51,41 @@ const body = await page.content();
 if (/gsk_|sk-ant-|ya29\./.test(body)) errors.push("secret-looking value in DOM");
 if (shots) await page.screenshot({ path: `${shots}/integrations.png`, fullPage: true });
 await page.goto(`${BASE}/`);
+
+// 1b. new-client form → profile with unique ID → live audit → edit client
+{
+  const host = `smoke-${Date.now()}.example`;
+  await page.goto(`${BASE}/clients/new`);
+  await page.getByText(/field\(s\) to fix/).waitFor();
+  await page.getByLabel("Business name").fill("Smoke Test Plumbing");
+  await page.getByLabel("Business category").fill("plumber");
+  await page.getByLabel("Business phone").fill("5125550100");
+  await page.getByLabel("Website *").fill(host);
+  await page.getByRole("button", { name: "Yes", exact: true }).click();
+  for (const [label, value] of [["Services input", "Drain Cleaning"], ["Service areas: cities or zip codes input", "Austin, TX 78701"]]) {
+    const el = page.getByLabel(label); await el.fill(value); await el.press("Enter");
+  }
+  await page.getByLabel("Monthly ad budget (USD)").fill("1.5k");
+  await page.getByText("Ready to save").waitFor().catch(async (e) => { console.log("last validation:", lastValidation, JSON.stringify(await page.evaluate(async () => { const r = await fetch("/api/v1/client-profiles/validate", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": document.cookie.split("gaa_csrf=")[1]?.split(";")[0] ?? "" }, body: JSON.stringify({ profile: {} }) }); return r.status; })), await page.getByText(/field\(s\) to fix/).textContent()); throw e; });
+  await page.getByRole("button", { name: "Save client" }).click();
+  await page.waitForURL(/\/clients\/[0-9a-f]+\?created=1/);
+  const banner = await page.getByText(/Client created/).textContent();
+  if (!/CL-\d{6}/.test(banner)) errors.push("client ID missing after create");
+  for (const b of ["Watch the analysis live", "Open the dashboard", "Add another client"]) {
+    if (!(await page.getByText(b, { exact: true }).isVisible())) errors.push(`missing button: ${b}`);
+  }
+  await page.getByRole("button", { name: "Watch the analysis live" }).click();
+  await page.waitForURL(/audit-reports\//);
+  await page.getByText("Overall client readiness").waitFor({ timeout: 90000 });
+  if (await page.getByText("The client profile was edited after this audit").count()) errors.push("false 'profile edited' banner");
+  await page.goBack();
+  await page.getByRole("button", { name: "Edit client information" }).click();
+  await page.waitForURL(/\/edit$/);
+  await page.getByLabel("Business email").fill("leads@smoke.example");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.waitForURL(/\?saved=1/);
+  await page.getByText("Run new audit").first().waitFor();
+}
 
 // 2. manager runs a Build-campaign task from the task form
 await ctx.clearCookies();

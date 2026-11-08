@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.services import client_profile as cp
-from tests.conftest import ADMIN, ANALYST, MANAGER, SUPER, Api
+from tests.conftest import ADMIN, ANALYST, MANAGER, Api
 
 GOOD = {"name": "Acme Plumbing Test", "category": "plumber", "phone": "(512) 555-0100", "email": "leads@acme-test.example",
         "website": "acme-test-plumbing.example", "lead_form_url": "/contact", "thank_you_url": "/thank-you", "gtm_id": "GTM-ABC1234",
@@ -169,3 +169,13 @@ def test_reports_never_leak_between_clients():
     assert ids <= {other["id"]}
     r = admin.post(f"/clients/{a['client_id']}/audit-reports")
     assert r.status_code == 200 and admin.post(f"/clients/{a['client_id']}/audit-reports").status_code in (200, 409)
+
+
+def test_fresh_report_is_not_flagged_as_stale():
+    """Regression: 20.0 vs 20 after JSON storage made a brand-new audit look 'edited since'."""
+    admin = Api(ADMIN)
+    r = _create(admin, {"name": "Fresh Co", "website": "fresh-co-test.example"}, audit="sync").json()
+    reports = admin.get(f"/clients/{r['client_id']}/audit-reports").json()
+    assert len(reports) == 1 and reports[0]["status"] == "COMPLETED" and reports[0]["profile_changed_since"] is False
+    full = admin.get(f"/audit-reports/{reports[0]['id']}").json()
+    assert full["profile_changed_since"] is False
