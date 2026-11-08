@@ -12,7 +12,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from app.adapters.base import AdapterTimeout, AuthError, RateLimited, ServiceUnavailable
-from app.core.config import get_settings
 from app.core.util import normalize_term
 from app.mock_world.failures import check_failure
 

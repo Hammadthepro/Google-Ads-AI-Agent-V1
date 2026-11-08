@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.util import normalize_term
-from app.models import Approval, CampaignPlan, Task, User
+from app.models import CampaignPlan, Task, User
 from app.services import activity, approvals, auth_service, validation
 
 EDIT_OPS = {"rename_campaign", "set_bidding", "set_budget", "add_keyword", "remove_keyword", "add_negative", "remove_negative",

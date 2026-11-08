@@ -1,22 +1,18 @@
 """Clients, businesses, Google Ads accounts, Ads OAuth, tracking gate, audits, fixes, feasibility."""
 from __future__ import annotations
 
-import secrets
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
-from app.adapters.ads_oauth import encrypt_token, new_pkce
 from app.api.deps import current_user, require
 from app.core.errors import NotFound, ValidationFailed
-from app.core.util import fingerprint
 from app.db.session import get_db
 from app.models import (Ad, AdGroup, Audit, Campaign, ConversionAction, FeasibilityResult, FixTrackerItem, GoogleAdsAccount,
-                        IntegrationConnection, Keyword, NegativeKeyword, User)
+                        Keyword, NegativeKeyword, User)
 from app.services import (accounts_service, activity, audits, auth_service, clients_service, feasibility, fixes_service,
                           tracking_gate)
 

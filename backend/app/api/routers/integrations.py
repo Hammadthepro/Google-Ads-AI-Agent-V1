@@ -6,7 +6,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user, require
+from app.api.deps import require
 from app.core.errors import NotFound
 from app.db.session import get_db
 from app.models import User

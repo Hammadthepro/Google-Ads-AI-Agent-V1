@@ -2,7 +2,6 @@
 settings, activity logs, alerts and TEST_MODE mock controls."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -10,14 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
-from app.adapters.base import AdapterError
 from app.api.deps import current_user, require
 from app.core import clock
 from app.core.config import get_settings
 from app.core.errors import Forbidden, NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models import (ActivityLog, Alert, Approval, Campaign, Client, EmergencyEvent, Experiment, FixTrackerItem, GoogleAdsAccount,
-                        IntegrationConnection, KillSwitch, MockFailureInjection, PlaybookRule, Prediction, Recommendation, RegressionCase,
+                        KillSwitch, MockFailureInjection, PlaybookRule, Prediction, Recommendation, RegressionCase,
                         Task, User, WeeklyReport)
 from app.services import (activity, auth_service, emergency, experiments, learning, monitoring, optimization, reporting,
                           settings_service, tracking_gate)

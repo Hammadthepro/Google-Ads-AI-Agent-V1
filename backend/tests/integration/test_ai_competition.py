@@ -1,7 +1,6 @@
 """AI competition: identical inputs, cross-challenge, rule-based consolidation, graceful degradation."""
 from __future__ import annotations
 
-import pytest
 
 from app.adapters import registry
 from app.adapters.ai import AIProvider, MockAIProvider

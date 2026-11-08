@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 import httpx
 
 from app.adapters.base import AdapterTimeout, NotFoundError, RateLimited, ServiceUnavailable
-from app.core.config import get_settings
 from app.mock_world.failures import check_failure
 
 
