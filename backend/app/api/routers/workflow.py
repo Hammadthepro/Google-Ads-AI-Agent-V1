@@ -128,7 +128,8 @@ def _plan(p: CampaignPlan, db: Session) -> dict:
     meta = lambda rid: ({"provider": runs[rid].provider, "model": runs[rid].model, "prompt": f"{runs[rid].prompt_template_id}@{runs[rid].prompt_version}",  # noqa: E731
                          "attempt": runs[rid].attempt, "latency_ms": runs[rid].latency_ms} if rid in runs else None)
     return {"id": p.id, "task_id": p.task_id, "client_id": p.client_id, "business_id": p.business_id, "scope": p.scope,
-            "version": p.version, "draft": p.draft, "challenger": p.challenger, "human_comparison": p.human_comparison,
+            "version": p.version, "parent_plan_id": p.parent_plan_id, "change_summary": p.change_summary,
+            "edited_by_id": p.edited_by_id, "competition": p.competition, "original": p.original, "draft": p.draft, "challenger": p.challenger, "human_comparison": p.human_comparison,
             "playbook_rule_ids": p.playbook_rule_ids, "status": p.status, "source_type": p.source_type,
             "draft_ai": meta(p.draft_ai_run_id), "challenger_ai": meta(p.challenger_ai_run_id), "created_at": p.created_at.isoformat()}
 
@@ -149,6 +150,47 @@ def get_plan(plan_id: str, user: User = Depends(require("clients.view")), db: Se
         raise NotFound("Plan not found")
     auth_service.require_client_access(db, user, p.client_id)
     return _plan(p, db)
+
+
+@router.get("/plans/{plan_id}/versions", tags=["planner"])
+def plan_versions(plan_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    from app.services import plan_editor
+    p = db.get(CampaignPlan, plan_id)
+    if not p:
+        raise NotFound("Plan not found")
+    auth_service.require_client_access(db, user, p.client_id)
+    return [{"id": v.id, "version": v.version, "status": v.status, "change_summary": v.change_summary, "edited_by_id": v.edited_by_id,
+             "created_at": v.created_at.isoformat(), "is_current": v.id == p.id} for v in plan_editor.versions(db, p)]
+
+
+@router.get("/plans/{plan_id}/diff", tags=["planner"])
+def plan_diff(plan_id: str, against: str = "original", user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """Difference between the AI-consolidated original (default) or another version, and this version."""
+    from app.services import plan_editor
+    p = db.get(CampaignPlan, plan_id)
+    if not p:
+        raise NotFound("Plan not found")
+    auth_service.require_client_access(db, user, p.client_id)
+    base = p.original or p.draft
+    if against != "original":
+        other = db.get(CampaignPlan, against)
+        if not other or other.task_id != p.task_id:
+            raise NotFound("Version not found")
+        base = other.draft
+    return {"against": against, "version": p.version, **plan_editor.diff(base, p.draft, p.scope)}
+
+
+class PlanEditIn(BaseModel):
+    edits: list[dict]
+    note: str = ""
+
+
+@router.post("/approvals/{approval_id}/plan-edit", tags=["approvals"])
+def plan_edit(approval_id: str, body: PlanEditIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import plan_editor
+    out = plan_editor.edit_approval(db, user, approval_id, body.edits, body.note)
+    db.commit()
+    return out
 
 
 @router.get("/ai-runs", tags=["planner"])
