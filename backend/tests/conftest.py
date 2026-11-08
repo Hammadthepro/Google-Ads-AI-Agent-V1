@@ -8,7 +8,7 @@ import os
 
 os.environ.setdefault("TEST_DATABASE_URL", "postgresql+psycopg://app:app@localhost:5432/google_ads_agent_test")
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
-os.environ.update({"APP_ENV": "test", "INTEGRATION_MODE": "mock", "TEST_MODE": "true", "GOOGLE_ADS_WRITES_ENABLED": "false",
+os.environ.update({"GAA_ENV_FILE": "none", "TOKEN_ENCRYPTION_KEY": "9ZKj5vNq0y3uW8cFhB2tXsL1mP6dRaQe4oYiTnVgHwE=", "APP_ENV": "test", "INTEGRATION_MODE": "mock", "TEST_MODE": "true", "GOOGLE_ADS_WRITES_ENABLED": "false",
                    "AI_PROVIDER": "mock", "AUTH_PROVIDER": "mock", "CRAWLER_MODE": "fixture", "CELERY_TASK_ALWAYS_EAGER": "true",
                    "GROQ_ENABLED": "false", "AUTO_NEGATIVES_MODE": "shadow",
                    "RATE_LIMIT_PER_MINUTE": "100000", "AUTH_RATE_LIMIT_PER_MINUTE": "100000"})

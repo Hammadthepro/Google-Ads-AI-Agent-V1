@@ -128,6 +128,8 @@ def _secrets(row: IntegrationConfig | None) -> dict:
 def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | None, user_id: str | None) -> IntegrationConfig:
     """Write-only secrets: blank values mean 'keep existing'. Returns the row (status reset to needs-test)."""
     spec = PROVIDERS[provider]
+    if any(v and str(v).strip() for v in (secrets or {}).values()):
+        _require_safe_encryption_key()
     row = _row(db, provider, create=True)
     cur = dict(row.settings or {})
     for k, v in (settings or {}).items():
@@ -159,6 +161,15 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
     db.flush()
     invalidate()
     return row
+
+
+def _require_safe_encryption_key() -> None:
+    """Credentials are encrypted with TOKEN_ENCRYPTION_KEY, or a key derived from APP_SECRET_KEY. The built-in development
+    APP_SECRET_KEY is public, so storing real credentials under it would be encryption in name only."""
+    s = get_settings()
+    if not s.TOKEN_ENCRYPTION_KEY and (s.APP_SECRET_KEY.startswith("dev-") or len(s.APP_SECRET_KEY) < 32):
+        raise ValidationFailed("Set TOKEN_ENCRYPTION_KEY (or a random APP_SECRET_KEY of 32+ characters) in .env and restart "
+                               "before saving credentials: the built-in development key is public.")
 
 
 def missing(provider: str, row: IntegrationConfig | None, env_fallback: bool = True) -> list[str]:
@@ -209,15 +220,16 @@ def effective(provider: str, row: IntegrationConfig | None, env_fallback: bool =
             v = getattr(s, env, "")
             if v:
                 out[k] = v
-    if provider == "claude":
-        import os
-        if env_fallback and os.environ.get("ANTHROPIC_API_KEY"):
-            out["api_key"] = os.environ["ANTHROPIC_API_KEY"]
+    if provider == "claude" and env_fallback and s.ANTHROPIC_API_KEY:
+        out["api_key"] = s.ANTHROPIC_API_KEY
     for k, v in PROVIDERS[provider].get("default_settings", {}).items():
         out.setdefault(k, v)
     if row:
         out.update({k: v for k, v in (row.settings or {}).items() if v not in (None, "")})
         out.update({k: v for k, v in _secrets(row).items() if v})
+    for k in ("customer_id", "login_customer_id"):  # 123-456-7890 and 1234567890 are the same Google Ads ID
+        if isinstance(out.get(k), str):
+            out[k] = out[k].replace("-", "").strip()
     return out
 
 

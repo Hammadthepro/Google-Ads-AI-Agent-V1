@@ -4,7 +4,8 @@ from __future__ import annotations
 import smtplib
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
-import os
+
+from app.core.config import get_settings
 
 
 class Notifier(ABC):
@@ -30,7 +31,7 @@ class MockNotifier(Notifier):
 
 
 class EmailNotifier(Notifier):
-    """SMTP delivery (SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM env vars)."""
+    """SMTP delivery (SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM, loaded through Settings)."""
 
     name = "EmailNotifier"
     source = "LIVE"
@@ -41,14 +42,15 @@ class EmailNotifier(Notifier):
         status = "SENT"
         try:
             msg = EmailMessage()
-            msg["From"] = os.environ.get("SMTP_FROM", "alerts@localhost")
+            cfg = get_settings()
+            msg["From"] = cfg.SMTP_FROM
             msg["To"] = ", ".join(recipients)
             msg["Subject"] = subject
             msg.set_content(body)
-            with smtplib.SMTP(os.environ.get("SMTP_HOST", "localhost"), int(os.environ.get("SMTP_PORT", "587")), timeout=15) as s:
+            with smtplib.SMTP(cfg.SMTP_HOST or "localhost", cfg.SMTP_PORT, timeout=15) as s:
                 s.starttls()
-                if os.environ.get("SMTP_USER"):
-                    s.login(os.environ["SMTP_USER"], os.environ.get("SMTP_PASSWORD", ""))
+                if cfg.SMTP_USER:
+                    s.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD)
                 s.send_message(msg)
         except Exception as exc:  # delivery failure is recorded, never hidden
             status = f"FAILED: {type(exc).__name__}"

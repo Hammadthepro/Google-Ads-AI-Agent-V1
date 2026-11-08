@@ -1,18 +1,39 @@
 """Central configuration. Real integrations are NEVER inferred from credential presence."""
 from __future__ import annotations
 
+import os
+import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Mode = Literal["mock", "real"]
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def env_files() -> tuple[str, ...]:
+    """Where .env is looked up. Later files override earlier ones; real environment variables override all files.
+
+    1. <repo root>/.env   (what the docs, create-env.sh and Codespaces create — works wherever the backend is started from)
+    2. ./.env             (the current directory, e.g. backend/.env)
+    GAA_ENV_FILE=<path> uses only that file; GAA_ENV_FILE=none loads no file (the test suite does this).
+    """
+    override = os.environ.get("GAA_ENV_FILE")
+    if override is not None:
+        return () if override.strip().lower() in ("", "none") else (override,)
+    return (str(REPO_ROOT / ".env"), ".env")
+
+
+_ID_FIELDS = ("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "GOOGLE_ADS_CUSTOMER_ID")
+
 
 class Settings(BaseSettings):
     # blank values (e.g. "GOOGLE_ADS_MODE=" in .env.example) mean "use the default"
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
+    model_config = SettingsConfigDict(env_file=env_files(), env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
 
     APP_ENV: Literal["development", "test", "staging", "production"] = "development"
     INTEGRATION_MODE: Mode = "mock"
@@ -27,7 +48,6 @@ class Settings(BaseSettings):
 
     # Per-integration modes (blank -> INTEGRATION_MODE)
     GOOGLE_ADS_MODE: Mode | None = None
-    KEYWORD_RESEARCH_MODE: Mode | None = None
     PLACES_MODE: Mode | None = None
     PAGESPEED_MODE: Mode | None = None
     CRAWLER_MODE: Literal["fixture", "live"] = "fixture"
@@ -50,9 +70,8 @@ class Settings(BaseSettings):
     # Login
     BOOTSTRAP_ADMIN_EMAIL: str = ""
     ALLOWED_LOGIN_DOMAINS: str = ""
+    # Google *sign-in* (Identity Services ID-token flow) needs ONLY the client ID. It is NOT the Google Ads OAuth client.
     GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = ""
 
     # Google Ads
     GOOGLE_ADS_DEVELOPER_TOKEN: str = ""
@@ -71,12 +90,43 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = ""
     GROQ_CHALLENGER_MODEL: str = ""
+    ANTHROPIC_API_KEY: str = ""  # optional fallback for the Claude integration (model is set on the Integrations page)
+
+    # Email alerts (NOTIFIER_MODE=real)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "alerts@localhost"
 
     # Mock / crawler
     MOCK_SEED: int = 42
     CRAWLER_MAX_PAGES: int = 40
     CRAWLER_MAX_DEPTH: int = 2
     CRAWLER_TIMEOUT_SECONDS: float = 10.0
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _clean_strings(cls, v):
+        """Trim whitespace and a single pair of wrapping quotes: `KEY = "abc" ` must behave like `KEY=abc`."""
+        if isinstance(v, str):
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1].strip()
+        return v
+
+    @field_validator(*_ID_FIELDS, mode="after")
+    @classmethod
+    def _customer_ids(cls, v: str) -> str:
+        """Google Ads customer IDs are 10 digits; `123-456-7890` and `1234567890` are the same ID. Invalid values are kept
+        as typed (so `check-env` can name them) but never half-cleaned."""
+        digits = re.sub(r"[\s-]", "", v or "")
+        return digits if digits.isdigit() else v
+
+    @field_validator("BOOTSTRAP_ADMIN_EMAIL", mode="after")
+    @classmethod
+    def _lower_email(cls, v: str) -> str:
+        return v.lower()
 
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
@@ -92,6 +142,8 @@ class Settings(BaseSettings):
                 raise ValueError("; ".join(problems))
         if self.AI_PROVIDER == "groq" and not self.GROQ_ENABLED:
             raise ValueError("AI_PROVIDER=groq requires GROQ_ENABLED=true")
+        if self.AUTH_PROVIDER == "google" and not self.GOOGLE_CLIENT_ID:
+            raise ValueError("AUTH_PROVIDER=google requires GOOGLE_CLIENT_ID (nobody could sign in otherwise)")
         return self
 
     def mode_for(self, name: str) -> Mode:
@@ -118,7 +170,7 @@ class Settings(BaseSettings):
             "auth_provider": self.AUTH_PROVIDER,
             "ai_provider": self.AI_PROVIDER,
             "crawler_mode": self.CRAWLER_MODE,
-            "modes": {n: self.mode_for(n) for n in ("GOOGLE_ADS", "KEYWORD_RESEARCH", "PLACES", "PAGESPEED", "NOTIFIER")},
+            "modes": {n: self.mode_for(n) for n in ("GOOGLE_ADS", "PLACES", "PAGESPEED", "NOTIFIER")},
             "groq_model_configured": bool(self.GROQ_MODEL),
             "groq_key_configured": bool(self.GROQ_API_KEY),
         }

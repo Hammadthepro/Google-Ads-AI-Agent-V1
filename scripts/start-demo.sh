@@ -73,5 +73,8 @@ compose exec -T backend python -m app.cli seed
 echo
 compose ps
 echo
+echo "==> Configuration check (prints no secret values; warnings do not stop the demo)…"
+compose exec -T backend python -m app.cli check-env --brief || echo "    ^ fix the errors above, or run: bash scripts/check-env.sh"
+echo
 echo "Ready. Open the forwarded port 5173 (Ports tab → globe icon) and sign in with a demo user, e.g. admin@napollo.example."
 echo "Mode: MOCK — nothing is sent to Google Ads. Real Google Ads writes are disabled."

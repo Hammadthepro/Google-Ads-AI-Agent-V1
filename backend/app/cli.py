@@ -6,6 +6,7 @@
   create-super-admin   EMAIL [NAME]
   daily-cycle          run one daily job cycle now
   advance DAYS         TEST_MODE: advance the simulated clock and run daily cycles
+  check-env            audit the environment/.env (never prints values): [--env-file PATH] [--file-only] [--json] [--brief] [--strict]
 """
 from __future__ import annotations
 
@@ -18,6 +19,10 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 1
     cmd = argv[0]
+    if cmd == "check-env":  # no database or logging needed
+        from app.core import env_audit
+        path = argv[argv.index("--env-file") + 1] if "--env-file" in argv else None
+        return env_audit.run(path, as_json="--json" in argv, brief="--brief" in argv, strict="--strict" in argv, file_only="--file-only" in argv)
     from app.core.logging import configure_logging
     configure_logging("WARNING")
     if cmd in ("seed", "reset-mock", "reset-all"):

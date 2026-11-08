@@ -211,3 +211,35 @@ def test_health_and_test_all_never_fake_success():
     r = sup.post("/integrations/test-all").json()
     ads = next(x for x in r["results"] if x["provider"] == "google_ads")
     assert ads.get("skipped") and ads["status"] != "CONNECTED"
+
+
+def test_saving_credentials_refuses_the_public_development_key(monkeypatch):
+    """With no TOKEN_ENCRYPTION_KEY and the built-in dev APP_SECRET_KEY, 'encrypting' credentials would be meaningless."""
+    from app.core.config import reset_settings_cache
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", "")
+    monkeypatch.setenv("APP_SECRET_KEY", "dev-insecure-secret-change-me")
+    reset_settings_cache()
+    try:
+        sup = Api(SUPER)
+        r = sup.c.put("/api/v1/integrations/groq", json={"secrets": {"api_key": "gsk_x"}}, headers=sup._h())
+        assert r.status_code in (400, 422) and "TOKEN_ENCRYPTION_KEY" in r.text
+        assert sup.c.put("/api/v1/integrations/groq", json={"settings": {"model": "llama-3.3-70b-versatile"}}, headers=sup._h()).status_code == 200  # non-secret settings are fine
+        monkeypatch.setenv("APP_SECRET_KEY", "r" * 48)
+        reset_settings_cache()
+        assert sup.c.put("/api/v1/integrations/groq", json={"secrets": {"api_key": "gsk_x"}}, headers=sup._h()).status_code == 200
+    finally:
+        monkeypatch.undo()
+        reset_settings_cache()
+
+
+def test_env_customer_ids_are_normalised_for_real_requests(monkeypatch):
+    from app.core.config import reset_settings_cache
+    monkeypatch.setenv("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890")
+    monkeypatch.setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "987-654-3210")
+    reset_settings_cache()
+    try:
+        vals = svc.effective("google_ads", None)
+        assert vals["customer_id"] == "1234567890" and vals["login_customer_id"] == "9876543210"
+    finally:
+        monkeypatch.undo()
+        reset_settings_cache()

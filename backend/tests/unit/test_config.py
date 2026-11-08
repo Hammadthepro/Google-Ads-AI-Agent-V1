@@ -22,7 +22,7 @@ def test_env_example_loads_with_safe_defaults(monkeypatch):
 
 def test_env_example_contains_no_secrets():
     text = EXAMPLE.read_text()
-    for key in ("GROQ_API_KEY", "GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET",
+    for key in ("GROQ_API_KEY", "GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_SECRET", "ANTHROPIC_API_KEY", "SMTP_PASSWORD",
                 "GOOGLE_PLACES_API_KEY", "PAGESPEED_API_KEY", "TOKEN_ENCRYPTION_KEY", "APP_SECRET_KEY", "GOOGLE_ADS_REFRESH_TOKEN"):
         line = next(ln for ln in text.splitlines() if ln.startswith(f"{key}="))
         assert line == f"{key}=", f"{key} must be blank in .env.example"
