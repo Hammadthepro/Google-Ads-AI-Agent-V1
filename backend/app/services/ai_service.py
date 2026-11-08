@@ -39,8 +39,10 @@ def _extract_json(text: str) -> dict:
 
 
 def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = None,
-             model_role: str = "draft", max_attempts: int = 2) -> tuple[BaseModel, AIRun]:
-    provider = registry.get("ai")
+             model_role: str = "draft", max_attempts: int = 2, provider=None,
+             label: str | None = None) -> tuple[BaseModel, AIRun]:
+    """`provider`/`label` let the AI competition run the SAME prompt through a specific provider (label ≤ 20 chars)."""
+    provider = provider or registry.get("ai")
     spec = PROMPTS[purpose]
     schema = SCHEMAS[purpose]
     system = system_prompt(purpose)
@@ -50,7 +52,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         if last_error:
             user = {**payload, "previous_attempt_error": last_error[:1500],
                     "instruction": "Your previous output was rejected. Return valid JSON matching the schema exactly."}
-        run = AIRun(task_id=task_id, purpose=purpose, provider=provider.name, prompt_template_id=spec["id"],
+        run = AIRun(task_id=task_id, purpose=purpose, provider=label or provider.name[:20], prompt_template_id=spec["id"],
                     prompt_version=spec["version"], input_hash=payload_hash(payload), attempt=attempt)
         db.add(run)
         try:

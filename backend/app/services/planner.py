@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.adapters import registry
 from app.core.util import normalize_term, to_micros
 from app.models import Ad, AdGroup, Business, Campaign, CampaignPlan, GoogleAdsAccount, PlaybookRule, Task
-from app.services import ai_service, clients_service
+from app.services import ai_service, clients_service, competition
 
 SHARED_LIST_NAME = "GAA account negatives"
 PATTERN_NEGATIVES = ["jobs", "diy", "free"]
@@ -47,9 +47,23 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
         payload["service"] = services[0]
     if scope == "AD":
         payload["service"] = services[0]["name"]
+    if scope in ("CAMPAIGN", "AD_GROUP"):
+        ctx = {"verified_claims": business.verified_claims or [], "excluded_services": clients_service.excluded_services(business),
+               "tracking_state": payload["tracking_state"], "feasibility": payload["feasibility"]}
+        res = competition.run(db, scope=scope, payload=payload, challenge_ctx=ctx, table=keyword_table,
+                              verified_claims=business.verified_claims or [], tracking_state=tracking_state, override=override,
+                              task_id=task.id)
+        plan = CampaignPlan(task_id=task.id, client_id=task.client_id, business_id=business.id, scope=scope, draft=res["draft"],
+                            original=res["draft"], competition=res["competition"], challenger=res["challenger"],
+                            draft_ai_run_id=res["draft_run_id"], challenger_ai_run_id=res["challenger_run_id"],
+                            playbook_rule_ids=rule_ids, status="CHALLENGED",
+                            source_type=("LIVE" if any(p["source"] == "LIVE" for p in res["competition"]["providers"].values()) else "MOCK"))
+        db.add(plan)
+        db.flush()
+        return plan
     parsed, run = ai_service.generate(db, purpose, payload, task_id=task.id)
     plan = CampaignPlan(task_id=task.id, client_id=task.client_id, business_id=business.id, scope=scope,
-                        draft=parsed.model_dump(), draft_ai_run_id=run.id, playbook_rule_ids=rule_ids,
+                        draft=parsed.model_dump(), original=parsed.model_dump(), draft_ai_run_id=run.id, playbook_rule_ids=rule_ids,
                         source_type=registry.get("ai").source)
     db.add(plan)
     db.flush()
@@ -57,6 +71,8 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
 
 
 def challenge(db: Session, plan: CampaignPlan, business: Business, feasibility: dict | None, tracking_state: str) -> dict:
+    if plan.competition:  # the AI competition already cross-challenged both drafts
+        return plan.challenger
     payload = {"draft": plan.draft, "verified_claims": business.verified_claims or [],
                "excluded_services": clients_service.excluded_services(business), "tracking_state": tracking_state,
                "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in

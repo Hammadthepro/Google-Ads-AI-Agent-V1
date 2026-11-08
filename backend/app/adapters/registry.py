@@ -73,7 +73,7 @@ def claude_ai():
     v = integrations_service.resolve("claude")
     if v["_enabled"]:
         return ClaudeAIProvider(v.get("api_key", ""), v.get("model", ""))
-    return MockAIProvider()
+    return MockAIProvider(variant="b")
 
 
 @lru_cache

@@ -103,6 +103,9 @@ class MockAIProvider(AIProvider):
     name = "MockAIProvider"
     source = "MOCK"
 
+    def __init__(self, variant: str = "a"):
+        self.variant = variant  # "b" = the mock stand-in for the second (Claude) side: a different but plausible plan
+
     def complete(self, purpose, system, user, *, model_role="draft") -> RawCompletion:
         started = time.monotonic()
         injected = check_failure("ai", purpose)
@@ -165,9 +168,23 @@ class MockAIProvider(AIProvider):
                 "keywords": kws, "negatives": [],
                 "ads": [mock_ad_copy(svc["name"], city, biz, claims, include_unverified=include_unverified)]}
 
+    def _variant_b(self, g: dict) -> dict:
+        """Second opinion: adds a looser 'near me' phrase keyword and an extra unverified-claim headline."""
+        g = dict(g)
+        g["keywords"] = [*g["keywords"], {"text": "local contractors near me", "match_type": "PHRASE"}]
+        ads = []
+        for ad in g["ads"]:
+            ad = dict(ad)
+            ad["headlines"] = [*ad["headlines"][:1], "Top Rated Local Experts", *ad["headlines"][1:]][:15]
+            ads.append(ad)
+        g["ads"] = ads
+        return g
+
     def _h_draft_campaign(self, u):
         services = u.get("services", [])
-        groups = [self._ad_group(u, s, include_unverified=(i == 0)) for i, s in enumerate(services)]
+        groups = [self._ad_group(u, s, include_unverified=(i == 0 and self.variant == "a")) for i, s in enumerate(services)]
+        if self.variant == "b":
+            groups = [self._variant_b(g) for g in groups]
         negatives = sorted({r["keyword"] for r in u.get("keyword_table", []) if r.get("label") == "IRRELEVANT"})
         negatives = sorted(set(negatives) | {"jobs", "diy", "free"})
         share = round(100 / max(1, len(groups)), 1)
@@ -191,7 +208,8 @@ class MockAIProvider(AIProvider):
         }
 
     def _h_draft_ad_group(self, u):
-        return self._ad_group(u, u["service"])
+        g = self._ad_group(u, u["service"])
+        return self._variant_b(g) if self.variant == "b" else g
 
     def _h_draft_ad(self, u):
         current = u.get("current_ad")

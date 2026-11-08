@@ -54,7 +54,7 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
         assert step in names
     validation_step = next(s for s in task["steps"] if s["name"] == "Validation")
     assert "Passed" in validation_step["summary"]
-    assert "AI fix attempt" in validation_step["summary"]  # the drafting AI's unverified '#1' claim was caught and fixed
+    # the internal AI's unverified '#1' claim is removed by the rule-based consolidator before validation even runs
 
     appr = admin.get(f"/approvals/{task['approval_id']}").json()
     assert appr["status"] == "PENDING_APPROVAL"
@@ -65,6 +65,8 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
     assert camp_op["fields"]["network_settings"]["target_search_network"] is False
     assert camp_op["fields"]["geo_target_type_setting"]["positive_geo_target_type"] == "PRESENCE"
     assert appr["context"]["challenger"]["verdict"] in ("APPROVE", "REVISE")
+    draft_heads = [h for g in appr["context"]["draft"]["ad_groups"] for a in g["ads"] for h in a["headlines"]]
+    assert not any("#1" in h or "Top Rated" in h for h in draft_heads)
     assert appr["context"]["human_comparison"]["applied_human_decisions"]
 
     # nothing can execute before approval
