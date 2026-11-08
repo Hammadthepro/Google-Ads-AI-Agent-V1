@@ -52,6 +52,8 @@ export function ClientDetail() {
   const [b, setB] = useState({ name: "", website_url: "", phone: "", address: "", business_type: "home_services" });
   const addBiz = useAction((v) => api.post(`/clients/${id}/businesses`, v), [["client", id!], ["businesses"]]);
   const unfreeze = useAction(() => api.post(`/clients/${id}/unfreeze`), [["client", id!]]);
+  const [tg, setTg] = useState<{ weekly?: string; budget?: string }>({});
+  const saveTargets = useAction((v) => api.patch(`/clients/${id}`, v), [["client", id!], ["clients"]]);
   if (q.isLoading || !q.data) return <Spinner />;
   const c = q.data;
   return (
@@ -61,8 +63,21 @@ export function ClientDetail() {
         {c.automation_frozen && can("killswitch.client") && <Button size="sm" onClick={() => unfreeze.mutate({})}>Unfreeze automation</Button>}
         <Link to={`/tasks?client=${c.id}`}><Button variant="primary">Run a task</Button></Link></>} />
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Contacts" className="lg:col-span-1">
+        <Card title="Contacts">
           <KV items={[["Owner", c.owner_contact || "—"], ["Backup", c.backup_contact || "—"], ["Website / tag access", c.tag_access_contact || "—"]]} />
+        </Card>
+        <Card title="Weekly lead target & budget">
+          <p className="mb-3 text-xs text-slate-500">Client-level target for all campaigns combined. Weekly reports compare against this and against each campaign's own target.</p>
+          <div className="grid gap-3">
+            <Field label="Weekly conversion target (leads)"><Input type="number" disabled={!can("clients.edit")} value={tg.weekly ?? String(c.weekly_conversion_target ?? 0)} onChange={(e) => setTg({ ...tg, weekly: e.target.value })} /></Field>
+            <Field label="Agreed monthly ad budget ($)"><Input type="number" disabled={!can("clients.edit")} value={tg.budget ?? String(c.monthly_budget_usd ?? 0)} onChange={(e) => setTg({ ...tg, budget: e.target.value })} /></Field>
+          </div>
+          {can("clients.edit") && (
+            <div className="mt-3 flex items-center gap-3">
+              <Button variant="primary" disabled={(tg.weekly === undefined && tg.budget === undefined) || saveTargets.isPending}
+                onClick={() => saveTargets.mutate({ ...(tg.weekly !== undefined && { weekly_conversion_target: Number(tg.weekly) }), ...(tg.budget !== undefined && { monthly_budget_usd: Number(tg.budget) }) }, { onSuccess: () => setTg({}) })}>Save targets</Button>
+              <ErrorBox error={saveTargets.error} />
+            </div>)}
         </Card>
         <Card title="Google Ads accounts" className="lg:col-span-2" actions={<Link className="text-xs text-brand-700" to="/accounts">Manage →</Link>}>
           <Table rows={c.accounts} empty="No Google Ads account linked yet — link one on the Google Ads Accounts page." columns={[

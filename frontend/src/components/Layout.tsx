@@ -24,18 +24,14 @@ const NAV: { to: string; label: string; icon: string }[] = [
 ];
 
 export function SafetyBanner() {
-  const { data } = useQuery({ queryKey: ["dashboard-mode"], queryFn: () => api.get("/integrations"), staleTime: 60_000 });
-  const cfg = data?.config;
-  if (!cfg) return null;
-  const mock = cfg.integration_mode === "mock";
+  const { data } = useQuery({ queryKey: ["integration-banner"], queryFn: () => api.get("/integrations/mode"), staleTime: 30_000 });
+  if (!data) return null;
+  const tone = data.mode === "mock" ? "bg-violet-600 text-white" : data.mode === "read_only" ? "bg-sky-600 text-white" : "bg-amber-500 text-amber-950";
   return (
-    <div className={cx("flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-1.5 text-xs font-medium",
-      mock ? "bg-violet-600 text-white" : "bg-amber-500 text-amber-950")}>
-      <span>{mock ? "MOCK MODE — simulated Google Ads environment. Nothing is sent to Google Ads." : "REAL INTEGRATION MODE"}</span>
-      <span className="opacity-90">Real Google Ads writes: {cfg.google_ads_writes_enabled && data?.real_writes?.authorized ? "ENABLED" : "DISABLED"}</span>
-      <span className="opacity-90">AI: {cfg.ai_provider === "groq" ? "Groq" : "Mock AI"}</span>
-      <span className="opacity-90">Auto-negatives: {cfg.auto_negatives_mode}</span>
-      <span className="opacity-90">Emergency actions: {cfg.emergency_brake_write_mode}</span>
+    <div role="status" className={cx("flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-1.5 text-xs font-medium", tone)}>
+      <span className="font-semibold uppercase tracking-wide">{data.label}</span>
+      <span>{data.mode === "mock" ? "Simulated Google Ads — nothing is sent to Google." : data.mode === "read_only" ? "Real Google Ads data is read. Writes are impossible." : "Real reads and approved writes."}</span>
+      <span className="opacity-90">Real campaign writes: {data.real_writes_possible ? "POSSIBLE (approval required)" : "DISABLED"}</span>
     </div>
   );
 }

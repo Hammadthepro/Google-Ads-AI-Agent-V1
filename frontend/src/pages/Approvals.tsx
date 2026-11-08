@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/hooks";
 import { Badge, Button, Card, ConfirmDialog, DataSourceBadge, dt, ErrorBox, JsonBlock, KV, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
 import { ChallengerView, DraftView, HumanComparison } from "./Planner";
+import { PlanReview } from "../components/PlanReview";
 
 const STATUSES = ["", "PENDING_APPROVAL", "APPROVED", "EXECUTED", "REJECTED", "CHANGES_REQUESTED", "VALIDATION_FAILED", "INVALIDATED", "EXPIRED", "EXECUTION_FAILED", "EXECUTION_BLOCKED"];
 
@@ -92,7 +93,7 @@ export function ApprovalDetail() {
       <Section n={2} title="Feasibility (estimate)">
         {ctx.feasibility?.summary ? <><KV items={[["Status", <StatusBadge value={ctx.feasibility.status} />], ["Expected leads/week", ctx.feasibility.summary.expected_weekly_conversions],
           ["Realistic range", ctx.feasibility.summary.realistic_weekly_range?.join(" – ")], ["Allowed cost per lead", `$${ctx.feasibility.summary.allowed_cost_per_lead}`],
-          ["Daily budget", `$${ctx.feasibility.summary.daily_budget}`], ["Budget needed for target", `$${ctx.feasibility.summary.budget_needed_for_target_monthly}/mo`]]} />
+          ["Daily budget", `$${ctx.feasibility.summary.daily_budget}`], ["Recommended monthly budget", ctx.feasibility.summary.recommended_monthly_budget ? `$${ctx.feasibility.summary.recommended_monthly_budget}` : "—"], ["Team decision", ctx.feasibility.decision || "—"]]} />
           {ctx.feasibility.budget_thin_warning && <div className="mt-2"><Notice tone="amber">{ctx.feasibility.budget_thin_warning}</Notice></div>}
           <p className="mt-2 text-xs text-slate-500">Estimates only, never guaranteed outcomes.</p></> : <span className="text-sm text-slate-500">n/a</span>}
       </Section>
@@ -120,9 +121,14 @@ export function ApprovalDetail() {
           { key: "code", label: "Rule" }, { key: "message", label: "Message" }]} />
         <p className="mt-2 text-xs text-slate-500">Validation passing does not mean the change is approved or launched.</p>
       </Section>
-      <Section n={7} title="Challenger disagreements"><ChallengerView ch={ctx.challenger} /></Section>
-      <Section n={8} title="Human plan comparison"><HumanComparison hc={ctx.human_comparison} /></Section>
-      <Section n={9} title="AI explanation"><p className="text-sm text-slate-700">{a.ai_explanation || "—"}</p><p className="mt-1 text-xs text-slate-500">AI explains; it never decides or executes.</p></Section>
+      {ctx.plan_id && (
+        <Section n={7} title={`AI competition, plan versions and editing (plan v${ctx.plan_version ?? 1})`}>
+          <PlanReview planId={ctx.plan_id} approvalId={a.id} canEdit={can("approvals.submit")}
+            editable={["PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED"].includes(a.status)} />
+        </Section>)}
+      <Section n={8} title="Challenger disagreements"><ChallengerView ch={ctx.challenger} /></Section>
+      <Section n={9} title="Human plan comparison"><HumanComparison hc={ctx.human_comparison} /></Section>
+      <Section n={10} title="AI explanation"><p className="text-sm text-slate-700">{a.ai_explanation || "—"}</p><p className="mt-1 text-xs text-slate-500">AI explains; it never decides or executes.</p></Section>
 
       {a.operations?.length > 0 && (
         <Card title="Execution record">

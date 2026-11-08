@@ -30,7 +30,7 @@ export default function Weekly() {
         <>
           <div className="flex items-center gap-2 text-sm text-slate-500">Week {r.week_start} → {r.week_end} <DataSourceBadge source={r.source_type} /></div>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-            <Stat label="Weekly target" value={t.target} /><Stat label="Actual conversions" value={t.conversions} />
+            <Stat label="Campaign targets (sum)" value={t.target} sub={t.client_target ? `Client target ${t.client_target}${t.client_gap !== null && t.client_gap !== undefined ? ` · ${t.client_gap < 0 ? Math.abs(t.client_gap) + " short" : "on target"}` : ""}` : "No client-level target set"} /><Stat label="Actual conversions" value={t.conversions} />
             <Stat label="Gap" value={<span className={t.gap < 0 ? "text-rose-600" : "text-emerald-600"}>{t.gap < 0 ? `${Math.abs(t.gap)} short` : `+${t.gap}`}</span>} />
             <Stat label="Forms / calls" value={`${t.forms} / ${t.calls}`} /><Stat label="Spend" value={money(t.cost)} /><Stat label="Wasted spend (30d)" value={money(t.wasted_spend)} />
           </div>

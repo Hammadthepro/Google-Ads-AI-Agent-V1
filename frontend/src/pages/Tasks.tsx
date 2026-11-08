@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
@@ -18,7 +18,72 @@ const TASKS: { value: string; label: string; needs: "business" | "campaign" | "a
   { value: "CHANGE_LOCATIONS", label: "Change locations", needs: "campaign" },
   { value: "AUDIT_ONLY", label: "Audit only", needs: "business" },
 ];
-const TERMINAL = ["AWAITING_APPROVAL", "COMPLETED", "FAILED", "BLOCKED_TRACKING", "VALIDATION_FAILED", "EXECUTED", "EXECUTED_PAUSED", "ENABLED", "EXECUTION_FAILED"];
+const TERMINAL = ["AWAITING_APPROVAL", "AWAITING_BUDGET_DECISION", "COMPLETED", "FAILED", "BLOCKED_TRACKING", "VALIDATION_FAILED", "EXECUTED", "EXECUTED_PAUSED", "ENABLED", "EXECUTION_FAILED"];
+
+export function IntakeReport({ report, clar, setClar }: { report: any; clar: Record<string, string>; setClar: (c: Record<string, string>) => void }) {
+  const tone = report.status === "OK" ? "green" : report.status === "BLOCKED" ? "red" : "amber";
+  const label = ({ OK: "Information complete", BLOCKED: "Blocked — fix before running", NEEDS_CLARIFICATION: "Clarification needed" } as Record<string, string>)[report.status];
+  return (
+    <div className="mt-4 space-y-2" aria-label="Intake check">
+      <Notice tone={tone as any}><b>{label}</b> · {report.blockers} blocker(s), {report.questions} question(s), {report.warnings} warning(s)</Notice>
+      {report.issues.map((i: any) => (
+        <div key={i.code} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={i.severity === "BLOCKER" ? "red" : i.severity === "QUESTION" ? "amber" : i.severity === "RESOLVED" ? "green" : "slate"}>{i.severity}</Badge>
+            <span>{i.message}</span>
+          </div>
+          {i.severity === "QUESTION" && (
+            <div className="mt-2"><Field label={i.question}>
+              <Input value={clar[i.code] ?? ""} onChange={(e) => setClar({ ...clar, [i.code]: e.target.value })} placeholder="Your answer (saved with the task)" />
+            </Field></div>)}
+          {i.severity === "RESOLVED" && <div className="mt-1 text-xs text-slate-500">Answer: {i.answer}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BudgetDecision({ task }: { task: any }) {
+  const qc = useQueryClient();
+  const feas = useQuery({ queryKey: ["feas-task", task.id], queryFn: () => api.get(`/feasibility?business_id=${task.business_id}`) });
+  const f = (feas.data ?? []).find((x: any) => x.task_id === task.id);
+  const [budget, setBudget] = useState("");
+  const [target, setTarget] = useState("");
+  const [note, setNote] = useState("");
+  const decide = useAction((body) => api.post(`/tasks/${task.id}/budget-decision`, body), [["tasks"]]);
+  const done = { onSuccess: () => { qc.invalidateQueries({ queryKey: ["task", task.id] }); } };
+  if (!f) return <Spinner />;
+  const s = f.summary;
+  return (
+    <Card title="Budget decision needed (estimate)">
+      <p className="text-sm text-slate-600">With ${s.monthly_budget}/month the expected result is <b>{s.expected_weekly_conversions}</b> leads/week (range {s.realistic_weekly_range.join("–")}) against a target of <b>{s.weekly_target}</b>. This is <StatusBadge value={f.status} />. Estimates are not guarantees.</p>
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg border border-slate-200 p-3 text-sm">
+          <div className="font-semibold">Accept recommended budget</div>
+          <div className="mt-1 text-2xl font-semibold">{s.recommended_monthly_budget ? `$${s.recommended_monthly_budget.toLocaleString()}` : "—"}<span className="text-sm font-normal text-slate-500"> /month</span></div>
+          <div className="text-slate-600">Reaches {s.weekly_target} leads/week at the expected cost per lead.</div>
+          <div className="mt-3"><Button variant="primary" disabled={!s.recommended_monthly_budget || decide.isPending} onClick={() => decide.mutate({ decision: "ACCEPT_RECOMMENDED", note }, done)}>Accept and continue</Button></div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-3 text-sm">
+          <div className="font-semibold">Adjust budget and/or target</div>
+          <div className="mt-2 grid gap-2">
+            <Input type="number" aria-label="New monthly budget" placeholder={`Monthly budget (now ${s.monthly_budget})`} value={budget} onChange={(e) => setBudget(e.target.value)} />
+            <Input type="number" aria-label="New weekly target" placeholder={`Weekly target (now ${s.weekly_target}; ~${s.achievable_weekly_target} achievable)`} value={target} onChange={(e) => setTarget(e.target.value)} />
+          </div>
+          <div className="mt-3"><Button disabled={(!budget && !target) || decide.isPending} onClick={() => decide.mutate({ decision: "ADJUST", monthly_budget: budget ? Number(budget) : undefined, weekly_target: target ? Number(target) : undefined, note }, done)}>Apply and continue</Button></div>
+        </div>
+        <div className="rounded-lg border border-slate-200 p-3 text-sm">
+          <div className="font-semibold">Keep the current numbers</div>
+          <div className="text-slate-600">Requires a written reason. The approval card will still show the risk.</div>
+          <div className="mt-3"><Button variant="danger" disabled={note.trim().length < 10 || decide.isPending} onClick={() => decide.mutate({ decision: "KEEP_CURRENT", note }, done)}>Keep and continue</Button></div>
+        </div>
+      </div>
+      <div className="mt-3"><Field label="Note / reason (saved with the decision)"><Input value={note} onChange={(e) => setNote(e.target.value)} /></Field></div>
+      {(s.adjustment_options ?? []).length > 0 && <ul className="mt-3 list-disc pl-5 text-sm text-slate-600">{s.adjustment_options.map((o: any) => <li key={o.option}>{o.explanation}</li>)}</ul>}
+      <div className="mt-2"><ErrorBox error={decide.error} /></div>
+    </Card>
+  );
+}
 
 export function TaskForm() {
   const [params] = useSearchParams();
@@ -45,6 +110,8 @@ export function TaskForm() {
   useEffect(() => { setCampaignId(""); setAdGroupId(""); setAdId(""); }, [clientId, type]);
   useEffect(() => { if (business && type === "BUILD_CAMPAIGN") setF((x: any) => ({ ...x, services: business.services.filter((s: any) => !s.is_excluded).map((s: any) => s.name), radius_miles: business.default_radius_miles })); }, [business?.id, type]);
   const run = useAction((body) => api.post("/tasks", body), [["tasks"]]);
+  const [clar, setClar] = useState<Record<string, string>>({});
+  const intakeCheck = useAction((body) => api.post("/intake/validate", body));
   const set = (k: string, v: unknown) => setF({ ...f, [k]: v });
 
   const fields = useMemo(() => {
@@ -77,7 +144,7 @@ export function TaskForm() {
     return out;
   }, [type, f, business, campaign, adGroup]);
 
-  const submit = () => {
+  const buildBody = () => {
     const fields: any = { ...f };
     for (const k of ["monthly_budget", "weekly_target", "radius_miles"]) if (fields[k] !== undefined && fields[k] !== "") fields[k] = Number(fields[k]);
     if (type === "CHANGE_LOCATIONS" && f.zip_text) fields.zip_codes = f.zip_text.split(",").map((z: string) => z.trim()).filter(Boolean);
@@ -85,9 +152,13 @@ export function TaskForm() {
       ADD_AD: ["landing_page"], ADD_KEYWORDS: ["starter_words"], EDIT_AD: ["change_request"], PAUSE_AD: ["reason"], CHANGE_BUDGET: ["monthly_budget"],
       CHANGE_TARGET: ["weekly_target"], CHANGE_LOCATIONS: ["radius_miles", "zip_codes"], AUDIT_ONLY: [] };
     const clean = Object.fromEntries(Object.entries(fields).filter(([k, v]) => keep[type].includes(k) && v !== "" && v !== undefined));
-    run.mutate({ task_type: type, client_id: clientId, business_id: business?.id, campaign_id: campaignId || undefined, ad_group_id: adGroupId || undefined,
-      ad_id: adId || undefined, fields: clean, human_plan: humanPlan, note }, { onSuccess: (t: any) => nav(`/tasks/${t.id}`) });
+    if (Object.keys(clar).length) clean.clarifications = clar;
+    return { task_type: type, client_id: clientId, business_id: business?.id, campaign_id: campaignId || undefined, ad_group_id: adGroupId || undefined,
+      ad_id: adId || undefined, fields: clean, human_plan: humanPlan, note };
   };
+  const submit = () => run.mutate(buildBody(), { onSuccess: (t: any) => nav(`/tasks/${t.id}`) });
+  const check = () => intakeCheck.mutate(buildBody());
+  const intake = (run.error as any)?.details?.intake ?? intakeCheck.data;
   const ready = clientId && (spec.needs === "business" ? !!business : spec.needs === "campaign" ? !!campaignId : spec.needs === "ad_group" ? !!adGroupId : !!adId);
 
   return (
@@ -119,9 +190,13 @@ export function TaskForm() {
             <Field label="Note"><Textarea rows={5} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           </div>)}
       </div>
+      {type === "BUILD_CAMPAIGN" && ready && (
+        <div className="mt-4"><Button onClick={check} disabled={intakeCheck.isPending}>{intakeCheck.isPending ? "Checking…" : "Check client information"}</Button></div>)}
+      {intake && <IntakeReport report={intake} clar={clar} setClar={setClar} />}
       <div className="mt-5 flex items-center gap-3">
         <Button variant="primary" disabled={!ready || run.isPending} onClick={submit}>{run.isPending ? "Starting…" : "Run"}</Button>
-        <ErrorBox error={run.error} />
+        {!(run.error as any)?.details?.intake && <ErrorBox error={run.error} />}
+        <ErrorBox error={intakeCheck.error} />
       </div>
     </Card>
   );
@@ -164,6 +239,7 @@ export function TaskDetail() {
       {t.status === "BLOCKED_TRACKING" && <Notice tone="red"><b>Blocked by the conversion tracking gate.</b> {t.error} — fix tracking or ask an admin for an override on the business page.</Notice>}
       {t.status === "VALIDATION_FAILED" && <Notice tone="red">{t.error}</Notice>}
       {t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
+      {t.status === "AWAITING_BUDGET_DECISION" && <BudgetDecision task={t} />}
       {t.status === "AWAITING_APPROVAL" && <Notice tone="amber">The workflow stopped at the approval stage. Nothing has been changed in Google Ads.</Notice>}
       <Card title="Workflow steps">
         <ol className="space-y-3">
