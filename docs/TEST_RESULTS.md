@@ -60,3 +60,9 @@ Last full run: 2026-11-07, mock mode, local PostgreSQL 16 + Redis 7, Python 3.13
 | E2E-A | New client → campaign created and verified PAUSED | `test_e2e_new_client_to_paused_campaign_then_enable_requires_approval`, UI smoke |
 | E2E-B | Cannot enable without approval | same test (423 before approval), UI smoke |
 | SEC-W | Real write impossible while disabled | `test_sec_w_real_adapter_cannot_write_while_disabled` |
+
+## V2 run (2026-11-08)
+- Backend: , 1 skipped (pytest, local PostgreSQL, migrations 0001→0004 applied from scratch).
+- Frontend: tsc clean; vitest 13 passed.
+- Browser: `node e2e/ui-smoke.mjs` passed (16 pages, task → approval → execute PAUSED → enable gated, Integrations page, mock banner).
+- Not verified: any real Google / Groq / Anthropic request (sandbox network policy). See KNOWN_ISSUES.md.

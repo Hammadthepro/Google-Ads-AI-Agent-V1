@@ -13,7 +13,7 @@ Source of truth for leads in V1 = **Google Ads conversions** (read via the Googl
 | Tracking gate | `backend/app/services/tracking_gate.py` |
 | Budget recommendation & feasibility (deterministic, no AI) | `backend/app/services/feasibility.py` |
 | Weekly review & diagnosis tree | `backend/app/services/reporting.py` |
-| GA4 adapter | `backend/app/adapters/analytics/__init__.py` |
+| GA4 connection test (Admin + Data API; no GA4 reporting adapter yet) | `backend/app/services/integrations_service.py` (`_test_ga4`) |
 | Client / campaign targets | `clients.weekly_conversion_target`, `campaigns.weekly_conversion_target` |
 
 ## Tracking gate — what each state means

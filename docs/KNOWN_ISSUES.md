@@ -44,3 +44,14 @@ Honest list of what is NOT done, NOT verified, or deliberately limited in V1. No
 
 ## Fixed during development (found by tests)
 Duplicate simulated search terms; Decimal aggregates; validation of status-only ad updates; integer conversion truncation; SSRF IP literals; per-campaign tracking-outage detection; anchor-based reconciliation; failure-injection counter rollback; login rate-limit scope; JSON step-status persistence; duplicate campaign names; competitor brand headings parsed as services; checkbox accessibility.
+
+
+## V2 additions — status and limits (honest list)
+- **No real provider has been contacted from the development sandbox** (network policy blocks googleapis.com, Groq and Anthropic). Connection tests, OAuth and the Claude provider are verified only against fake HTTP transports. A card shows *Connected* only after a genuine request succeeds in your environment.
+- Google Business Profile needs Google's Business Profile API access approval for the Cloud project; the test reports the 403 honestly until then.
+- Google Ads real reads/writes use the `google-ads` library; the connection test uses the REST API (v26). Real writes remain doubly gated (env key + Super Admin authorization) and only in *Validated execution* mode.
+- GA4 is connection-tested only; no GA4 data is used in reports yet.
+- Keyword Planner shares the Google Ads authorization; its card checks that connection rather than generating ideas.
+- Claude requests use `fallbacks: "default"` (server-side refusal fallback, beta `server-side-fallback-2026-07-01`) for Opus 5.x models.
+- Accounts page: multiple accounts and MCC discovery exist from V1; the per-account `access_level` column was added but is not yet editable in the UI.
+- Playwright smoke covers the main flow and the Integrations page; the new plan editor and budget-decision screens are covered by API tests, not yet by browser tests.

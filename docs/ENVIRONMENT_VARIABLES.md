@@ -49,3 +49,7 @@ Business thresholds (enough-data, emergency, approvals) live in `system_settings
 | `TEST_DATABASE_URL` | local `google_ads_agent_test` | Tests wipe and reseed this database |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | — | Only with `NOTIFIER_MODE=real` |
 | `DATABASE_URL` (Supabase) | — | `postgresql+psycopg://postgres.<ref>:<url-encoded-password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require` — secrets only, never committed |
+
+
+## Credentials now live in the database (V2)
+Google Ads, GA4, Business Profile, Groq, Claude, PageSpeed and Places credentials are entered on **Integrations**, encrypted with `TOKEN_ENCRYPTION_KEY` (required in production) and never returned by the API. Environment variables remain a read-only fallback. `ANTHROPIC_API_KEY` is also honoured as a fallback for Claude. The operating mode (mock / read_only / execution) is a system setting changed on Integrations; `GOOGLE_ADS_WRITES_ENABLED` stays the server-side first key for any real write. Google OAuth redirect URI to register: `<app origin>/api/v1/integrations/google/callback` (override with `GOOGLE_ADS_REDIRECT_URI`).

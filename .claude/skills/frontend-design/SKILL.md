@@ -9,17 +9,18 @@ Stack: React 18 + TypeScript + Vite + Tailwind 3 + TanStack Query + React Router
 
 ## Principles (project rules)
 1. **Every control does something real.** No decorative buttons, hardcoded statuses or simulated success toasts. Show errors from the API verbatim (`ErrorBox`), including `details.reasons` from the safety guard.
-2. **Provenance is always visible:** `DataSourceBadge` (MOCK / LIVE / MIXED) on every metric block; the global `ModeBanner` shows the operating mode (Mock / Read-only / Validated execution) and whether real writes are possible.
+2. **Provenance is always visible:** `DataSourceBadge` (MOCK / LIVE / MIXED) on every metric block; the global `SafetyBanner` (`components/Layout.tsx`, from `GET /integrations/mode`) shows the operating mode (Mock / Read-only / Validated execution) and whether real writes are possible.
 3. **Status vocabulary is fixed:** integration statuses are Not Connected · Configuration Required · Connected · Connection Failed · Authorization Expired · Synchronization Required (mocks: "Mock Connected"). Use `StatusBadge`.
 4. **Dangerous actions need `ConfirmDialog`** with a plain explanation (approve this exact version, execute, enable, authorize writes, disconnect).
 5. **Never render secrets.** Credential fields are write-only: show "Saved · fingerprint ab12…", never the value.
 6. Estimates are labelled as estimates. AI text is labelled as AI-written.
 
 ## Design tokens & components
-- Tokens: `frontend/tailwind.config.js` (`brand`, `ink`, `surface` scales) and `frontend/src/index.css`.
-- Kit: `frontend/src/components/ui.tsx` — `PageHeader`, `Card`, `Section`, `Stat`, `Table`, `Badge`, `StatusBadge`, `DataSourceBadge`, `Button`, `Field`, `FieldGroup`, `Input`, `Select`, `Textarea`, `Tabs`, `ConfirmDialog`, `Notice`, `KV`, `JsonBlock`, `EmptyState`, `Spinner`.
+- Tokens: `frontend/tailwind.config.js` (`brand` scale; Tailwind slate for neutrals) and `frontend/src/index.css`.
+- Kit: `frontend/src/components/ui.tsx` — `PageHeader`, `Card`, `Stat`, `Table`, `Badge`, `StatusBadge`, `DataSourceBadge`, `Button`, `Field`, `FieldGroup`, `Input`, `Select`, `Textarea`, `Tabs`, `ConfirmDialog`, `Notice`, `KV`, `JsonBlock`, `EmptyState`, `Spinner`.
 - Layout: `components/Layout.tsx` (sidebar groups, mode banner, user menu).
-- Charts: lightweight inline SVG (`Sparkline`, `Bars`), with no heavy chart library; label axes and units.
+- Feature components: `components/PlanReview.tsx` (AI competition, diff, versions, structured editor); Integrations cards in `pages/Integrations.tsx`.
+- Charts: no chart library is installed; if one is needed, keep it lightweight and label axes and units.
 
 ## Page workflow
 1. Read the backend router first (`backend/app/api/routers/*.py`) and use the real response shape.

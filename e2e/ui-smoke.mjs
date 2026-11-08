@@ -35,8 +35,19 @@ for (const path of ["/", "/clients", "/businesses", "/accounts", "/tasks", "/aud
   if (!h1) errors.push(`no heading on ${path}`);
   if (shots) await page.screenshot({ path: `${shots}/page${path.replace(/\//g, "_") || "_home"}.png` });
 }
-const banner = await page.getByText("MOCK MODE").first().textContent();
-if (!banner.includes("Nothing is sent to Google Ads")) errors.push("mock banner missing");
+const banner = await page.getByRole("status").first().textContent();
+if (!banner.includes("Mock mode") || !banner.includes("nothing is sent to Google")) errors.push("mock banner missing");
+// Integrations page: every card renders, secrets are never in the DOM, real writes stay disabled
+await page.goto(`${BASE}/integrations`);
+await page.getByText("API & Account Integrations").waitFor();
+for (const label of ["Google Ads API", "Google Analytics 4", "Google Business Profile", "Groq (internal AI)", "Claude (Anthropic)", "PageSpeed Insights"]) {
+  if (!(await page.getByText(label).first().isVisible())) errors.push(`integration card missing: ${label}`);
+}
+if (!(await page.getByText("Real campaign writes possible right now").isVisible())) errors.push("write status missing");
+const body = await page.content();
+if (/gsk_|sk-ant-|ya29\./.test(body)) errors.push("secret-looking value in DOM");
+if (shots) await page.screenshot({ path: `${shots}/integrations.png`, fullPage: true });
+await page.goto(`${BASE}/`);
 
 // 2. manager runs a Build-campaign task from the task form
 await ctx.clearCookies();
