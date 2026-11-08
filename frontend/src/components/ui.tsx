@@ -54,7 +54,7 @@ const STATUS_TONE: Record<string, string> = {
   NOT_APPLIED: "slate", RECONCILE_CONFLICT: "red", COMPLETED: "green", RUNNING: "blue", QUEUED: "slate",
   AWAITING_APPROVAL: "amber", BLOCKED_TRACKING: "red", EXECUTED_PAUSED: "blue", OPEN: "amber", RESOLVED: "green",
   IN_PROGRESS: "blue", HELD: "slate", SHADOW: "violet", PROPOSED: "blue", APPLIED: "green", GO: "green", HOLD: "slate",
-  FEASIBLE: "green", STRETCH: "amber", UNREALISTIC: "red", "MOCK CONNECTED": "violet", CONNECTED: "green", ERROR: "red",
+  FEASIBLE: "green", PARTIALLY_FEASIBLE: "amber", UNREALISTIC: "red", "MOCK CONNECTED": "violet", CONNECTED: "green", ERROR: "red",
   AWAITING_WINNER: "amber", HIGH: "red", MEDIUM: "amber", LOW: "slate", CRITICAL: "red", SIMULATED: "violet", INTERNAL: "blue",
   APPROVE: "green", REVISE: "amber", REJECT: "red", PASS: "green", FAIL: "red", WARN: "amber",
 };

@@ -81,7 +81,8 @@ class RealGooglePlacesAdapter(GooglePlacesAdapter):
         self.client = client or httpx.Client(timeout=15)
 
     def _headers(self, mask: str) -> dict:
-        key = get_settings().GOOGLE_PLACES_API_KEY
+        from app.services import integrations_service
+        key = integrations_service.resolve("places").get("api_key", "")
         if not key:
             raise AuthError("GOOGLE_PLACES_API_KEY is not configured", adapter=self.name)
         return {"X-Goog-Api-Key": key, "X-Goog-FieldMask": mask}

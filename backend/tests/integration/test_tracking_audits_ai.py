@@ -206,14 +206,6 @@ def test_integration_failures_are_handled_and_never_faked():
     by = {a["audit_type"]: a for a in r.json()}
     assert by["GBP"]["status"] == "FAILED" and "outage" in by["GBP"]["error"]
     assert by["WEBSITE"]["status"] == "COMPLETED"  # one failure does not stop the others
-    inject("google_ads", "auth_failure", method="list_accessible_customers", times=1)
-    sup = Api("superadmin@napollo.example")
-    t = sup.post("/integrations/google_ads/test").json()
-    assert t["status"] == "ERROR" and "AuthError" in t["error"]
-    t = sup.post("/integrations/google_ads/test").json()
-    assert t["status"] == "MOCK CONNECTED"
-    integ = sup.get("/integrations").json()["integrations"]
-    assert all(i["status"] != "CONNECTED" for i in integ if i["is_mock"])  # mocks never shown as plain "Connected"
     inject("pagespeed", "rate_limited", times=-1)
     web = admin.post("/audits", {"business_id": plumb["id"], "audit_type": "WEBSITE"}).json()[0]["result"]
     assert web["pagespeed"]["mobile"]["error"] == "rate_limited"

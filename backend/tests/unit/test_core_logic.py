@@ -29,7 +29,7 @@ def test_feasibility_scenarios_and_status():
     assert exp["weekly_clicks"] == pytest.approx(weekly / 7, abs=0.1)
     assert exp["weekly_conversions"] == pytest.approx(weekly / 7 * 0.08, abs=0.1)
     assert r["scenarios"]["conservative"]["weekly_conversions"] < exp["weekly_conversions"] < r["scenarios"]["optimistic"]["weekly_conversions"]
-    assert r["status"] == "STRETCH"  # expected 7.9 < 8 <= optimistic
+    assert r["status"] == "PARTIALLY_FEASIBLE"  # expected 7.9 < 8 <= optimistic
     assert r["required_conversion_rate"] == pytest.approx(8 * 7 / weekly, abs=0.001)
     assert r["budget_gap_monthly"] > 0
 

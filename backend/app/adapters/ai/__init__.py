@@ -270,7 +270,7 @@ class MockAIProvider(AIProvider):
             objections.append({"category": "BUDGET", "severity": "HIGH", "target": "budget",
                                "message": f"Budget cannot realistically buy the weekly target (expected {feas.get('expected_weekly_conversions')} vs target {feas.get('weekly_target')}).",
                                "suggestion": "Lower the target, raise the budget, or narrow the services."})
-        elif feas.get("status") == "STRETCH":
+        elif feas.get("status") == "PARTIALLY_FEASIBLE":
             objections.append({"category": "BUDGET", "severity": "LOW", "target": "budget",
                                "message": "Target is only reachable in the optimistic scenario.", "suggestion": "Set expectations with the client."})
         if u.get("tracking_state") in ("AMBER", "OVERRIDE"):
@@ -346,16 +346,17 @@ class GroqAIProvider(AIProvider):
     source = "LIVE"
 
     def __init__(self, client=None):
-        s = get_settings()
-        if not s.GROQ_MODEL:
-            raise AuthError("GROQ_MODEL is not configured", adapter=self.name)
-        self.model = s.GROQ_MODEL
-        self.challenger_model = s.GROQ_CHALLENGER_MODEL or s.GROQ_MODEL
+        from app.services import integrations_service
+        v = integrations_service.resolve("groq")
+        if not v.get("model"):
+            raise AuthError("Groq model is not configured", adapter=self.name)
+        self.model = v["model"]
+        self.challenger_model = v.get("challenger_model") or v["model"]
         if client is None:
-            if not s.GROQ_API_KEY:
-                raise AuthError("GROQ_API_KEY is not configured", adapter=self.name)
+            if not v.get("api_key"):
+                raise AuthError("Groq API key is not configured", adapter=self.name)
             from groq import Groq
-            client = Groq(api_key=s.GROQ_API_KEY, timeout=60, max_retries=0)
+            client = Groq(api_key=v["api_key"], timeout=60, max_retries=0)
         self.client = client
 
     def complete(self, purpose, system, user, *, model_role="draft") -> RawCompletion:

@@ -153,55 +153,6 @@ def structure(client_id: str, user: User = Depends(require("clients.view")), db:
     return {"campaigns": out, "conversion_actions": conv, "source": registry.get("google_ads").source}
 
 
-# ------------------------------------------------------------------ Google Ads OAuth (separate from app login)
-@router.get("/ads-oauth/start", tags=["google ads"])
-def oauth_start(user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
-    adapter = registry.get("ads_oauth")
-    state = secrets.token_urlsafe(24)
-    verifier, challenge = new_pkce()
-    conn = IntegrationConnection(provider="google_ads_oauth", status="PENDING", oauth_state=state,
-                                 integration_mode="REAL" if adapter.source == "LIVE" else "MOCK", connected_by_id=user.id,
-                                 encrypted_refresh_token=encrypt_token("pkce:" + verifier))
-    db.add(conn)
-    db.commit()
-    return {"authorization_url": adapter.authorization_url(state, challenge), "mode": conn.integration_mode}
-
-
-@router.get("/ads-oauth/callback", tags=["google ads"])
-def oauth_callback(state: str, code: str, db: Session = Depends(get_db)):
-    from app.adapters.ads_oauth import decrypt_token
-    conn = db.scalar(select(IntegrationConnection).where(IntegrationConnection.oauth_state == state,
-                                                         IntegrationConnection.status == "PENDING"))
-    if not conn:
-        raise ValidationFailed("Unknown or expired OAuth state")
-    verifier = decrypt_token(conn.encrypted_refresh_token).removeprefix("pkce:")
-    tokens = registry.get("ads_oauth").exchange_code(code, verifier)
-    conn.encrypted_refresh_token = encrypt_token(tokens["refresh_token"])
-    conn.token_fingerprint = fingerprint(tokens["refresh_token"])
-    conn.scopes, conn.status, conn.oauth_state = tokens["scopes"], "CONNECTED", ""
-    activity.log(db, "ads_oauth.connected", entity="integration_connection", entity_id=conn.id,
-                 details={"fingerprint": conn.token_fingerprint, "mode": conn.integration_mode})
-    db.commit()
-    return RedirectResponse("/integrations?ads_oauth=connected")
-
-
-@router.post("/ads-oauth/{connection_id}/disconnect", tags=["google ads"])
-def oauth_disconnect(connection_id: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
-    from app.adapters.ads_oauth import decrypt_token
-    conn = db.get(IntegrationConnection, connection_id)
-    if not conn:
-        raise NotFound("Connection not found")
-    if conn.encrypted_refresh_token and conn.status == "CONNECTED":
-        try:
-            registry.get("ads_oauth").revoke(decrypt_token(conn.encrypted_refresh_token))
-        except Exception:  # noqa: BLE001 — revoke failure must not keep the token stored
-            pass
-    conn.encrypted_refresh_token, conn.status = "", "DISCONNECTED"
-    activity.log(db, "ads_oauth.disconnected", actor=user, entity="integration_connection", entity_id=conn.id)
-    db.commit()
-    return {"ok": True}
-
-
 # ------------------------------------------------------------------ tracking gate
 @router.post("/businesses/{business_id}/tracking-gate/run", tags=["tracking"])
 def run_gate(business_id: str, user: User = Depends(require("audits.run")), db: Session = Depends(get_db)):

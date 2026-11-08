@@ -54,6 +54,8 @@ DEFAULTS: dict[str, Any] = {
     # experiments
     "experiments.min_clicks_per_arm": 100,
     "experiments.min_conversions_per_arm": 10,
+    # operating mode: mock | read_only | execution (changed only through Integrations)
+    "operating_mode": "mock",
     # real writes (second key) — only a Super Admin may change this
     "real_writes_authorized": False,
     "real_emergency_writes_authorized": False,
@@ -63,7 +65,7 @@ DESCRIPTIONS = {
     "real_writes_authorized": "Second key for real Google Ads writes (also needs GOOGLE_ADS_WRITES_ENABLED=true).",
     "negatives.mode": "shadow = proposals only; active = apply safe negatives (also needs AUTO_NEGATIVES_MODE=active).",
 }
-SUPER_ADMIN_ONLY = {"real_writes_authorized", "real_emergency_writes_authorized", "tracking.override_roles"}
+SUPER_ADMIN_ONLY = {"operating_mode", "real_writes_authorized", "real_emergency_writes_authorized", "tracking.override_roles"}
 
 
 def get_value(key: str, default: Any = None, db: Session | None = None) -> Any:

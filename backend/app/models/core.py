@@ -53,6 +53,9 @@ class Client(TimestampMixin, Base):
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
     flag_reason: Mapped[str] = mapped_column(Text, default="")
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # client-level weekly lead target (all campaigns combined) and agreed monthly ad budget
+    weekly_conversion_target: Mapped[float] = mapped_column(Float, default=0)
+    monthly_budget_usd: Mapped[float] = mapped_column(Float, default=0)
     businesses: Mapped[list["Business"]] = relationship(back_populates="client", cascade="all, delete-orphan")
 
 
@@ -110,6 +113,7 @@ class GoogleAdsAccount(TimestampMixin, Base):
     writes_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_tagging_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
+    access_level: Mapped[str] = mapped_column(String(16), default="READ_ONLY")  # READ_ONLY / STANDARD (app-side)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

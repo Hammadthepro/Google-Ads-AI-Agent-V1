@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, JSONType, TimestampMixin, utcnow
@@ -28,6 +28,7 @@ class Task(TimestampMixin, Base):
     plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    intake: Mapped[dict] = mapped_column(JSONType, default=dict)  # intake validation result + clarifications
 
 
 class TrackingGateResult(TimestampMixin, Base):
@@ -82,6 +83,13 @@ class FeasibilityResult(TimestampMixin, Base):
     bottlenecks: Mapped[list] = mapped_column(JSONType, default=list)
     is_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
     source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    # team decision on the recommendation: ACCEPT_RECOMMENDED / KEEP_CURRENT / ADJUST (pending = "")
+    decision: Mapped[str] = mapped_column(String(24), default="")
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+    decided_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_monthly_budget: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accepted_weekly_target: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class FixTrackerItem(TimestampMixin, Base):
@@ -134,6 +142,12 @@ class CampaignPlan(TimestampMixin, Base):
     challenger_ai_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="DRAFTED")
     source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    # dual-LLM competition record: both drafts, both cross-challenges, comparison and consolidation rationale
+    competition: Mapped[dict] = mapped_column(JSONType, default=dict)
+    original: Mapped[dict] = mapped_column(JSONType, default=dict)   # the AI-consolidated plan before any human edit
+    parent_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    change_summary: Mapped[str] = mapped_column(Text, default="")
+    edited_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class ValidationRun(TimestampMixin, Base):

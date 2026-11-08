@@ -65,8 +65,10 @@ class RealPageSpeedAdapter(PageSpeedAdapter):
 
     def run(self, url: str, strategy: str) -> dict:
         params = {"url": url, "strategy": strategy.upper(), "category": "PERFORMANCE"}
-        if get_settings().PAGESPEED_API_KEY:
-            params["key"] = get_settings().PAGESPEED_API_KEY
+        from app.services import integrations_service
+        key = integrations_service.resolve("pagespeed").get("api_key")
+        if key:
+            params["key"] = key
         try:
             resp = self.client.get(self.ENDPOINT, params=params)
         except httpx.TimeoutException as exc:

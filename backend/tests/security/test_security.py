@@ -73,7 +73,8 @@ def test_secrets_never_returned_by_api(monkeypatch):
         for path in ("/integrations", "/settings", "/auth/me", "/auth/config", "/dashboard"):
             body = sup.get(path).text
             assert "gsk_TESTSECRET" not in body and "devtoken-SECRET" not in body, path
-        assert sup.get("/integrations").json()["config"]["groq_key_configured"] is True
+        groq = next(i for i in sup.get("/integrations").json()["integrations"] if i["provider"] == "groq")
+        assert groq["secrets"]["api_key"]["saved"] is True and groq["secrets"]["api_key"]["source"] == "environment"
     finally:
         reset_settings_cache()
 

@@ -309,66 +309,6 @@ def run_cases(user: User = Depends(require("playbook.manage")), db: Session = De
     return out
 
 
-# ------------------------------------------------------------------ integrations
-STATUS_KEY = "integration_status"
-
-
-@router.get("/integrations", tags=["integrations"])
-def integrations(user: User = Depends(require("reports.view")), db: Session = Depends(get_db)):
-    s = get_settings()
-    rows = {r.provider: r for r in db.scalars(select(IntegrationConnection))}
-    out = []
-    for name in ("google_ads", "keyword_research", "places", "pagespeed", "crawler", "ai", "auth", "ads_oauth", "notifier"):
-        a = registry.get(name)
-        live = a.source == "LIVE"
-        r = rows.get(name)
-        status = (r.status if r else "NOT_TESTED") if live else "MOCK CONNECTED"
-        out.append({"name": name, "adapter": a.name, "mode": "REAL" if live else "MOCK", "status": status,
-                    "last_success_at": r.last_success_at.isoformat() if r and r.last_success_at else None,
-                    "last_test_at": r.last_test_at.isoformat() if r and r.last_test_at else None,
-                    "last_error": r.last_error if r else "", "is_mock": not live})
-    ads_conn = [{"id": r.id, "status": r.status, "fingerprint": r.token_fingerprint, "mode": r.integration_mode, "scopes": r.scopes}
-                for r in rows.values() if r.provider == "google_ads_oauth"]
-    return {"integrations": out, "config": s.public_summary(), "ads_connections": ads_conn,
-            "real_writes": {"env_enabled": s.GOOGLE_ADS_WRITES_ENABLED, "authorized": settings_service.get_value("real_writes_authorized", False, db)}}
-
-
-@router.post("/integrations/{name}/test", tags=["integrations"])
-def test_integration(name: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
-    if name not in registry.ALL:
-        raise NotFound("Unknown integration")
-    a = registry.get(name)
-    r = db.scalar(select(IntegrationConnection).where(IntegrationConnection.provider == name))
-    if not r:
-        r = IntegrationConnection(provider=name)
-        db.add(r)
-    r.integration_mode = "REAL" if a.source == "LIVE" else "MOCK"
-    r.last_test_at = datetime.now(timezone.utc)
-    try:
-        if name == "google_ads":
-            detail = f"{len(a.list_accessible_customers())} accessible customers"
-        elif name == "places":
-            detail = f"{len(a.text_search('plumber'))} results"
-        elif name == "pagespeed":
-            detail = f"score {a.run('https://www.northsideplumbing.example/', 'mobile')['performance_score']}"
-        elif name == "crawler":
-            detail = f"status {a.fetch('https://www.northsideplumbing.example/').status}"
-        elif name == "ai":
-            from app.services import ai_service
-            parsed, run = ai_service.generate(db, "EXPLAIN", {"headline": "Connection test", "facts": {"ok": True}})
-            detail = f"model {run.model}"
-        elif name == "keyword_research":
-            detail = f"{len(a.generate_ideas('', ['plumber']))} ideas"
-        else:
-            detail = "configured"
-        r.status, r.last_success_at, r.last_error = ("MOCK CONNECTED" if a.source == "MOCK" else "CONNECTED"), r.last_test_at, ""
-    except (AdapterError, Exception) as exc:  # noqa: BLE001 — report failures, never fake success
-        r.status, r.last_error, detail = "ERROR", f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))[:300]}", ""
-    activity.log(db, "integration.tested", actor=user, entity="integration", entity_id=name, details={"status": r.status})
-    db.commit()
-    return {"name": name, "status": r.status, "detail": detail, "error": r.last_error, "mode": r.integration_mode}
-
-
 # ------------------------------------------------------------------ settings
 @router.get("/settings", tags=["settings"])
 def get_settings_(user: User = Depends(require("settings.view")), db: Session = Depends(get_db)):

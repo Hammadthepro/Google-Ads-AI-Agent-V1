@@ -18,8 +18,10 @@ depends_on = None
 
 
 def _tables():
+    # Only tables that exist at this revision: later migrations add tables (and enable RLS on them) themselves.
+    existing = set(sa.inspect(op.get_bind()).get_table_names())
     from app.models import Base
-    return [t.name for t in Base.metadata.sorted_tables] + ["alembic_version"]
+    return [t.name for t in Base.metadata.sorted_tables if t.name in existing] + ["alembic_version"]
 
 
 def upgrade() -> None:

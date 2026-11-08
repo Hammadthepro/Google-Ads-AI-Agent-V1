@@ -134,4 +134,9 @@ settings_override: dict = {}
 
 def reset_settings_cache() -> None:
     get_settings.cache_clear()
+    try:  # resolved integration credentials may embed environment fallbacks
+        from app.services import integrations_service
+        integrations_service._cache.clear()
+    except Exception:  # noqa: BLE001 - not importable during early bootstrap
+        pass
 

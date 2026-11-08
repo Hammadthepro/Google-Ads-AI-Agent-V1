@@ -1,6 +1,7 @@
 """Deterministic budget feasibility + lead forecasting. All outputs are ESTIMATES, never guarantees. No AI."""
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import timedelta
 
@@ -38,7 +39,7 @@ def calculate(*, monthly_budget: float, weekly_target: float, cpc_range: tuple[f
     elif exp["weekly_conversions"] >= weekly_target:
         status = "FEASIBLE"
     elif scenarios["optimistic"]["weekly_conversions"] >= weekly_target:
-        status = "STRETCH"
+        status = "PARTIALLY_FEASIBLE"
     else:
         status = "UNREALISTIC"
     return {
@@ -49,8 +50,37 @@ def calculate(*, monthly_budget: float, weekly_target: float, cpc_range: tuple[f
         "budget_needed_for_target_monthly": needed_budget,
         "budget_gap_monthly": round(needed_budget - monthly_budget, 2) if needed_budget else None,
         "status": status, "scenarios": scenarios, "review_adjustment": round(review_adjustment, 3),
+        "recommended_monthly_budget": recommended_budget(needed_budget),
+        "achievable_weekly_target": round(exp["weekly_conversions"], 1),
+        "adjustment_options": adjustment_options(status, monthly_budget, weekly_target, needed_budget,
+                                                 exp["weekly_conversions"]),
         "is_estimate": True,
     }
+
+
+def recommended_budget(needed_monthly: float | None) -> float | None:
+    """Budget needed for the target at the expected CPL, rounded UP to the next $50 (estimate)."""
+    if not needed_monthly:
+        return None
+    return float(math.ceil(needed_monthly / 50.0) * 50)
+
+
+def adjustment_options(status: str, monthly: float, target: float, needed: float | None, expected_weekly: float) -> list[dict]:
+    """Concrete options for the team when the target is not comfortably reachable. Deterministic, no AI."""
+    if status in ("FEASIBLE", "NO_TARGET"):
+        return []
+    opts = []
+    rec = recommended_budget(needed)
+    if rec and rec > monthly:
+        opts.append({"option": "RAISE_BUDGET", "monthly_budget": rec, "weekly_target": target,
+                     "explanation": f"Raise the monthly budget to about ${rec:,.0f} to reach {target:g} leads/week at the expected cost per lead."})
+    achievable = max(round(expected_weekly, 1), 0)
+    if achievable < target:
+        opts.append({"option": "LOWER_TARGET", "monthly_budget": monthly, "weekly_target": achievable,
+                     "explanation": f"Keep ${monthly:,.0f}/month and set the weekly target to about {achievable:g} leads."})
+    opts.append({"option": "NARROW_SCOPE", "monthly_budget": monthly, "weekly_target": target,
+                 "explanation": "Keep budget and target but focus on fewer, higher-intent services or a smaller area."})
+    return opts
 
 
 def review_adjustment(client_place: dict | None, competitor_places: list[dict], max_adj: float) -> tuple[float, dict]:

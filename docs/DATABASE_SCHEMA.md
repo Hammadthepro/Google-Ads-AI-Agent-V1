@@ -49,7 +49,7 @@ Money stored as integer **micros** (as Google Ads does) plus `currency_code`. No
 - **audits** — business_id, task_id, type (WEBSITE/GBP/COMPETITOR/KEYWORD/ACCOUNT), status, started/finished_at, result JSON, summary, source_type.
 - **crawl_pages** — audit_id, url, status_code, title, meta_description, h1–h3, phones, forms, schema JSON, tags_detected (GTAG/GTM ids), robots_allowed, depth.
 - **keyword_research_items** — audit_id, keyword, cluster, proposed_ad_group, label, match_type, volume, bids, competition, intent, overlap_flags.
-- **feasibility_results** — campaign or task, inputs JSON, scenarios JSON (conservative/expected/optimistic), daily/weekly budget, est_clicks, est_conversions, est_cpl, required_cvr, budget_gap, status (FEASIBLE/STRETCH/UNREALISTIC), bottlenecks JSON. All flagged `is_estimate=true`.
+- **feasibility_results** — campaign or task, inputs JSON, scenarios JSON (conservative/expected/optimistic), daily/weekly budget, est_clicks, est_conversions, est_cpl, required_cvr, budget_gap, status (FEASIBLE/PARTIALLY_FEASIBLE/UNREALISTIC), bottlenecks JSON. All flagged `is_estimate=true`.
 - **fix_tracker_items** — client_id, business_id, issue, category, priority, owner, status, evidence, source (audit/gate/feasibility), created_at, resolved_at, auto_recheck_type.
 
 ## Tasks, AI and planning

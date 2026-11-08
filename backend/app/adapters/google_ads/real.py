@@ -88,17 +88,17 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
                 self._client = self._factory()
             else:
                 from google.ads.googleads.client import GoogleAdsClient  # imported only here
-                s = get_settings()
-                missing = [k for k in ("GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID", "GOOGLE_ADS_CLIENT_SECRET")
-                           if not getattr(s, k)]
-                token = self._refresh_token or s.GOOGLE_ADS_REFRESH_TOKEN
+                from app.services import integrations_service
+                v = integrations_service.resolve("google_ads")
+                token = self._refresh_token or v.get("refresh_token", "")
+                missing = [k for k in ("developer_token", "client_id", "client_secret") if not v.get(k)]
                 if missing or not token:
                     raise AuthError(f"Google Ads credentials missing: {missing + ([] if token else ['refresh_token'])}",
                                     adapter=self.name)
-                cfg = {"developer_token": s.GOOGLE_ADS_DEVELOPER_TOKEN, "client_id": s.GOOGLE_ADS_CLIENT_ID,
-                       "client_secret": s.GOOGLE_ADS_CLIENT_SECRET, "refresh_token": token, "use_proto_plus": False}
-                if s.GOOGLE_ADS_LOGIN_CUSTOMER_ID:
-                    cfg["login_customer_id"] = s.GOOGLE_ADS_LOGIN_CUSTOMER_ID.replace("-", "")
+                cfg = {"developer_token": v["developer_token"], "client_id": v["client_id"],
+                       "client_secret": v["client_secret"], "refresh_token": token, "use_proto_plus": False}
+                if v.get("login_customer_id"):
+                    cfg["login_customer_id"] = v["login_customer_id"].replace("-", "")
                 self._client = GoogleAdsClient.load_from_dict(cfg)
         return self._client
 
