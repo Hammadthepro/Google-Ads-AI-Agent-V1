@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
     # experiments
     "experiments.min_clicks_per_arm": 100,
     "experiments.min_conversions_per_arm": 10,
+    "intake.min_monthly_budget": 150,
     # operating mode: mock | read_only | execution (changed only through Integrations)
     "operating_mode": "mock",
     # real writes (second key) — only a Super Admin may change this

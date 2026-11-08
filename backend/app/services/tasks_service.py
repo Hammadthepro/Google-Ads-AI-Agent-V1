@@ -15,7 +15,7 @@ from app.core.errors import NotFound, ValidationFailed
 from app.db.session import SessionLocal
 from app.models import Ad, AdGroup, Business, Campaign, CampaignPlan, Client, GoogleAdsAccount, Keyword, Task, User
 from app.services import (accounts_service, activity, ai_service, approvals, audits, auth_service, clients_service, feasibility,
-                          planner, tracking_gate, validation)
+                          intake, planner, tracking_gate, validation)
 
 TASK_TYPES = {
     "BUILD_CAMPAIGN": {"needs": "business", "fields": ["services", "monthly_budget", "weekly_target", "radius_miles", "zip_codes"]},
@@ -90,7 +90,14 @@ def create(db: Session, actor: User, data: dict) -> Task:
         raise ValidationFailed("New weekly target is required")
     if ttype == "ADD_AD_GROUP" and not fields.get("service"):
         raise ValidationFailed("Service is required")
-    t = Task(client_id=client.id, business_id=b.id, task_type=ttype, campaign_id=campaign_id, ad_group_id=ad_group_id,
+    report = intake.validate(db, b, client, ttype, fields)
+    if report["status"] != "OK":
+        first = next(i for i in report["issues"] if i["severity"] in ("BLOCKER", "QUESTION"))
+        raise ValidationFailed(("Intake check: " + first["message"]) if report["status"] == "BLOCKED" else
+                               ("Clarification needed: " + first["message"] + " " + first["question"]),
+                               code="intake_blocked" if report["status"] == "BLOCKED" else "clarification_required",
+                               details={"intake": report})
+    t = Task(client_id=client.id, business_id=b.id, task_type=ttype, intake=report, campaign_id=campaign_id, ad_group_id=ad_group_id,
              ad_id=ad_id, fields=fields, human_plan=data.get("human_plan") or "", note=data.get("note") or "",
              created_by_id=actor.id, status="QUEUED", source_type=registry.get("google_ads").source)
     db.add(t)
@@ -209,7 +216,26 @@ class Runner:
         ov = self.ctx["keywords"]["overlaps"]
         return f"{len(ov)} overlap(s) found" + (": " + ", ".join(o["keyword"] for o in ov[:5]) if ov else "")
 
+    def _apply_budget_decision(self):
+        """A team decision on the budget recommendation is applied to the task fields once (idempotent)."""
+        f = dict(self.task.fields or {})
+        d = f.get("budget_decision")
+        if not d or d.get("applied"):
+            return
+        if d["decision"] == "ACCEPT_RECOMMENDED" and d.get("monthly_budget"):
+            f["monthly_budget"] = float(d["monthly_budget"])
+        elif d["decision"] == "ADJUST":
+            if d.get("monthly_budget"):
+                f["monthly_budget"] = float(d["monthly_budget"])
+            if d.get("weekly_target"):
+                f["weekly_target"] = float(d["weekly_target"])
+        f["budget_decision"] = {**d, "applied": True}
+        self.task.fields = f
+        flag_modified(self.task, "fields")
+
     def s_feasibility(self):
+        if self.task.task_type == "BUILD_CAMPAIGN":
+            self._apply_budget_decision()
         f = self.task.fields or {}
         if self.task.task_type == "BUILD_CAMPAIGN":
             monthly, target, camp_ids = float(f["monthly_budget"]), float(f["weekly_target"]), None
@@ -230,6 +256,12 @@ class Runner:
                             audits={"gbp": a.get("gbp"), "website": a.get("website")}, account_history=history,
                             task_id=self.task.id, campaign_id=self.campaign.id if self.campaign else None,
                             source_type=registry.get("google_ads").source)
+        dec = (self.task.fields or {}).get("budget_decision")
+        if dec:
+            from datetime import datetime, timezone
+            r.decision, r.decision_note = dec["decision"], dec.get("note", "")
+            r.decided_by_id, r.decided_at = dec.get("by"), datetime.now(timezone.utc)
+            r.accepted_monthly_budget, r.accepted_weekly_target = monthly, target
         self.ctx["feasibility"] = feasibility.serialize(r)
         s = r.summary
         thin = ""
@@ -239,8 +271,14 @@ class Runner:
             if per < 300:
                 thin = f" Warning: ${per:,.0f}/month per ad group after adding — the campaign budget may be too thin."
             self.ctx["feasibility"]["budget_thin_warning"] = thin.strip()
-        return (f"{r.status}: expected {s['expected_weekly_conversions']} leads/week (range {s['realistic_weekly_range']}) "
-                f"vs target {target}; allowed CPL ${s['allowed_cost_per_lead']}. ESTIMATE." + thin)
+        msg = (f"{r.status}: expected {s['expected_weekly_conversions']} leads/week (range {s['realistic_weekly_range']}) "
+               f"vs target {target}; allowed CPL ${s['allowed_cost_per_lead']}; recommended budget "
+               f"${s.get('recommended_monthly_budget') or monthly:,.0f}/month. ESTIMATE." + thin)
+        if self.task.task_type == "BUILD_CAMPAIGN" and r.status == "UNREALISTIC" and not dec:
+            self.db.commit()
+            raise Stop("AWAITING_BUDGET_DECISION", "The target is unrealistic for this budget (estimate). A team member must choose: "
+                       "accept the recommended budget, adjust budget/target, or keep the current numbers. " + msg)
+        return msg
 
     def _tracking_state(self) -> tuple[str, bool]:
         r = self.ctx.get("tracking") or tracking_gate.latest(self.db, self.business.id)
@@ -486,6 +524,43 @@ class Runner:
         self.db.commit()
 
 
+def decide_budget(db: Session, actor: User, task_id: str, body: dict) -> Task:
+    """Team confirmation of the budget recommendation. Resumes the task from the start with the decision applied."""
+    auth_service.require(actor, "tasks.run")
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, actor, t.client_id)
+    if t.status != "AWAITING_BUDGET_DECISION":
+        raise ValidationFailed("This task is not waiting for a budget decision")
+    decision = body.get("decision")
+    if decision not in ("ACCEPT_RECOMMENDED", "KEEP_CURRENT", "ADJUST"):
+        raise ValidationFailed("decision must be ACCEPT_RECOMMENDED, KEEP_CURRENT or ADJUST")
+    from app.models import FeasibilityResult
+    row = db.scalar(select(FeasibilityResult).where(FeasibilityResult.task_id == t.id).order_by(FeasibilityResult.created_at.desc()))
+    d: dict = {"decision": decision, "note": (body.get("note") or "")[:1000], "by": actor.id}
+    if decision == "ACCEPT_RECOMMENDED":
+        rec = (row.summary or {}).get("recommended_monthly_budget") if row else None
+        if not rec:
+            raise ValidationFailed("There is no recommended budget to accept")
+        d["monthly_budget"] = rec
+    elif decision == "ADJUST":
+        for k in ("monthly_budget", "weekly_target"):
+            if body.get(k) not in (None, ""):
+                v = float(body[k])
+                if v <= 0:
+                    raise ValidationFailed(f"{k} must be positive")
+                d[k] = v
+        if "monthly_budget" not in d and "weekly_target" not in d:
+            raise ValidationFailed("ADJUST needs a new monthly_budget and/or weekly_target")
+    elif len((d["note"]).strip()) < 10:
+        raise ValidationFailed("Keeping unrealistic numbers requires a written reason (10+ characters)")
+    t.fields = {**(t.fields or {}), "budget_decision": d}
+    t.status, t.error = "QUEUED", ""
+    activity.log(db, "task.budget_decision", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id, details=d)
+    return t
+
+
 def run_task(task_id: str) -> str:
     db = SessionLocal()
     try:
@@ -518,5 +593,5 @@ def serialize(t: Task) -> dict:
     return {"id": t.id, "client_id": t.client_id, "business_id": t.business_id, "task_type": t.task_type,
             "campaign_id": t.campaign_id, "ad_group_id": t.ad_group_id, "ad_id": t.ad_id, "fields": t.fields,
             "human_plan": t.human_plan, "note": t.note, "status": t.status, "current_step": t.current_step, "steps": t.steps,
-            "error": t.error, "approval_id": t.approval_id, "plan_id": t.plan_id, "source_type": t.source_type,
+            "error": t.error, "intake": t.intake, "approval_id": t.approval_id, "plan_id": t.plan_id, "source_type": t.source_type,
             "created_at": t.created_at.isoformat(), "updated_at": t.updated_at.isoformat()}

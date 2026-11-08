@@ -215,7 +215,9 @@ def seed(run_workflows: bool = True) -> dict:
         db.flush()
         for spec in CLIENTS:
             c = Client(name=spec["name"], owner_user_id=admin.id, backup_owner_user_id=backup.id, owner_contact=admin.email,
-                       backup_contact=backup.email, tag_access_contact=spec["tag"], created_by_id=su.id)
+                       backup_contact=backup.email, tag_access_contact=spec["tag"], created_by_id=su.id,
+                       weekly_conversion_target=float(sum(cp.get("target", 0) for a in ACCOUNTS if a["cid"] == spec["cid"]
+                                                          for cp in a["campaigns"])))
             db.add(c)
             db.flush()
             acct = db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.customer_id == spec["cid"]))

@@ -66,6 +66,44 @@ def create_task(body: TaskIn, sync: bool = False, user: User = Depends(current_u
     return data
 
 
+class BudgetDecisionIn(BaseModel):
+    decision: str
+    monthly_budget: float | None = None
+    weekly_target: float | None = None
+    note: str = ""
+
+
+@router.post("/tasks/{task_id}/budget-decision", tags=["tasks"])
+def budget_decision(task_id: str, body: BudgetDecisionIn, sync: bool = False, user: User = Depends(current_user),
+                    db: Session = Depends(get_db)):
+    t = tasks_service.decide_budget(db, user, task_id, body.model_dump())
+    db.commit()
+    if sync:
+        tasks_service.run_task(t.id)
+        db.expire_all()
+        return tasks_service.serialize(db.get(Task, t.id))
+    runner = dispatch(t.id)
+    return {**tasks_service.serialize(t), "runner": runner}
+
+
+class IntakeIn(BaseModel):
+    task_type: str = "BUILD_CAMPAIGN"
+    client_id: str
+    business_id: str
+    fields: dict = {}
+
+
+@router.post("/intake/validate", tags=["tasks"])
+def intake_validate(body: IntakeIn, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    from app.models import Business, Client
+    from app.services import intake
+    auth_service.require_client_access(db, user, body.client_id)
+    c, b = db.get(Client, body.client_id), db.get(Business, body.business_id)
+    if not c or not b or b.client_id != c.id:
+        raise NotFound("Client or business not found")
+    return intake.validate(db, b, c, body.task_type, body.fields)
+
+
 @router.get("/tasks", tags=["tasks"])
 def list_tasks(client_id: str | None = None, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
     ids = auth_service.accessible_client_ids(db, user)

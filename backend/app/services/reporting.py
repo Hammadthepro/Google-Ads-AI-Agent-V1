@@ -131,6 +131,8 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         bb["cost"] += cur["cost"]
     totals = {k: round(v, 2) for k, v in totals.items()}
     totals["gap"] = round(totals["conversions"] - totals["target"], 1)
+    totals["client_target"] = client.weekly_conversion_target or 0
+    totals["client_gap"] = round(totals["conversions"] - totals["client_target"], 1) if client.weekly_conversion_target else None
     totals["wasted_spend"] = waste["total"]
     ws = clock.now() - timedelta(days=7)
     approvals_week = list(db.scalars(select(Approval).where(Approval.client_id == client.id, Approval.decided_at >= ws)))

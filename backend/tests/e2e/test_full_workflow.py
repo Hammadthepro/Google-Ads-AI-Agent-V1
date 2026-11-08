@@ -47,7 +47,16 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
                                       "note": "E2E build"})
     assert r.status_code == 200, r.text
     task = r.json()
+    if task["status"] == "AWAITING_BUDGET_DECISION":  # unrealistic target → the team must confirm what to do (V2 vision §5)
+        assert "unrealistic" in task["error"].lower() and task["approval_id"] is None
+        r = mgr.post(f"/tasks/{task['id']}/budget-decision?sync=true", {"decision": "KEEP_CURRENT", "note": "short"})
+        assert r.status_code == 422  # keeping unrealistic numbers needs a real reason
+        r = mgr.post(f"/tasks/{task['id']}/budget-decision?sync=true", {"decision": "ACCEPT_RECOMMENDED", "note": "Client agreed"})
+        assert r.status_code == 200, r.text
+        task = r.json()
+        assert task["fields"]["monthly_budget"] > 1500 and task["fields"]["budget_decision"]["decision"] == "ACCEPT_RECOMMENDED"
     assert task["status"] == "AWAITING_APPROVAL", task
+    budget = task["fields"]["monthly_budget"]  # the team-confirmed number, not necessarily the one first typed
     names = [s["name"] for s in task["steps"]]
     for step in ("Conversion tracking gate", "Audits (website, GBP, competitors)", "Keyword research", "Overlap check", "Feasibility",
                  "AI draft", "AI challenger", "Human plan comparison", "Validation", "Approval request"):
@@ -89,7 +98,7 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
     assert camp["status"] == "PAUSED"
     assert all(g["status"] == "PAUSED" for g in camp["ad_groups"])
     assert all(a["status"] == "PAUSED" for g in camp["ad_groups"] for a in g["ads"])
-    assert camp["monthly_budget"] == 1500 and abs(camp["daily_budget"] - round(1500 / 30.4, 2)) < 0.01
+    assert camp["monthly_budget"] == budget and abs(camp["daily_budget"] - round(budget / 30.4, 2)) < 0.01
 
     # E2E-B: an ENABLE approval exists, is pending, and enabling without approving it is blocked
     pend = admin.get(f"/approvals?client_id={client_id}&status=PENDING_APPROVAL").json()

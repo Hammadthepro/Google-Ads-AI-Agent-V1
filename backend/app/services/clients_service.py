@@ -13,7 +13,8 @@ from app.services import activity, auth_service
 BUSINESS_FIELDS = ("name", "business_type", "website_url", "gbp_url", "phone", "address", "lead_form_url",
                    "thank_you_url", "default_radius_miles", "zip_codes", "business_hours", "verified_claims",
                    "brand_rules", "competitor_ads_text", "google_ads_account_id")
-CLIENT_FIELDS = ("name", "owner_user_id", "backup_owner_user_id", "owner_contact", "backup_contact", "tag_access_contact")
+CLIENT_FIELDS = ("name", "owner_user_id", "backup_owner_user_id", "owner_contact", "backup_contact", "tag_access_contact",
+                 "weekly_conversion_target", "monthly_budget_usd")
 
 
 def _check_url(value: str, field: str) -> None:
@@ -26,6 +27,7 @@ def _check_url(value: str, field: str) -> None:
 def serialize_client(c: Client, with_businesses: bool = True) -> dict:
     data = {"id": c.id, "name": c.name, "owner_user_id": c.owner_user_id, "backup_owner_user_id": c.backup_owner_user_id,
             "owner_contact": c.owner_contact, "backup_contact": c.backup_contact, "tag_access_contact": c.tag_access_contact,
+            "weekly_conversion_target": c.weekly_conversion_target, "monthly_budget_usd": c.monthly_budget_usd,
             "automation_frozen": c.automation_frozen, "flagged": c.flagged, "flag_reason": c.flag_reason,
             "created_at": c.created_at.isoformat()}
     if with_businesses:
@@ -57,12 +59,28 @@ def get_client(db: Session, user: User, client_id: str) -> Client:
     return c
 
 
+NUMERIC_CLIENT_FIELDS = ("weekly_conversion_target", "monthly_budget_usd")
+
+
+def _coerce_numbers(data: dict) -> None:
+    for k in NUMERIC_CLIENT_FIELDS:
+        if k in data:
+            try:
+                v = float(data[k] or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValidationFailed(f"{k} must be a number") from exc
+            if v < 0:
+                raise ValidationFailed(f"{k} cannot be negative")
+            data[k] = v
+
+
 def create_client(db: Session, user: User, data: dict) -> Client:
     auth_service.require(user, "clients.create")
     if not (data.get("name") or "").strip():
         raise ValidationFailed("Client name is required")
-    c = Client(**{k: data.get(k) or ("" if k not in ("owner_user_id", "backup_owner_user_id") else None) for k in CLIENT_FIELDS},
-               created_by_id=user.id)
+    _coerce_numbers(data)
+    c = Client(**{k: data.get(k) or (0.0 if k in NUMERIC_CLIENT_FIELDS else "" if k not in ("owner_user_id", "backup_owner_user_id") else None)
+                  for k in CLIENT_FIELDS}, created_by_id=user.id)
     db.add(c)
     db.flush()
     activity.log(db, "client.created", actor=user, entity="client", entity_id=c.id, client_id=c.id, details={"name": c.name})
@@ -72,6 +90,7 @@ def create_client(db: Session, user: User, data: dict) -> Client:
 def update_client(db: Session, user: User, client_id: str, data: dict) -> Client:
     auth_service.require(user, "clients.edit")
     c = get_client(db, user, client_id)
+    _coerce_numbers(data)
     for k in CLIENT_FIELDS:
         if k in data:
             setattr(c, k, data[k])
