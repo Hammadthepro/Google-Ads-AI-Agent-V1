@@ -104,7 +104,7 @@ def review_adjustment(client_place: dict | None, competitor_places: list[dict], 
 
 def run(db: Session, business: Business, *, monthly_budget: float, weekly_target: float, keyword_rows: list[dict],
         audits: dict, account_history: dict | None, task_id: str | None = None, campaign_id: str | None = None,
-        source_type: str = "MOCK") -> FeasibilityResult:
+        source_type: str = "NONE") -> FeasibilityResult:
     """Build inputs from keyword bids + history + audits, compute, record bottlenecks into the fix tracker."""
     bids = [((r.get("low_top_of_page_bid_micros") or 0) + (r.get("high_top_of_page_bid_micros") or 0)) / 2 / 1e6
             for r in keyword_rows if r.get("label") == "SERVICE" and r.get("high_top_of_page_bid_micros")]

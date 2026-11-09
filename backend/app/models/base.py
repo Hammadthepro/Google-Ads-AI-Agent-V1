@@ -40,15 +40,16 @@ class Role:
 
 
 class SourceType:
-    MOCK = "MOCK"
+    MOCK = "MOCK"  # only ever produced by test fakes; the application never creates simulated data
     LIVE = "LIVE"
     MIXED = "MIXED"
+    NONE = "NONE"  # nothing was retrieved from an external system (not configured, failed, or purely internal)
 
     @staticmethod
     def combine(*sources: str | None) -> str:
-        s = {x for x in sources if x}
+        s = {x for x in sources if x and x != SourceType.NONE}
         if not s:
-            return SourceType.MOCK
+            return SourceType.NONE
         if len(s) == 1:
             return s.pop()
         return SourceType.MIXED

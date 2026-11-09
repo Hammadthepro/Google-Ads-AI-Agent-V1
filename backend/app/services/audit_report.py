@@ -696,7 +696,7 @@ def start(db: Session, biz: Business, client: Client, user_id: str | None) -> Au
                       status="RUNNING", steps=[{"key": k, "name": n, "status": "PENDING", "summary": ""} for k, n in
                                                [("client", "1 · Client & business"), ("website", "2 · Website & landing pages"), ("gbp", "3 · Google Business Profile"),
                                                 ("competitors", "4 · Competitor analysis"), ("keywords", "5 · Keyword research"), ("report", "Scoring, recommendations & summary")]],
-                      input_snapshot=snap, input_hash=_hash(snap), created_by_id=user_id, source_type="MOCK")
+                      input_snapshot=snap, input_hash=_hash(snap), created_by_id=user_id, source_type="NONE")
     db.add(rep)
     db.flush()
     return rep
@@ -756,7 +756,7 @@ def run(report_id: str) -> str:
             prev = db.get(AuditReport, rep.previous_report_id) if rep.previous_report_id else None
             changes = compare(prev, all_items, scores) if prev and prev.status == "COMPLETED" else {"first_audit": True}
             rep.sections, rep.scores, rep.recommendations, rep.summary, rep.changes = sections, scores, recs, summary, changes
-            rep.source_type = "LIVE" if all(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else ("MIXED" if any(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else "MOCK")
+            rep.source_type = "LIVE" if all(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else ("MIXED" if any(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else "NONE")
             rep.status, rep.finished_at = "COMPLETED", clock.now()
             db.commit()
             _step(rep.id, "report", "DONE", f"Overall readiness {scores['overall']['score']}/100")

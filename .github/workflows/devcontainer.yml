@@ -31,16 +31,18 @@ jobs:
             docker version --format 'Docker {{.Server.Version}}'
             docker compose version
             echo "== startup script (idempotent; postStartCommand may already have run it)"
-            bash scripts/start-demo.sh
+            bash scripts/start.sh
             echo "== checks"
             test "$(docker compose ps --services --status running | sort | tr '\n' ' ')" = "backend beat frontend postgres redis worker "
             curl -fsS http://localhost:8000/healthz
             curl -fsS http://localhost:8000/readyz | grep -q '"database":"ok"'
             curl -fsS http://localhost:5173/ | grep -q '<div id="root">'
-            curl -fsS http://localhost:5173/api/v1/auth/config | grep -q 'admin@napollo.example'
+            docker compose exec -T backend python -m app.cli create-super-admin ci-check@example.com
             curl -fsS -X POST http://localhost:5173/api/v1/auth/dev-login -H 'Content-Type: application/json' \
-              -d '{"email":"admin@napollo.example"}' | grep -q '"role":"ADMIN"'
+              -d '{"email":"ci-check@example.com"}' | grep -q '"role":"SUPER_ADMIN"'
+            curl -fsS -X POST http://localhost:5173/api/v1/auth/dev-login -H 'Content-Type: application/json' \
+              -d '{"email":"nobody@example.com"}' | grep -q 'not been invited'
             docker compose exec -T backend alembic current | grep -q '(head)'
             grep -q '^GOOGLE_ADS_WRITES_ENABLED=false' .env
-            grep -q '^INTEGRATION_MODE=mock' .env
-            echo "DEV CONTAINER OK: 6 services running, migrations at head, demo seeded, login works, mock mode, writes disabled"
+            ! grep -q '^INTEGRATION_MODE' .env
+            echo "DEV CONTAINER OK: 6 services running, migrations at head, empty database (no demo data), login works, writes disabled"

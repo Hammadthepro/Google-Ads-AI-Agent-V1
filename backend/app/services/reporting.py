@@ -43,7 +43,7 @@ def _week_rows(db, c: Campaign, start: date, end: date):
     return {"impressions": int(imp), "clicks": int(clicks), "cost": round(cost / 1e6, 2), "conversions": round(float(conv), 1),
             "forms": round(float(forms), 1), "calls": round(float(calls), 1),
             "budget_lost_is": round(blis, 3) if blis is not None else None, "rank_lost_is": round(rlis, 3) if rlis is not None else None,
-            "source_type": "MIXED" if nsrc and nsrc > 1 else (src or "MOCK")}
+            "source_type": "MIXED" if nsrc and nsrc > 1 else (src or "NONE")}
 
 
 def rule_causes(m: dict, tracking_state: str, missed_rate: float | None, open_fixes: int, cpc_benchmark: float | None, db) -> list[str]:

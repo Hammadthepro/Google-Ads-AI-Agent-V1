@@ -1,5 +1,5 @@
 # Google Ads AI Agent V1 — common commands
-.PHONY: up down migrate seed reset-mock dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint
+.PHONY: up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint
 
 up:            ## build and start everything with Docker Compose (mock mode)
 	docker compose up --build -d
@@ -7,10 +7,8 @@ down:
 	docker compose down
 migrate:
 	cd backend && .venv/bin/alembic upgrade head
-seed:          ## seed demo data + simulated world (only if empty)
-	cd backend && .venv/bin/python -m app.cli seed
-reset-mock:    ## wipe all data except users and reseed deterministically
-	cd backend && .venv/bin/python -m app.cli reset-mock
+purge-demo-data: ## list leftover demo data from older versions (add ARGS=--apply to delete it)
+	cd backend && .venv/bin/python -m app.cli purge-demo-data $(ARGS)
 dev-backend:
 	cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000
 dev-worker:
@@ -20,7 +18,7 @@ dev-beat:
 dev-frontend:
 	cd frontend && npm run dev
 test: test-backend test-frontend
-test-backend:  ## needs a disposable Postgres database (TEST_DATABASE_URL); it is wiped and reseeded
+test-backend:  ## needs a disposable Postgres database (TEST_DATABASE_URL); it is wiped and loaded with test fixtures
 	cd backend && .venv/bin/pytest
 test-frontend:
 	cd frontend && npx tsc -b && npx vitest run

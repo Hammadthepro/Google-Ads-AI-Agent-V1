@@ -1,14 +1,16 @@
 """RealGoogleAdsAdapter — official google-ads Python library.
 
-STATUS: implemented but NOT verified against a live Google Ads account (no developer token / OAuth
-credentials were available during development). Contract tests run against a fake client only.
-See docs/REAL_API_INTEGRATION_PLAN.md before enabling.
+STATUS: the connection test (OAuth, accessible customers, customer read) is verified live; reading campaign data from a
+production account additionally needs API access (Explorer or higher) for the Google Cloud project that owns the OAuth client.
+Contract tests run against a fake client; live tests report NOT CONFIGURED / BLOCKED instead of passing without credentials.
 
 Defence in depth: `mutate()` refuses every non-validate-only call unless ALL write keys are set,
 independently of the application's WriteGuard.
 """
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date
 from typing import Any, Callable
 
@@ -16,6 +18,9 @@ from app.adapters.base import AdapterError, AdapterTimeout, AuthError, InvalidIn
     RateLimited, ServiceUnavailable, WritesDisabled
 from app.adapters.google_ads.base import RESOURCE_COLLECTIONS, GoogleAdsAdapter
 from app.core.config import get_settings
+
+log = logging.getLogger("gaa.google_ads")
+READ_ATTEMPTS = 4  # one try + up to three retries with exponential backoff (1s, 2s, 4s) on rate limits / transient outages
 
 # App-only keys that are not Google Ads API fields
 _APP_ONLY = {"type", "service", "scenario", "weak", "landing_page", "start_date", "status_history"}
@@ -80,6 +85,7 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
         self._client = None
         self._factory = client_factory
         self._refresh_token = refresh_token
+        self._sleep = time.sleep  # replaced in tests so backoff does not slow them down
 
     # ------------------------------------------------------------------ client
     def client(self):
@@ -111,20 +117,49 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
         except Exception as exc:  # map vendor errors to adapter errors
             raise self._map_error(exc) from exc
 
+    def _read(self, fn: Callable):
+        """Reads are idempotent: back off and retry on rate limits and transient outages. Writes never use this (an
+        AdapterTimeout on a write means the outcome is unknown and must be reconciled, not repeated)."""
+        delay = 1.0
+        for attempt in range(1, READ_ATTEMPTS + 1):
+            try:
+                return self._wrap(fn)
+            except (RateLimited, ServiceUnavailable) as exc:
+                if attempt == READ_ATTEMPTS:
+                    raise
+                log.warning("google ads read retry %s/%s after %s (sleeping %.0fs)", attempt, READ_ATTEMPTS, exc.kind, delay)
+                self._sleep(delay)
+                delay *= 2
+
     def _map_error(self, exc: Exception) -> AdapterError:
+        """Vendor errors become adapter errors with a SAFE message; the raw text goes to the backend log only."""
         text = str(exc)
         name = type(exc).__name__
+        log.warning("google ads error %s: %s", name, text[:800])
         if "AUTHENTICATION" in text or "invalid_grant" in text or "UNAUTHENTICATED" in text:
-            return AuthError(text[:500], adapter=self.name)
+            self._flag_integration("AUTHORIZATION_EXPIRED", "Google rejected the saved authorization. Reconnect Google Ads on the Integrations page.")
+            return AuthError("Google Ads rejected the saved authorization. Reconnect Google Ads on the Integrations page.", adapter=self.name)
+        if "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION" in text:
+            return PermissionDenied("Your Google Cloud project only has Test access to the Google Ads API, so production accounts cannot be read. "
+                                    "Apply for Explorer access in Google Cloud Console (APIs & Services > Google Ads API).", adapter=self.name,
+                                    details={"reason": "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"})
         if "AUTHORIZATION" in text or "PERMISSION_DENIED" in text or "USER_PERMISSION_DENIED" in text:
-            return PermissionDenied(text[:500], adapter=self.name)
+            return PermissionDenied("The authorised Google user cannot access this Google Ads account. Check the customer ID and manager (login) ID.", adapter=self.name)
         if "RESOURCE_EXHAUSTED" in text or "RATE_EXCEEDED" in text or "QuotaError" in text:
-            return RateLimited(text[:500], adapter=self.name)
+            return RateLimited("Google Ads rate limit reached. Retry in a few minutes.", adapter=self.name)
         if "DEADLINE_EXCEEDED" in text or "Timeout" in name:
-            return AdapterTimeout(text[:500], adapter=self.name)
+            return AdapterTimeout("Google Ads did not answer in time.", adapter=self.name)
         if "UNAVAILABLE" in text:
-            return ServiceUnavailable(text[:500], adapter=self.name)
-        return InvalidInput(text[:500], adapter=self.name)
+            return ServiceUnavailable("Google Ads is temporarily unavailable.", adapter=self.name)
+        return InvalidInput("Google Ads rejected the request.", adapter=self.name, details={"reason": text[:200]})
+
+    def _flag_integration(self, status: str, message: str) -> None:
+        """Make an auth failure that happens at runtime visible on the Integrations page (no secret is touched)."""
+        try:
+            from app.services import integrations_service
+            integrations_service.record_runtime_failure("google_ads", status, message)
+        except Exception:  # noqa: BLE001 - reporting must never mask the original error
+            log.exception("could not record google_ads runtime failure")
 
     def _search(self, customer_id: str, query: str) -> list[Any]:
         def run():
@@ -133,7 +168,7 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
             for batch in svc.search_stream(customer_id=customer_id.replace("-", ""), query=query):
                 rows.extend(batch.results)
             return rows
-        return self._wrap(run)
+        return self._read(run)
 
     # ------------------------------------------------------------------ accounts
     def list_accessible_customers(self) -> list[dict]:

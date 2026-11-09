@@ -2,6 +2,7 @@
 re-checks tracking, records search terms, calls and manual changes. Numbers come only from the adapter."""
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
@@ -10,10 +11,12 @@ from sqlalchemy.orm import Session
 from app.adapters import registry
 from app.adapters.base import AdapterError
 from app.core import clock
+from app.core.errors import IntegrationNotConfigured
 from app.models import (Business, CallRecord, Campaign, ChangeEvent, Client, GoogleAdsAccount, JobRun, PerformanceSnapshot,
                         SearchTermRow)
 from app.services import accounts_service, activity, settings_service, tracking_gate
 
+log = logging.getLogger("gaa.monitoring")
 LEVELS = ("CAMPAIGN", "AD_GROUP", "KEYWORD", "AD")
 
 
@@ -82,7 +85,12 @@ def daily_sync(db: Session, account: GoogleAdsAccount) -> dict:
         anomalies = detect_anomalies(db, account)
         job.status, job.details = "SUCCEEDED", {"snapshots": n, "anomalies": anomalies}
     except AdapterError as exc:
-        job.status, job.error = "FAILED", f"{exc.kind}: {exc.message}"
+        # safe, user-facing text only; the technical detail was already written to the backend log by the adapter / handler
+        log.warning("daily sync for %s failed: %s", account.customer_id, exc.to_dict())
+        job.status = {"auth_failure": "AUTH_FAILED", "rate_limited": "RATE_LIMITED"}.get(exc.kind, "FAILED")
+        job.error = exc.message
+        db.rollback()  # keep previously retrieved snapshots untouched; they stay as historical data with their original fetched_at
+        db.add(job)
     job.finished_at = clock.now()
     activity.log(db, "monitoring.daily_sync", entity="google_ads_account", entity_id=account.id, client_id=account.client_id,
                  details={"status": job.status, "error": job.error}, integration_mode=accounts_service.adapter_mode())
@@ -202,6 +210,12 @@ def recheck_tracking_all(db: Session) -> int:
 
 def run_daily_all(db: Session) -> dict:
     out = {}
+    try:
+        registry.get("google_ads")
+    except IntegrationNotConfigured as exc:
+        db.add(JobRun(job="monitoring.daily_sync", status="NOT_CONFIGURED", error=exc.message, finished_at=clock.now()))
+        db.flush()
+        return {"skipped": exc.message}
     for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id.is_not(None), GoogleAdsAccount.is_manager.is_(False))):
         client = db.get(Client, a.client_id)
         out[a.customer_id] = daily_sync(db, a)
@@ -209,3 +223,30 @@ def run_daily_all(db: Session) -> dict:
         if client:
             pass
     return out
+
+
+# ------------------------------------------------------------------ data freshness (what the UI shows next to every number)
+def data_status(db: Session, client_id: str) -> dict:
+    """Is the data on screen current, historical, missing, or blocked by a missing integration?
+
+    state: not_configured | no_account | no_data | data_available | historical | failed
+    `retrieved_at` is always the time the data was ACTUALLY retrieved from Google Ads, never the time of the last attempt.
+    """
+    try:
+        registry.get("google_ads")
+    except IntegrationNotConfigured as exc:
+        return {"state": "not_configured", "message": exc.message, "retrieved_at": None, "last_attempt": None}
+    accounts = list(db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client_id)))
+    if not accounts:
+        return {"state": "no_account", "message": "No Google Ads account is linked to this client yet.", "retrieved_at": None, "last_attempt": None}
+    ids = [a.id for a in accounts]
+    newest = db.scalar(select(func.max(PerformanceSnapshot.fetched_at)).where(PerformanceSnapshot.google_ads_account_id.in_(ids)))
+    last = db.scalar(select(JobRun).where(JobRun.job == "monitoring.daily_sync", JobRun.client_id == client_id).order_by(JobRun.created_at.desc()).limit(1))
+    attempt = {"at": (last.finished_at or last.started_at).isoformat(), "status": last.status, "message": last.error} if last else None
+    if last and last.status != "SUCCEEDED":
+        return {"state": "historical" if newest else "failed", "retrieved_at": newest.isoformat() if newest else None, "last_attempt": attempt,
+                "message": (f"Showing data retrieved on {newest:%Y-%m-%d %H:%M} UTC. The latest refresh failed: {last.error}" if newest
+                            else f"Google Ads data could not be retrieved: {last.error}")}
+    if not newest:
+        return {"state": "no_data", "message": "Google Ads is connected but no data has been retrieved yet.", "retrieved_at": None, "last_attempt": attempt}
+    return {"state": "data_available", "message": "", "retrieved_at": newest.isoformat(), "last_attempt": attempt}

@@ -1,7 +1,7 @@
 # Local / single-server deployment. Mock mode by default — no external credentials needed.
 #   cp .env.example .env   (set APP_SECRET_KEY)
 #   docker compose up --build -d
-#   docker compose exec backend python -m app.cli seed
+#   docker compose exec backend python -m app.cli create-super-admin you@example.com
 # To use Supabase instead of the bundled Postgres, set COMPOSE_DATABASE_URL in .env to the Supabase
 # Session Pooler URL (postgresql+psycopg://...?sslmode=require). The bundled postgres then stays unused.
 x-backend: &backend

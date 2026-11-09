@@ -27,7 +27,7 @@ class Task(TimestampMixin, Base):
     approval_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
     intake: Mapped[dict] = mapped_column(JSONType, default=dict)  # intake validation result + clarifications
 
 
@@ -41,7 +41,7 @@ class TrackingGateResult(TimestampMixin, Base):
     checks: Mapped[list] = mapped_column(JSONType, default=list)
     fix_list: Mapped[list] = mapped_column(JSONType, default=list)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class TrackingOverride(TimestampMixin, Base):
@@ -66,7 +66,7 @@ class Audit(TimestampMixin, Base):
     result: Mapped[dict] = mapped_column(JSONType, default=dict)
     summary: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
@@ -82,7 +82,7 @@ class FeasibilityResult(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20))
     bottlenecks: Mapped[list] = mapped_column(JSONType, default=list)
     is_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
     # team decision on the recommendation: ACCEPT_RECOMMENDED / KEEP_CURRENT / ADJUST (pending = "")
     decision: Mapped[str] = mapped_column(String(24), default="")
     decision_note: Mapped[str] = mapped_column(Text, default="")
@@ -141,7 +141,7 @@ class CampaignPlan(TimestampMixin, Base):
     draft_ai_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     challenger_ai_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="DRAFTED")
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
     # dual-LLM competition record: both drafts, both cross-challenges, comparison and consolidation rationale
     competition: Mapped[dict] = mapped_column(JSONType, default=dict)
     original: Mapped[dict] = mapped_column(JSONType, default=dict)   # the AI-consolidated plan before any human edit
@@ -194,8 +194,8 @@ class Approval(TimestampMixin, Base):
     supersedes_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     superseded_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     parent_operation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    integration_mode: Mapped[str] = mapped_column(String(8), default="REAL")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class ApprovalEvent(IdMixin, Base):

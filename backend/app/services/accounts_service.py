@@ -8,17 +8,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
-from app.core.errors import NotFound
+from app.core.errors import IntegrationNotConfigured, NotFound
 from app.models import Ad, AdGroup, Business, Campaign, ConversionAction, GoogleAdsAccount, Keyword, NegativeKeyword, User
 from app.services import activity, auth_service
 
 
 def adapter_mode() -> str:
-    return "REAL" if registry.get("google_ads").is_real else "MOCK"
+    return "REAL" if registry.get("google_ads").is_real else "MOCK"  # MOCK only ever appears when a test fake is installed
 
 
 def source() -> str:
     return registry.get("google_ads").source
+
+
+def source_or_none() -> str | None:
+    """The data source label for screens that must still render when Google Ads is not configured."""
+    try:
+        return registry.get("google_ads").source
+    except IntegrationNotConfigured:
+        return None
 
 
 def serialize_account(a: GoogleAdsAccount) -> dict:

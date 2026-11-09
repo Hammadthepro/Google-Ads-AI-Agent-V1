@@ -2,6 +2,7 @@
 plus the read-only 90-day account audit. 4a-4c run in parallel; 4d uses their outputs."""
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -13,6 +14,7 @@ from app.adapters import registry
 from app.services.keyword_labels import label_keyword
 from app.adapters.base import AdapterError
 from app.core import clock
+from app.core.errors import IntegrationNotConfigured
 from app.core.util import from_micros, normalize_term
 from app.db.session import session_scope
 from app.models import Audit, Business, SourceType
@@ -20,6 +22,8 @@ from app.services import accounts_service, ai_service, clients_service, crawler_
 
 TRUST_WORDS = ["licensed", "insured", "certified", "warranty", "guarantee", "years", "since", "review", "award",
                "family owned", "board-certified", "no fee"]
+
+logger = logging.getLogger(__name__)
 
 
 def _slug_match(service: str, page: dict) -> bool:
@@ -76,7 +80,7 @@ def page_signals(pages: list[dict], base_url: str) -> dict:
 def website_audit(ctx: dict, task_id: str | None) -> dict:
     url = ctx["website_url"]
     if not url:
-        return {"error": "No website URL in the business profile", "source": "MOCK"}
+        return {"error": "No website URL in the business profile", "source": "NONE"}
     crawl = crawler_service.crawl(url)
     pages = crawl["pages"]
     seo_issues, titles = [], {}
@@ -138,7 +142,7 @@ def website_audit(ctx: dict, task_id: str | None) -> dict:
         "landing_page_recommendations": [f"Use {u} for '{s}' ads" for s, u in page_for.items()] +
                                         [f"Create a dedicated page for '{s}' (ads would land on the homepage)" for s in services_without_page],
         "tag_note": "Tag detection shows likely installation only; it does not prove conversions are recorded.",
-        "source": SourceType.combine(crawl["source"], registry.get("pagespeed").source, registry.get("ai").source),
+        "source": SourceType.combine(crawl["source"], registry.get("pagespeed").source),
     }
 
 
@@ -177,9 +181,12 @@ def gbp_audit(ctx: dict) -> dict:
 # ------------------------------------------------------------------ 4c competitors
 def competitor_audit(ctx: dict, task_id: str | None) -> dict:
     if not ctx["competitors"]:
-        return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "source": "MOCK"}
+        return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "source": "NONE"}
     out, client_services = [], {normalize_term(s) for s in ctx["service_names"]}
-    kw_adapter = registry.get("keyword_research")
+    try:
+        kw_adapter = registry.get("keyword_research")
+    except IntegrationNotConfigured as exc:
+        kw_adapter, kw_unavailable = None, exc.message
     for c in ctx["competitors"]:
         entry = {"name": c["name"], "website_url": c["website_url"]}
         if c["website_url"]:
@@ -192,11 +199,14 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
             entry["offers_on_site"] = sorted({s for p in crawl["pages"] for s in re.findall(r"[^.]*(?:\$\d+|free|24/7|warranty|no fee)[^.]*\.",
                                                                                                 p["text_excerpt"], re.I)})[:6]
             entry["services_client_lacks"] = [s for s in entry["services"] if normalize_term(s) not in client_services]
-            try:
-                ideas = kw_adapter.generate_ideas(ctx["customer_id"], entry["services"][:3], page_url=c["website_url"], city=ctx["city"])
-                entry["keyword_ideas"] = [i["keyword"] for i in sorted(ideas, key=lambda x: -x["avg_monthly_searches"])[:15]]
-            except AdapterError as exc:
-                entry["keyword_ideas"], entry["keyword_error"] = [], exc.kind
+            if kw_adapter is None:
+                entry["keyword_ideas"], entry["keyword_error"] = [], kw_unavailable
+            else:
+                try:
+                    ideas = kw_adapter.generate_ideas(ctx["customer_id"], entry["services"][:3], page_url=c["website_url"], city=ctx["city"])
+                    entry["keyword_ideas"] = [i["keyword"] for i in sorted(ideas, key=lambda x: -x["avg_monthly_searches"])[:15]]
+                except AdapterError as exc:
+                    entry["keyword_ideas"], entry["keyword_error"] = [], exc.kind
             entry["crawl_source"] = crawl["source"]
         out.append(entry)
     ads_analysis = None
@@ -206,16 +216,21 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
                                             task_id=task_id)
         ads_analysis = {**parsed.model_dump(), "verification": "Pasted by the team — not verified as currently running."}
     return {"competitors": out, "pasted_ads_analysis": ads_analysis,
-            "keyword_sources": ["Keyword Planner URL seeds (" + kw_adapter.source + ")"],
+            "keyword_sources": ["Keyword Planner URL seeds (" + kw_adapter.source + ")"] if kw_adapter else [],
             "missing_sources": ["Paid competitor bidding data (Semrush or similar) not connected"],
-            "source": SourceType.combine(registry.get("crawler").source, kw_adapter.source)}
+            "source": SourceType.combine(registry.get("crawler").source, kw_adapter.source if kw_adapter else None)}
 
 
 # ------------------------------------------------------------------ 4d keyword research
 def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, task_id: str | None,
                      services: list[dict] | None = None, existing_keywords: dict[str, list[str]] | None = None,
                      daily_budget: float | None = None) -> dict:
-    kw = registry.get("keyword_research")
+    try:
+        kw = registry.get("keyword_research")
+    except IntegrationNotConfigured as exc:  # Keyword Planner rides on the Google Ads connection: say so, invent nothing
+        return {"keywords": [], "clusters": {}, "negative_ideas": [], "overlaps": [], "unavailable": True, "not_configured": exc.provider,
+                "errors": [{"service": "*", "error": exc.message}], "source": SourceType.NONE,
+                "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group with GREEN tracking."}
     services = services or ctx["services"]
     names = [s["name"] for s in services]
     lp_map = website.get("landing_page_map", {}) if website else {}
@@ -251,8 +266,8 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                 if r and (lab.service in names or lab.label != "SERVICE"):
                     r.update({"label": lab.label, "service": lab.service if lab.label == "SERVICE" else None,
                               "label_reason": lab.reason or "AI label", "labelled_by": "ai"})
-        except ai_service.AIOutputInvalid as exc:
-            errors.append({"service": "*", "error": f"AI labelling unavailable: {exc.message}"})
+        except (ai_service.AIOutputInvalid, IntegrationNotConfigured) as exc:
+            errors.append({"service": "*", "error": f"AI labelling unavailable: {exc.message} Rule-based labels were kept."})
     max_bid = (daily_budget / 5) if daily_budget else None
     table = []
     for r in dedup.values():
@@ -277,7 +292,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     overlaps = overlap_check(clusters, existing_keywords or {})
     return {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors,
             "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group with GREEN tracking.",
-            "source": SourceType.combine(kw.source, registry.get("ai").source)}
+            "source": SourceType.combine(kw.source)}
 
 
 def overlap_check(groups: dict[str, list[str]], existing: dict[str, list[str]]) -> list[dict]:
@@ -332,11 +347,15 @@ def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_
                 results[k] = f.result()
                 rows[k].status = "FAILED" if results[k].get("error") else "COMPLETED"
                 rows[k].error = results[k].get("error", "")
+            except IntegrationNotConfigured as exc:  # a missing integration is a clear, actionable message, not a crash
+                results[k] = {"error": exc.message, "not_configured": exc.provider, "source": SourceType.NONE}
+                rows[k].status, rows[k].error = "FAILED", exc.message
             except Exception as exc:  # noqa: BLE001 — one failing audit must not stop the others
-                results[k] = {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+                logger.exception("audit %s failed", k)
+                results[k] = {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "source": SourceType.NONE}
                 rows[k].status, rows[k].error = "FAILED", results[k]["error"]
             rows[k].result = results[k]
-            rows[k].source_type = results[k].get("source", "MOCK")
+            rows[k].source_type = results[k].get("source", "NONE")
             rows[k].finished_at = clock.now()
             rows[k].summary = _summary(k, results[k])
             if on_done:
@@ -349,7 +368,7 @@ def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_
 def save_keyword_audit(db: Session, business: Business, task_id: str | None, actor_id: str | None, result: dict) -> Audit:
     row = Audit(client_id=business.client_id, business_id=business.id, task_id=task_id, audit_type="KEYWORD",
                 status="COMPLETED", result=result, summary=_summary("KEYWORD", result), finished_at=clock.now(),
-                created_by_id=actor_id, source_type=result.get("source", "MOCK"))
+                created_by_id=actor_id, source_type=result.get("source", "NONE"))
     db.add(row)
     db.flush()
     return row
@@ -374,7 +393,7 @@ def _summary(kind: str, r: dict) -> str:
 
 def account_audit(db: Session, business: Business, task_id: str | None, actor_id: str | None) -> Audit:
     """Read-only 90-day account audit (Audit only task). Never writes."""
-    ads = registry.get("google_ads")
+    ads = registry.get("google_ads")  # IntegrationNotConfigured propagates: an account audit cannot exist without Google Ads
     acct = accounts_service.account_for_business(db, business)
     result: dict = {"findings": []}
     if acct:

@@ -278,6 +278,17 @@ def invalidate() -> None:
     registry.reset()
 
 
+def record_runtime_failure(provider: str, status: str, message: str) -> None:
+    """A real call failed in normal operation (e.g. the refresh token was revoked): show it on the Integrations page.
+    Credentials are kept; the user re-authorises or re-tests. Never stores response bodies, only a short safe message."""
+    with session_scope() as db:
+        row = _row(db, provider)
+        if row is None:
+            return
+        row.status, row.last_error, row.last_test_ok = status, message[:300], False
+    invalidate()
+
+
 def ensure_configured(provider: str) -> dict:
     """Credentials for a provider, or IntegrationNotConfigured. The single gate every real adapter goes through:
     no mock, no silent switch to another provider."""

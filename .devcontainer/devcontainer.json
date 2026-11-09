@@ -19,9 +19,9 @@
     "8000": { "label": "API (FastAPI) - /readyz, /api/docs", "onAutoForward": "silent" }
   },
   "otherPortsAttributes": { "onAutoForward": "ignore" },
-  // .env is created once (mock mode, real Google Ads writes disabled); the stack starts on every Codespace start.
+  // .env is created once (Google Ads writes disabled); the stack starts on every Codespace start.
   "postCreateCommand": "bash scripts/create-env.sh",
-  "postStartCommand": "bash scripts/start-demo.sh",
+  "postStartCommand": "bash scripts/start.sh",
   "customizations": {
     "vscode": {
       "extensions": ["ms-python.python", "ms-azuretools.vscode-docker", "bradlc.vscode-tailwindcss"]

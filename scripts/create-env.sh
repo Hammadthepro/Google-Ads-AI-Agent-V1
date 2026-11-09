@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates a local .env from .env.example (mock mode, real Google Ads writes disabled) with a random APP_SECRET_KEY.
+# Creates a local .env from .env.example (Google Ads writes disabled) with a random APP_SECRET_KEY.
 # Never overwrites an existing .env. The .env file is git-ignored.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,4 +16,4 @@ else
   secret="$(head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 fi
 sed -i "s|^APP_SECRET_KEY=$|APP_SECRET_KEY=${secret}|" .env
-echo "Created .env (mock mode, GOOGLE_ADS_WRITES_ENABLED=false)."
+echo "Created .env (GOOGLE_ADS_WRITES_ENABLED=false)."

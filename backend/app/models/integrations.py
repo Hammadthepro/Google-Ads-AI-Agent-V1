@@ -60,7 +60,7 @@ class AuditReport(TimestampMixin, Base):
     changes: Mapped[dict] = mapped_column(JSONType, default=dict)          # vs previous report
     input_snapshot: Mapped[dict] = mapped_column(JSONType, default=dict)   # the client info this audit was based on
     input_hash: Mapped[str] = mapped_column(String(64), default="")
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
     error: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -28,7 +28,7 @@ class PerformanceSnapshot(IdMixin, Base):
     budget_lost_is: Mapped[float | None] = mapped_column(Float, nullable=True)
     rank_lost_is: Mapped[float | None] = mapped_column(Float, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class SearchTermRow(IdMixin, Base):
@@ -48,7 +48,7 @@ class SearchTermRow(IdMixin, Base):
     conversions_90d: Mapped[float] = mapped_column(Float, default=0)
     last_conversion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class CallRecord(IdMixin, Base):
@@ -59,7 +59,7 @@ class CallRecord(IdMixin, Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     duration_seconds: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16))  # ANSWERED / MISSED
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class ChangeEvent(IdMixin, Base):
@@ -73,7 +73,7 @@ class ChangeEvent(IdMixin, Base):
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     made_outside_app: Mapped[bool] = mapped_column(Boolean, default=False)
     details: Mapped[dict] = mapped_column(JSONType, default=dict)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class EmergencyEvent(TimestampMixin, Base):
@@ -89,7 +89,7 @@ class EmergencyEvent(TimestampMixin, Base):
     action_mode: Mapped[str] = mapped_column(String(16))  # SIMULATED / INTERNAL / REAL
     message: Mapped[str] = mapped_column(Text)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class Alert(TimestampMixin, Base):
@@ -132,7 +132,7 @@ class Recommendation(TimestampMixin, Base):
     approval_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     operation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     dedupe_key: Mapped[str] = mapped_column(String(200), default="", index=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class WeeklyReport(TimestampMixin, Base):
@@ -145,7 +145,7 @@ class WeeklyReport(TimestampMixin, Base):
     sections: Mapped[dict] = mapped_column(JSONType, default=dict)
     ai_summary: Mapped[str] = mapped_column(Text, default="")
     ai_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class Experiment(TimestampMixin, Base):
@@ -167,7 +167,7 @@ class Experiment(TimestampMixin, Base):
     winner_arm: Mapped[str] = mapped_column(String(20), default="")
     winner_selected_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class PlaybookRule(TimestampMixin, Base):

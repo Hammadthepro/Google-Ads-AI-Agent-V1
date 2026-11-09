@@ -22,7 +22,7 @@ Honest list of what is NOT done, NOT verified, or deliberately limited in V1. No
 
 ## Codespaces / dev container
 - **Fixed:** Codespaces fell into recovery mode because `ghcr.io/devcontainers/features/docker-in-docker` (on `devcontainers/python:1-3.12-bookworm`) ran `apt-get update` against a Yarn APT source with a rotated key (`NO_PUBKEY 62D54FD4003F6525`). The dev container now uses `mcr.microsoft.com/devcontainers/universal:6-noble`, which bundles Docker Engine, CLI and Compose, with **no features**, so no apt step runs during creation.
-- I could not create a GitHub Codespace from the build environment. The `Dev container (Codespaces config)` GitHub Actions workflow builds the same `devcontainer.json` with the Dev Containers CLI and runs `scripts/start-demo.sh` plus end-to-end checks. See TEST_RESULTS.md for its result.
+- I could not create a GitHub Codespace from the build environment. The `Dev container (Codespaces config)` GitHub Actions workflow builds the same `devcontainer.json` with the Dev Containers CLI and runs `scripts/start.sh` plus end-to-end checks. See TEST_RESULTS.md for its result.
 
 ## Docker
 - The images could not be built inside the development sandbox (Docker Hub blocked there), but the **GitHub Actions `docker` job builds them successfully** (`docker compose build`) on every push. A full `docker compose up` in Codespaces has not been observed by me; the same start sequence was rehearsed natively (TEST_RESULTS.md).

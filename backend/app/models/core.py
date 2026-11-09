@@ -124,7 +124,7 @@ class GoogleAdsAccount(TimestampMixin, Base):
     permission_status: Mapped[str] = mapped_column(String(32), default="OK")
     writes_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_tagging_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
+    integration_mode: Mapped[str] = mapped_column(String(8), default="REAL")
     access_level: Mapped[str] = mapped_column(String(16), default="READ_ONLY")  # READ_ONLY / STANDARD (app-side)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -153,8 +153,8 @@ class Campaign(TimestampMixin, Base):
     launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_app: Mapped[bool] = mapped_column(Boolean, default=False)
-    integration_mode: Mapped[str] = mapped_column(String(8), default="MOCK")
-    source_type: Mapped[str] = mapped_column(String(8), default="MOCK")
+    integration_mode: Mapped[str] = mapped_column(String(8), default="REAL")
+    source_type: Mapped[str] = mapped_column(String(8), default="NONE")
 
 
 class AdGroup(TimestampMixin, Base):

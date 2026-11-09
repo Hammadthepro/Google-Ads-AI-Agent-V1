@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds and starts the whole stack with Docker Compose, waits for the API, then seeds demo data (idempotent).
-#   bash scripts/start-demo.sh
+# Builds and starts the whole stack with Docker Compose, waits for the API, then makes sure the first Super Admin exists (no demo data).
+#   bash scripts/start.sh
 # Web app: port 5173 · API: port 8000 (/readyz, /api/docs)
 # Services: postgres, redis, backend (runs Alembic migrations on start), worker, beat, frontend.
 set -euo pipefail
@@ -41,7 +41,7 @@ Locally: start Docker Desktop / 'sudo systemctl start docker'."
 fi
 echo "    Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?') · $(docker compose version --short 2>/dev/null || echo compose)"
 
-# ---------------------------------------------------------------- 3. .env (mock mode, writes disabled)
+# ---------------------------------------------------------------- 3. .env (writes disabled)
 bash scripts/create-env.sh
 if grep -qE '^GOOGLE_ADS_WRITES_ENABLED=true' .env; then
   echo "WARNING: .env sets GOOGLE_ADS_WRITES_ENABLED=true. The demo is meant to run with real writes disabled." >&2
@@ -62,13 +62,19 @@ if [ "$ready" != 1 ]; then
   echo "API did not become ready. Service status and last backend logs:" >&2
   compose ps >&2 || true
   compose logs --tail=100 backend >&2 || true
-  fail "Backend not ready. Re-run 'bash scripts/start-demo.sh' (Postgres may still have been starting)."
+  fail "Backend not ready. Re-run 'bash scripts/start.sh' (Postgres may still have been starting)."
 fi
 curl -fsS http://localhost:8000/readyz; echo
 
-# ---------------------------------------------------------------- 6. Demo data (idempotent)
-echo "==> Seeding demo data (skipped automatically if already seeded)…"
-compose exec -T backend python -m app.cli seed
+# ---------------------------------------------------------------- 6. First administrator (idempotent, no data is created)
+admin_email="$(grep -E '^BOOTSTRAP_ADMIN_EMAIL=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' ' || true)"
+if [ -n "$admin_email" ]; then
+  echo "==> Making sure $admin_email is a Super Admin…"
+  compose exec -T backend python -m app.cli create-super-admin "$admin_email"
+else
+  echo "==> No BOOTSTRAP_ADMIN_EMAIL in .env. Create the first Super Admin with:"
+  echo "      docker compose exec backend python -m app.cli create-super-admin you@example.com"
+fi
 
 echo
 compose ps
@@ -76,5 +82,5 @@ echo
 echo "==> Configuration check (prints no secret values; warnings do not stop the demo)…"
 compose exec -T backend python -m app.cli check-env --brief || echo "    ^ fix the errors above, or run: bash scripts/check-env.sh"
 echo
-echo "Ready. Open the forwarded port 5173 (Ports tab → globe icon) and sign in with a demo user, e.g. admin@napollo.example."
-echo "Mode: MOCK — nothing is sent to Google Ads. Real Google Ads writes are disabled."
+echo "Ready. Open the forwarded port 5173 (Ports tab → globe icon), sign in, then open Integrations to connect Google Ads, Groq and the rest."
+echo "The app starts EMPTY: no demo data exists. Features that need an integration say so until you configure it. Google Ads writes are disabled."

@@ -41,7 +41,7 @@ RESOURCE_COLLECTIONS = {
 
 class GoogleAdsAdapter(ABC):
     name = "google_ads"
-    source = "MOCK"
+    source = "NONE"
     is_real = False
 
     # ---- accounts

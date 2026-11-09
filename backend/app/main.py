@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.config import get_settings
+from app.adapters.base import AdapterError
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.db.session import session_scope
@@ -91,6 +92,24 @@ def create_app() -> FastAPI:
     @app.exception_handler(AppError)
     async def app_error(_: Request, exc: AppError):
         return JSONResponse({"error": {"code": exc.code, "message": exc.message, "details": exc.details}}, status_code=exc.status_code)
+
+    _ADAPTER_HTTP = {
+        "auth_failure": (424, "authorization_failed", "The external service rejected the saved credentials. Reconnect it on the Integrations page, then retry."),
+        "permission_denied": (424, "permission_denied", "The connected account is not allowed to do this. Check access on the Integrations page."),
+        "rate_limited": (429, "rate_limited", "The external service is rate limiting requests. Please retry in a few minutes."),
+        "timeout": (504, "upstream_timeout", "The external service did not answer in time. Please retry."),
+        "outage": (503, "upstream_unavailable", "The external service is temporarily unavailable. Please retry shortly."),
+        "not_found": (404, "upstream_not_found", "The external service could not find what was requested."),
+        "writes_disabled": (423, "writes_disabled", "Real Google Ads writes are disabled."),
+    }
+
+    @app.exception_handler(AdapterError)
+    async def adapter_error(_: Request, exc: AdapterError):
+        """Safe message for users; the technical detail stays in the backend log. Previously retrieved data is preserved in the database."""
+        log.warning("adapter error: %s", exc.to_dict())
+        status, code, message = _ADAPTER_HTTP.get(exc.kind, (502, "upstream_error", "The external service returned an error. Please retry; if it persists check the Integrations page."))
+        return JSONResponse({"error": {"code": code, "message": message, "details": {"adapter": exc.adapter, "kind": exc.kind, "retryable": exc.retryable}}},
+                            status_code=status)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError):

@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.adapters import registry
 from app.api.deps import current_user, require
 from app.core import clock
 from app.core.config import get_settings
@@ -17,7 +16,7 @@ from app.db.session import get_db
 from app.models import (ActivityLog, Alert, Approval, Campaign, Client, EmergencyEvent, Experiment, FixTrackerItem, GoogleAdsAccount,
                         KillSwitch, PlaybookRule, Prediction, Recommendation, RegressionCase,
                         Task, User, WeeklyReport)
-from app.services import (activity, auth_service, emergency, experiments, learning, monitoring, optimization, reporting,
+from app.services import (accounts_service, activity, auth_service, emergency, experiments, learning, monitoring, optimization, reporting,
                           settings_service, tracking_gate)
 
 router = APIRouter()
@@ -44,11 +43,12 @@ def dashboard(user: User = Depends(require("reports.view")), db: Session = Depen
                       "automation_frozen": c.automation_frozen, "flagged": c.flagged,
                       "open_fixes": db.scalar(select(func.count(FixTrackerItem.id)).where(FixTrackerItem.client_id == c.id, FixTrackerItem.status != "RESOLVED")),
                       "pending_approvals": db.scalar(select(func.count(Approval.id)).where(Approval.client_id == c.id, Approval.status == "PENDING_APPROVAL")),
-                      "source_type": camps[0]["source_type"] if camps else "MOCK"})
+                      "source_type": camps[0]["source_type"] if camps else "NONE",
+                      "data_status": monitoring.data_status(db, c.id)})
     cid_set = [c.id for c in clients]
     return {"clients": cards, "now": clock.now().isoformat(),
             "google_ads_writes_enabled": get_settings().GOOGLE_ADS_WRITES_ENABLED,
-            "data_source": registry.get("google_ads").source,
+            "data_source": accounts_service.source_or_none(),
             "recent_emergency": [emergency.serialize(e) for e in db.scalars(select(EmergencyEvent).where(EmergencyEvent.client_id.in_(cid_set or ["-"]))
                                                                             .order_by(EmergencyEvent.created_at.desc()).limit(6))],
             "recent_tasks": [{"id": t.id, "task_type": t.task_type, "status": t.status, "created_at": t.created_at.isoformat(), "client_id": t.client_id}
@@ -61,7 +61,8 @@ def monitor(client_id: str, days: int = 30, user: User = Depends(require("report
     _client_ok(db, user, client_id)
     return {"campaigns": monitoring.campaign_summary(db, client_id, days), "wasted_spend": monitoring.wasted_spend(db, client_id),
             "calls": monitoring.calls_summary(db, client_id), "change_events": monitoring.change_events(db, client_id),
-            "data_source": registry.get("google_ads").source, "as_of": clock.today().isoformat()}
+            "data_source": accounts_service.source_or_none(), "data_status": monitoring.data_status(db, client_id),
+            "as_of": clock.today().isoformat()}
 
 
 @router.get("/monitor/{client_id}/search-terms", tags=["monitoring"])

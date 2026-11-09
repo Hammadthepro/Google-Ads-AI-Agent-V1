@@ -57,7 +57,7 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
                             original=res["draft"], competition=res["competition"], challenger=res["challenger"],
                             draft_ai_run_id=res["draft_run_id"], challenger_ai_run_id=res["challenger_run_id"],
                             playbook_rule_ids=rule_ids, status="CHALLENGED",
-                            source_type=("LIVE" if any(p["source"] == "LIVE" for p in res["competition"]["providers"].values()) else "MOCK"))
+                            source_type=("LIVE" if any(p["source"] == "LIVE" for p in res["competition"]["providers"].values()) else "NONE"))
         db.add(plan)
         db.flush()
         return plan
