@@ -13,7 +13,7 @@ from app.core.env_audit import EXTERNAL, REGISTRY, RETIRED
 
 HEAD = """# Google Ads AI Agent — example configuration.
 # Copy to .env (scripts/create-env.sh does this and generates APP_SECRET_KEY). NEVER commit .env.
-# The app runs fully in mock mode with every credential below left blank.
+# The app starts with every credential below left blank; features that need an integration say so until you configure it.
 # Check your file any time (prints no values):   bash scripts/check-env.sh
 # Fill blank values from your environment variables / Codespaces secrets: cd backend && python -m app.cli populate-env
 #
@@ -23,7 +23,6 @@ HEAD = """# Google Ads AI Agent — example configuration.
 """
 NOTES = {
     "Safety": "# Real Google Ads writes stay OFF. Key 1 of 2 is GOOGLE_ADS_WRITES_ENABLED; key 2 is a Super Admin authorisation in the app.",
-    "Modes": "# Per-integration overrides (blank = follow INTEGRATION_MODE / the Integrations page operating mode).",
     "Infrastructure": ("# Local / Docker Compose Postgres is the default. For Supabase use the Session Pooler URL with SSL, e.g.\n"
                        "#   postgresql+psycopg://postgres.<project-ref>:<url-encoded-password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n"
                        "# Percent-encode special characters in the password (@ -> %40). COMPOSE_DATABASE_URL does the same for the Docker containers."),
@@ -31,7 +30,7 @@ NOTES = {
                  "# TOKEN_ENCRYPTION_KEY: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"\n"
                  "# Required (32+ random chars / a Fernet key) in production, and before saving credentials on the Integrations page."),
     "App login (Google)": ("# Google SIGN-IN uses the Identity Services ID-token flow: only GOOGLE_CLIENT_ID is needed (no client secret, no redirect URI).\n"
-                           "# Create an OAuth *Web* client in Google Cloud, add your app origin under 'Authorised JavaScript origins', then set AUTH_PROVIDER=google.\n"
+                           "# Create an OAuth *Web* client in Google Cloud, add your app origin under 'Authorised JavaScript origins', then set AUTH_PROVIDER=google (dev = email login for existing users, local only).\n"
                            "# This is NOT the Google Ads OAuth client below. BOOTSTRAP_ADMIN_EMAIL becomes the first Super Admin; everyone else is invited."),
     "Google Ads": ("# Google Ads API. NO developer token: Google sunset them on 2026-09-09. API access levels (Test / Explorer / Basic / Standard)\n"
                    "# belong to the Google Cloud project that owns the OAuth client below; see the Google Ads API Overview page in Cloud Console.\n"
@@ -40,16 +39,16 @@ NOTES = {
                    "# GOOGLE_ADS_LOGIN_CUSTOMER_ID = your MANAGER (MCC) account, only if you use one; GOOGLE_ADS_CUSTOMER_ID = a CLIENT account.\n"
                    "# 10 digits, dashes allowed. Do not put the manager ID in both."),
     "Website research": "# Optional. PageSpeed works without a key at a low quota.",
-    "AI (Groq)": ("# Groq needs ALL of: GROQ_ENABLED=true, AI_PROVIDER=groq, GROQ_API_KEY and GROQ_MODEL (exact Groq model ID, https://console.groq.com/docs/models).\n"
+    "AI (Groq)": ("# Groq needs GROQ_API_KEY and GROQ_MODEL (exact Groq model ID, https://console.groq.com/docs/models).\n"
                   "# Which models you can use depends on your Groq plan (e.g. the Llama models are Enterprise-only for some accounts).\n"
                   "# The Integrations page lists what your key can use and sends a real JSON-mode request to each model before it is activated.\n"
                   "# Use a different model family for GROQ_CHALLENGER_MODEL than for GROQ_MODEL so the critic is independent."),
     "AI (Claude)": "# Optional fallback for the Claude integration; the model is chosen on the Integrations page (default claude-opus-5-5).",
-    "Email": "# Only used when NOTIFIER_MODE=real.",
+    "Email": "# Alert emails are sent when SMTP_HOST is set; otherwise alerts stay in the app and are marked as not emailed.",
 }
-KEEP_DEFAULT = {"APP_ENV", "INTEGRATION_MODE", "TEST_MODE", "LOG_LEVEL", "GOOGLE_ADS_WRITES_ENABLED", "AUTO_NEGATIVES_MODE", "EMERGENCY_BRAKE_WRITE_MODE",
-                "AUTH_PROVIDER", "AI_PROVIDER", "CRAWLER_MODE", "REDIS_URL", "CELERY_TASK_ALWAYS_EAGER", "CORS_ORIGINS", "SESSION_COOKIE_SECURE", "GROQ_ENABLED",
-                "SMTP_PORT", "SMTP_FROM", "MOCK_SEED", "CRAWLER_MAX_PAGES", "CRAWLER_MAX_DEPTH", "CRAWLER_TIMEOUT_SECONDS", "SESSION_TTL_HOURS",
+KEEP_DEFAULT = {"APP_ENV", "LOG_LEVEL", "GOOGLE_ADS_WRITES_ENABLED", "AUTO_NEGATIVES_MODE", "EMERGENCY_BRAKE_WRITE_MODE",
+                "AUTH_PROVIDER", "REDIS_URL", "CELERY_TASK_ALWAYS_EAGER", "CORS_ORIGINS", "SESSION_COOKIE_SECURE",
+                "SMTP_PORT", "SMTP_FROM", "CRAWLER_MAX_PAGES", "CRAWLER_MAX_DEPTH", "CRAWLER_TIMEOUT_SECONDS", "SESSION_TTL_HOURS",
                 "RATE_LIMIT_PER_MINUTE", "AUTH_RATE_LIMIT_PER_MINUTE", "AUTO_NEGATIVES_DAILY_LIMIT"}
 LOCAL_DB = "postgresql+psycopg://app:app@localhost:5432/google_ads_agent"
 
@@ -91,7 +90,7 @@ def render_docs() -> str:
          "| Flow | Google Identity Services returns an ID token; the backend verifies signature, issuer, audience, expiry, verified email and domain. **Only the client ID is needed** — no secret, no redirect URI. | Authorization-code flow with PKCE; needs client ID + secret + redirect URI and yields a refresh token. |",
          "| Grants | Access to this app only. Never grants Google Ads access. | Access to Google Ads data (read-only unless writes are separately enabled). |",
          "| Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; API access for the Cloud project |",
-         "Google sign-in is optional for V1: with `AUTH_PROVIDER=mock` (development only) a demo-user picker is shown. `AUTH_PROVIDER=mock` is refused when `APP_ENV=production`.", "",
+         "Google sign-in is optional for local use: with `AUTH_PROVIDER=dev` (development only) users that already exist can sign in by email. `AUTH_PROVIDER=dev` is refused when `APP_ENV=production`.", "",
          "## Google Ads: no developer token",
          "Google **sunset developer tokens on 2026-09-09** ([official guide](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)). Sending one is optional and ignored, so the app neither requires nor sends `GOOGLE_ADS_DEVELOPER_TOKEN`. "
          "What matters now is the **API access level of the Google Cloud project that owns your OAuth client** (Test, Explorer, Basic or Standard), shown on the Google Ads API Overview page in Cloud Console:",
@@ -101,7 +100,7 @@ def render_docs() -> str:
          "## Google Ads IDs",
          "`GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header; a manager account is no longer required unless you manage several accounts through it. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account (the one the connection test must read). Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).", "",
          "## Groq",
-         "Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=groq`, `GROQ_API_KEY`, `GROQ_MODEL` — or it is enabled on the Integrations page after its test passes. `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). "
+         "Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on the Integrations page (recommended, then run Test Connection). `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). "
          "Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.", "",
          "## Checklist"]
     for grp, vs in g.items():

@@ -39,8 +39,8 @@ def test_example_contains_no_secrets_only_safe_defaults():
     for v in REGISTRY:
         if v["secret"] and v["name"] != "DATABASE_URL":
             assert vals[v["name"]] == "", v["name"]
-    assert vals["GOOGLE_ADS_WRITES_ENABLED"] == "false" and vals["INTEGRATION_MODE"] == "mock" and vals["AUTH_PROVIDER"] == "mock"
-    assert vals["EMERGENCY_BRAKE_WRITE_MODE"] == "simulate" and vals["AUTO_NEGATIVES_MODE"] == "shadow" and vals["GROQ_ENABLED"] == "false"
+    assert vals["GOOGLE_ADS_WRITES_ENABLED"] == "false" and vals["AUTH_PROVIDER"] == "dev"
+    assert vals["EMERGENCY_BRAKE_WRITE_MODE"] == "simulate" and vals["AUTO_NEGATIVES_MODE"] == "shadow"
     assert "app:app@localhost" in vals["DATABASE_URL"]
     Settings(_env_file=str(EXAMPLE))  # the example itself must load
 
@@ -58,8 +58,7 @@ def test_every_setting_is_actually_used():
         if name in DYNAMIC:
             continue
         pat = rf"\.{name}\b|[\"']{name}[\"']"
-        mode = name[:-5] if name.endswith("_MODE") else None
-        used = any(re.search(pat, t) or (mode and re.search(rf"mode_for\([\"']{mode}[\"']\)", t)) for t in code.values())
+        used = any(re.search(pat, t) for t in code.values())
         assert used, f"Settings.{name} is declared but never read — remove it or use it"
     for name, why in RETIRED.items():
         assert name not in Settings.model_fields, f"{name} is retired ({why[:40]}…) but still declared"
@@ -100,8 +99,8 @@ def lv(rep, var, level):
 def test_rules_google_signin_vs_ads_oauth():
     r = run({"AUTH_PROVIDER": "google"})
     assert lv(r, "GOOGLE_CLIENT_ID", "error") and lv(r, "BOOTSTRAP_ADMIN_EMAIL", "warn")
-    r = run({"AUTH_PROVIDER": "mock", "GOOGLE_CLIENT_ID": "abc.apps.googleusercontent.com"})
-    assert lv(r, "GOOGLE_CLIENT_ID", "info") and not r["counts"]["error"]  # ignored in mock mode
+    r = run({"AUTH_PROVIDER": "dev", "GOOGLE_CLIENT_ID": "abc.apps.googleusercontent.com"})
+    assert lv(r, "GOOGLE_CLIENT_ID", "info") and not r["counts"]["error"]  # ignored with dev login
     assert lv(run({"GOOGLE_CLIENT_ID": "12345"}), "GOOGLE_CLIENT_ID", "error")  # wrong shape
     same = "abc.apps.googleusercontent.com"
     assert lv(run({"AUTH_PROVIDER": "google", "GOOGLE_CLIENT_ID": same, "GOOGLE_ADS_CLIENT_ID": same, "BOOTSTRAP_ADMIN_EMAIL": "a@b.co"}), "GOOGLE_ADS_CLIENT_ID", "warn")
@@ -118,16 +117,16 @@ def test_rules_google_ads_ids():
     assert lv(run({"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "12345"}), "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "error")
     partly = run({"GOOGLE_ADS_CLIENT_ID": "a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s"})
     assert lv(partly, "GOOGLE_ADS_REFRESH_TOKEN", "warn") and not lv(partly, "GOOGLE_ADS_DEVELOPER_TOKEN", "warn")  # no developer token needed
-    assert lv(run({"GOOGLE_ADS_MODE": "real"}), "GOOGLE_ADS_MODE", "error")
+    assert lv(run({"GOOGLE_ADS_MODE": "real"}), "GOOGLE_ADS_MODE", "warn")  # removed mode switch: flagged, never obeyed
 
 
 def test_rules_groq():
-    assert lv(run({"AI_PROVIDER": "groq"}), "GROQ_ENABLED", "error")
-    r = run({"GROQ_ENABLED": "true", "AI_PROVIDER": "mock", "GROQ_API_KEY": "gsk_x"})
-    assert lv(r, "AI_PROVIDER", "warn") and lv(r, "GROQ_MODEL", "error")  # key alone does nothing: a model is required
-    r = run({"GROQ_ENABLED": "true", "AI_PROVIDER": "groq", "GROQ_MODEL": "llama-3.3-70b-versatile"})
+    assert lv(run({"AI_PROVIDER": "groq", "GROQ_ENABLED": "true"}), "AI_PROVIDER", "warn")  # retired switches are flagged
+    r = run({"GROQ_API_KEY": "gsk_x"})
+    assert lv(r, "GROQ_MODEL", "error")  # key alone does nothing: a model is required
+    r = run({"GROQ_MODEL": "llama-3.3-70b-versatile"})
     assert lv(r, "GROQ_API_KEY", "error") and not lv(r, "GROQ_MODEL", "error")
-    good = run({"GROQ_ENABLED": "true", "AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk_abc", "GROQ_MODEL": "llama-3.3-70b-versatile", "GROQ_CHALLENGER_MODEL": "openai/gpt-oss-120b"})
+    good = run({"GROQ_API_KEY": "gsk_abc", "GROQ_MODEL": "llama-3.3-70b-versatile", "GROQ_CHALLENGER_MODEL": "openai/gpt-oss-120b"})
     assert good["counts"]["error"] == 0 and not lv(good, "GROQ_CHALLENGER_MODEL", "warn") and not lv(good, "GROQ_CHALLENGER_MODEL", "info")
     assert lv(run({"GROQ_MODEL": "whisper-large-v3"}), "GROQ_MODEL", "error")  # speech model cannot write plans
     assert lv(run({"GROQ_MODEL": "llama-9000"}), "GROQ_MODEL", "warn")
@@ -137,9 +136,9 @@ def test_rules_groq():
 def test_rules_safety_and_production():
     assert lv(run({"GOOGLE_ADS_WRITES_ENABLED": "true"}), "GOOGLE_ADS_WRITES_ENABLED", "warn")
     prod = run({"APP_ENV": "production"})
-    assert {p["var"] for p in prod["problems"] if p["level"] == "error"} >= {"APP_SECRET_KEY", "TOKEN_ENCRYPTION_KEY", "AUTH_PROVIDER", "TEST_MODE", "SESSION_COOKIE_SECURE"}
+    assert {p["var"] for p in prod["problems"] if p["level"] == "error"} >= {"APP_SECRET_KEY", "TOKEN_ENCRYPTION_KEY", "AUTH_PROVIDER", "SESSION_COOKIE_SECURE"}
     hardened = run({"APP_ENV": "production", "APP_SECRET_KEY": "k" * 48, "TOKEN_ENCRYPTION_KEY": "9ZKj5vNq0y3uW8cFhB2tXsL1mP6dRaQe4oYiTnVgHwE=", "AUTH_PROVIDER": "google",
-                    "GOOGLE_CLIENT_ID": "a.apps.googleusercontent.com", "BOOTSTRAP_ADMIN_EMAIL": "a@b.co", "TEST_MODE": "false", "SESSION_COOKIE_SECURE": "true",
+                    "GOOGLE_CLIENT_ID": "a.apps.googleusercontent.com", "BOOTSTRAP_ADMIN_EMAIL": "a@b.co", "SESSION_COOKIE_SECURE": "true",
                     "CORS_ORIGINS": "https://app.example.com"})
     assert hardened["counts"]["error"] == 0
     assert lv(run({"TOKEN_ENCRYPTION_KEY": "not-a-key"}), "TOKEN_ENCRYPTION_KEY", "error")
@@ -153,15 +152,15 @@ def test_rules_safety_and_production():
 
 def test_duplicates_and_file_parsing(tmp_path):
     f = tmp_path / ".env"
-    f.write_text("APP_ENV=development\nGROQ_MODEL=a\n# comment\nGROQ_MODEL = 'b'\nexport MOCK_SEED=7 # note\n")
+    f.write_text("APP_ENV=development\nGROQ_MODEL=a\n# comment\nGROQ_MODEL = 'b'\nexport LOG_LEVEL=DEBUG # note\n")
     values, files, dups = env_audit.load(str(f), environ={})
-    assert values["GROQ_MODEL"] == "b" and values["MOCK_SEED"] == "7" and dups == ["GROQ_MODEL"]
+    assert values["GROQ_MODEL"] == "b" and values["LOG_LEVEL"] == "DEBUG" and dups == ["GROQ_MODEL"]
     assert lv(audit(values, files=files, duplicates=dups), "GROQ_MODEL", "error")
 
 
 def test_secret_values_never_appear_in_any_output(tmp_path, capsys):
     f = tmp_path / ".env"
-    f.write_text("\n".join(f"{k}={v}" for k, v in FAKE.items()) + "\nAI_PROVIDER=groq\nGROQ_ENABLED=true\nGROQ_MODEL=llama-3.3-70b-versatile\n")
+    f.write_text("\n".join(f"{k}={v}" for k, v in FAKE.items()) + "\nGROQ_MODEL=llama-3.3-70b-versatile\n")
     for kw in ({}, {"as_json": True}, {"brief": True}):
         env_audit.run(str(f), file_only=True, **kw)
         out = capsys.readouterr().out
@@ -175,7 +174,7 @@ def test_secret_values_never_appear_in_any_output(tmp_path, capsys):
 def test_exit_codes_and_json(tmp_path, capsys):
     bad, good = tmp_path / "bad.env", tmp_path / "good.env"
     bad.write_text("AUTH_PROVIDER=google\n")
-    good.write_text("APP_ENV=development\nAUTH_PROVIDER=mock\n")
+    good.write_text("APP_ENV=development\nAUTH_PROVIDER=dev\n")
     assert env_audit.run(str(bad), file_only=True) == 1
     capsys.readouterr()
     assert env_audit.run(str(good), as_json=True, file_only=True) == 0
@@ -193,7 +192,7 @@ def test_developer_token_is_retired_not_required():
     assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in BY_NAME and "GOOGLE_ADS_DEVELOPER_TOKEN" in RETIRED
     assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in Settings.model_fields
     complete = {"GOOGLE_ADS_CLIENT_ID": "1-a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s", "GOOGLE_ADS_REFRESH_TOKEN": "r",
-                "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890", "GOOGLE_ADS_MODE": "real"}
+                "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890"}
     r = run(complete)
     assert r["counts"]["error"] == 0 and not [p for p in r["problems"] if p["var"].startswith("GOOGLE_ADS_") and p["level"] in ("warn", "error")]  # complete without a token
     r = run({**complete, "GOOGLE_ADS_DEVELOPER_TOKEN": "abc"})
@@ -205,9 +204,9 @@ def test_developer_token_is_retired_not_required():
 
 def test_populate_env_copies_names_only_and_never_overwrites(tmp_path, capsys):
     f = tmp_path / ".env"
-    f.write_text("APP_ENV=development\nTEST_MODE=true\nGOOGLE_ADS_WRITES_ENABLED=false\nGROQ_MODEL=keep-me\nGROQ_API_KEY=\nGROQ_API_KEY=\nMOCK_SEED=42\n")
+    f.write_text("APP_ENV=development\nEMERGENCY_BRAKE_WRITE_MODE=simulate\nGOOGLE_ADS_WRITES_ENABLED=false\nGROQ_MODEL=keep-me\nGROQ_API_KEY=\nGROQ_API_KEY=\n")
     env = {"GROQ_API_KEY": "gsk_FAKE_SECRET_VALUE_1234567890", "GROQ_MODEL": "other", "GOOGLE_ADS_CLIENT_SECRET": "has space #and$dollar",
-           "GOOGLE_ADS_WRITES_ENABLED": "true", "TEST_MODE": "false", "PAGESPEED_API_KEY": "", "GOOGLE_ADS_DEVELOPER_TOKEN": "retired", "SOMETHING_ELSE": "x"}
+           "GOOGLE_ADS_WRITES_ENABLED": "true", "EMERGENCY_BRAKE_WRITE_MODE": "real", "PAGESPEED_API_KEY": "", "GOOGLE_ADS_DEVELOPER_TOKEN": "retired", "SOMETHING_ELSE": "x"}
     res = env_audit.populate(f, env)
     out = env_audit.render_populate(res, str(f))
     assert "gsk_FAKE" not in out and "has space" not in out
@@ -219,7 +218,7 @@ def test_populate_env_copies_names_only_and_never_overwrites(tmp_path, capsys):
     got = dotenv_values(f)
     assert got["GROQ_API_KEY"] == env["GROQ_API_KEY"] and got["GROQ_MODEL"] == "keep-me"
     assert got["GOOGLE_ADS_CLIENT_SECRET"] == "has space #and$dollar"                # quoting round-trips
-    assert got["GOOGLE_ADS_WRITES_ENABLED"] == "false" and got["TEST_MODE"] == "true"  # safety switches are never loosened
+    assert got["GOOGLE_ADS_WRITES_ENABLED"] == "false" and got["EMERGENCY_BRAKE_WRITE_MODE"] == "simulate"  # safety switches are never loosened
     assert f.read_text().count("GROQ_API_KEY=") == 1 and "SOMETHING_ELSE" not in f.read_text()
     assert oct(f.stat().st_mode & 0o777) == "0o600"
     again = env_audit.populate(f, env)

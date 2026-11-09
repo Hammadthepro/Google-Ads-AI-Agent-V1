@@ -44,3 +44,18 @@ class SafetyBlocked(AppError):
 
     status_code = 423
     code = "safety_blocked"
+
+
+class IntegrationNotConfigured(AppError):
+    """A feature needs an integration whose credentials are missing or disabled. There is NO fallback: the caller must
+    surface this to the user (HTTP 424) so they can configure and test the integration on the Integrations page."""
+
+    status_code = 424
+    code = "integration_not_configured"
+
+    def __init__(self, provider: str, label: str, *, missing: list[str] | None = None, disabled: bool = False):
+        self.provider, self.label, self.missing = provider, label, missing or []
+        why = "is disabled" if disabled else "is not configured"
+        super().__init__(f"{label} integration {why}. Please configure and test your connection on the Integrations page.",
+                         details={"provider": provider, "missing": self.missing, "disabled": disabled,
+                                  "action": "configure_integration", "path": "/integrations"})

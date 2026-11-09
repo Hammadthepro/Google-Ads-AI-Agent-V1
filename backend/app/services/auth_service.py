@@ -41,7 +41,6 @@ PERMISSIONS: dict[str, set[str]] = {
     "activity.view_all": {Role.SUPER_ADMIN},
     "activity.view_clients": {Role.SUPER_ADMIN, Role.ADMIN},
     "activity.view_own": {Role.SUPER_ADMIN, Role.ADMIN, Role.CAMPAIGN_MANAGER},
-    "mock.control": {Role.SUPER_ADMIN},
 }
 ANALYST_AUDITS = {"WEBSITE", "GBP", "COMPETITOR", "KEYWORD"}
 

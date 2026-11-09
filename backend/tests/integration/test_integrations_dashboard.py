@@ -86,7 +86,7 @@ def test_database_and_redis_are_real_checks():
 def test_google_sign_in_card_is_read_only_and_cannot_be_tested():
     sup = Api(SUPER)
     g = by(sup.get("/integrations").json()["integrations"], "google_login")
-    assert g["readonly"] and g["display"]["testable"] is False and g["info"]["auth_provider"] == "mock"
+    assert g["readonly"] and g["display"]["testable"] is False and g["info"]["auth_provider"] == "dev"
     r = sup.post("/integrations/google_login/test")
     assert r.status_code in (400, 422) and "signing in" in r.text
 

@@ -40,6 +40,10 @@ include = ["app*"]
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "real_registry: run without test fakes so the real adapter registry (and its not-configured errors) is exercised",
+    "live: needs real credentials; reports NOT CONFIGURED / BLOCKED instead of passing when they are missing",
+]
 
 [tool.ruff]
 line-length = 110

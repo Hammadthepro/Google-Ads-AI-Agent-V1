@@ -1,4 +1,4 @@
-"""Notifier interface. MockNotifier stores messages in the alerts table; EmailNotifier sends via SMTP."""
+"""Notifier interface. InAppNotifier records alerts in the app only (no email); EmailNotifier sends via SMTP."""
 from __future__ import annotations
 
 import smtplib
@@ -10,24 +10,28 @@ from app.core.config import get_settings
 
 class Notifier(ABC):
     name = "notifier"
-    source = "MOCK"
+    source = "LIVE"
 
     @abstractmethod
     def send(self, *, recipients: list[str], subject: str, body: str, client_id: str | None = None,
              category: str = "general") -> str: ...
 
 
-class MockNotifier(Notifier):
-    name = "MockNotifier"
-    source = "MOCK"
+
+
+class InAppNotifier(Notifier):
+    """Used when SMTP is not configured. The alert is stored and shown in the app; it is NOT emailed, and says so."""
+
+    name = "InAppNotifier"
+    source = "LIVE"
 
     def send(self, *, recipients, subject, body, client_id=None, category="general") -> str:
         from app.db.session import session_scope
         from app.models import Alert
         with session_scope() as db:
-            db.add(Alert(client_id=client_id, recipients=recipients, subject=f"[MOCK] {subject}", body=body,
-                         delivery_status="MOCK_DELIVERED", category=category, channel="email"))
-        return "MOCK_DELIVERED"
+            db.add(Alert(client_id=client_id, recipients=recipients, subject=subject, body=body,
+                         delivery_status="NOT_EMAILED_SMTP_NOT_CONFIGURED", category=category, channel="in_app"))
+        return "NOT_EMAILED_SMTP_NOT_CONFIGURED"
 
 
 class EmailNotifier(Notifier):

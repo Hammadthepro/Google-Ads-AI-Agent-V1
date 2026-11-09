@@ -3,7 +3,8 @@ from __future__ import annotations
 
 
 from app.adapters import registry
-from app.adapters.ai import AIProvider, MockAIProvider
+from app.adapters.ai import AIProvider
+from tests.fakes.ai import MockAIProvider
 from app.adapters.base import ServiceUnavailable
 from app.db.session import session_scope
 from app.models import AIRun

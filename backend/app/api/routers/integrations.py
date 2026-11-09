@@ -135,7 +135,7 @@ def disconnect_integration(provider: str, user: User = Depends(require("integrat
     svc.disconnect(db, _provider(provider), user.id)
     if provider == "google_ads":
         from app.services import settings_service
-        settings_service.set_value(db, "operating_mode", "mock", user.id)  # never leave real mode without credentials
+        settings_service.set_value(db, "operating_mode", "read_only", user.id)  # never stay in execution without credentials
     activity.log(db, "integrations.disconnected", actor=user, entity="integration", entity_id=provider)
     db.commit()
     svc.invalidate()

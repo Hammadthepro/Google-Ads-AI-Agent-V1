@@ -8,10 +8,12 @@ import httpx
 import pytest
 
 from app.adapters.base import AuthError, InvalidInput, NotFoundError, RateLimited
-from app.adapters.google_ads.mock import MockGoogleAdsAdapter
-from app.adapters.keyword_research import MockKeywordResearchAdapter
-from app.adapters.pagespeed import MockPageSpeedAdapter, RealPageSpeedAdapter
-from app.adapters.places import MockGooglePlacesAdapter, RealGooglePlacesAdapter
+from app.adapters.pagespeed import RealPageSpeedAdapter
+from app.adapters.places import RealGooglePlacesAdapter
+from tests.fakes.google_ads import MockGoogleAdsAdapter
+from tests.fakes.keyword_research import MockKeywordResearchAdapter
+from tests.fakes.pagespeed import MockPageSpeedAdapter
+from tests.fakes.places import MockGooglePlacesAdapter
 from app.core import clock
 from tests.conftest import inject
 
@@ -84,7 +86,7 @@ def test_conversion_lag_refresh_changes_recent_days():
     a = MockGoogleAdsAdapter()
     end = clock.today() - timedelta(days=1)
     recent = a.get_metrics("1110000003", end, end)
-    from app.mock_world.simulator import lag_factor
+    from tests.fakes.mock_world.simulator import lag_factor
     assert lag_factor(1) < 1 and lag_factor(5) == 1
     assert all(r["conversions"] >= 0 for r in recent)
 

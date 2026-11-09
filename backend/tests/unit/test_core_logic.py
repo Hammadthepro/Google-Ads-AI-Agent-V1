@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from app.adapters.ai import label_keyword, mock_ad_copy
-from app.adapters.google_ads.mock import policy_issues_for_text
+from app.services.ad_policy import policy_issues_for_text
+from app.services.keyword_labels import label_keyword
+from tests.fakes.ai import mock_ad_copy
 from app.core.util import canonical_json, payload_hash, redact
 from app.services.audits import overlap_check
 from app.services.feasibility import calculate, review_adjustment

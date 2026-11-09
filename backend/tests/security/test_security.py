@@ -47,8 +47,8 @@ def test_live_crawler_blocks_redirect_to_private_address():
     assert not res.ok and "Blocked" in res.error and res.redirects == ["http://internal.example/admin"]
 
 
-def test_layering_contract_business_logic_never_imports_vendor_sdks_or_concrete_adapters():
-    forbidden = ("groq", "google.ads", "google.oauth2", "app.adapters.google_ads.mock", "app.adapters.google_ads.real")
+def test_layering_contract_business_logic_never_imports_vendor_sdks_concrete_adapters_or_test_fakes():
+    forbidden = ("groq", "google.ads", "google.oauth2", "app.adapters.google_ads.real", "tests", "app.mock_world")
     bad = []
     for path in list((APP / "services").glob("*.py")) + list((APP / "api").rglob("*.py")):
         tree = ast.parse(path.read_text())
@@ -59,8 +59,7 @@ def test_layering_contract_business_logic_never_imports_vendor_sdks_or_concrete_
             elif isinstance(node, ast.ImportFrom):
                 names = [node.module or ""]
             bad += [(path.name, n) for n in names if n.startswith(forbidden)]
-    allowed = {("validation.py", "app.adapters.google_ads.mock")}  # shared policy constants only (no adapter use)
-    assert set(bad) - allowed == set(), bad
+    assert bad == [], bad
 
 
 def test_secrets_never_returned_by_api(monkeypatch):
@@ -82,13 +81,11 @@ def test_secrets_never_returned_by_api(monkeypatch):
 def test_production_config_guards():
     from app.core.config import Settings
     with pytest.raises(ValueError):
-        Settings(APP_ENV="production", AUTH_PROVIDER="mock", TEST_MODE=False, APP_SECRET_KEY="x" * 40)
+        Settings(APP_ENV="production", AUTH_PROVIDER="dev", GOOGLE_CLIENT_ID="a.apps.googleusercontent.com", APP_SECRET_KEY="x" * 40)
     with pytest.raises(ValueError):
-        Settings(APP_ENV="production", AUTH_PROVIDER="google", TEST_MODE=True, APP_SECRET_KEY="x" * 40)
+        Settings(APP_ENV="production", AUTH_PROVIDER="google", GOOGLE_CLIENT_ID="a.apps.googleusercontent.com", APP_SECRET_KEY="dev-short")
     with pytest.raises(ValueError):
-        Settings(APP_ENV="production", AUTH_PROVIDER="google", TEST_MODE=False, APP_SECRET_KEY="dev-short")
-    with pytest.raises(ValueError):
-        Settings(AI_PROVIDER="groq", GROQ_ENABLED=False)
+        Settings(AUTH_PROVIDER="google")  # nobody could sign in without a client id
 
 
 def test_security_headers_and_no_store():

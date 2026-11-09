@@ -28,8 +28,8 @@ def _set_cookies(resp: Response, token: str, csrf: str) -> None:
 def auth_config(db: Session = Depends(get_db)):
     s = get_settings()
     data = {"provider": s.AUTH_PROVIDER, "google_client_id": s.GOOGLE_CLIENT_ID if s.AUTH_PROVIDER == "google" else "",
-            "app_env": s.APP_ENV, "integration_mode": s.INTEGRATION_MODE}
-    if s.AUTH_PROVIDER == "mock" and s.APP_ENV != "production":
+            "app_env": s.APP_ENV}
+    if s.AUTH_PROVIDER == "dev" and s.APP_ENV != "production":
         data["dev_users"] = [{"email": u.email, "name": u.name, "role": u.role}
                              for u in db.scalars(select(User).where(User.is_active.is_(True)).order_by(User.role))]
     return data
@@ -41,7 +41,7 @@ class DevLogin(BaseModel):
 
 @router.post("/auth/dev-login")
 def dev_login(body: DevLogin, request: Request, response: Response, db: Session = Depends(get_db)):
-    if get_settings().AUTH_PROVIDER != "mock":
+    if get_settings().AUTH_PROVIDER != "dev":
         raise Forbidden("Development login is disabled")
     user, token, csrf = auth_service.login(db, {"email": body.email}, ip=request.client.host if request.client else "",
                                            user_agent=request.headers.get("user-agent", ""))
@@ -56,7 +56,7 @@ class GoogleLogin(BaseModel):
 @router.post("/auth/google")
 def google_login(body: GoogleLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     if get_settings().AUTH_PROVIDER != "google":
-        raise Forbidden("Google sign-in is not enabled (AUTH_PROVIDER=mock)")
+        raise Forbidden("Google sign-in is not enabled (AUTH_PROVIDER=dev)")
     user, token, csrf = auth_service.login(db, {"id_token": body.credential}, ip=request.client.host if request.client else "",
                                            user_agent=request.headers.get("user-agent", ""))
     _set_cookies(response, token, csrf)

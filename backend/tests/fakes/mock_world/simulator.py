@@ -12,7 +12,6 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.models import MockCallRecord, MockMetricDaily, MockResource, MockSearchTerm
 
 PROFILES: dict[str, dict] = {
@@ -33,7 +32,7 @@ GOOD_PATTERNS = ["{k}", "{k} near me", "{k} cost", "best {k}", "{k} company", "l
 
 
 def rng(*parts) -> random.Random:
-    raw = f"{get_settings().MOCK_SEED}|" + "|".join(str(p) for p in parts)
+    raw = "42|" + "|".join(str(p) for p in parts)
     return random.Random(int(hashlib.sha256(raw.encode()).hexdigest()[:16], 16))
 
 

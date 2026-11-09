@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters import registry
 from app.adapters.base import AdapterError
-from app.adapters.google_ads.mock import DESCRIPTION_MAX, HEADLINE_MAX, PATH_MAX, policy_issues_for_text
+from app.services.ad_policy import DESCRIPTION_MAX, HEADLINE_MAX, PATH_MAX, policy_issues_for_text
 from app.core.util import normalize_term, payload_hash
 from app.models import Business, ValidationRun
 from app.services import crawler_service, settings_service, tracking_gate

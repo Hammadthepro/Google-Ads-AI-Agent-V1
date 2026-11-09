@@ -1,91 +1,81 @@
-"""The ONLY place that chooses mock vs real implementations.
+"""The ONLY place that builds adapters. Every adapter here is REAL.
 
-Real implementations are chosen only by explicit *_MODE / provider settings — never because credentials exist.
-In real mode, missing credentials raise at first use (no silent fallback to mock).
+There is no mock selection and no fallback: when an integration's credentials are missing (or it was disabled on the
+Integrations page) the getter raises IntegrationNotConfigured, which the API turns into a clear "configure it on the
+Integrations page" message. Nothing silently switches to another provider or to simulated data.
+
+Tests install isolated fakes with `override()` (see backend/tests/fakes); the application never imports them.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 
-from app.core.config import get_settings
+from app.services import integrations_service
 
 
 @lru_cache
 def google_ads():
-    """Real only when the operating mode (Integrations page) is read_only/execution — never inferred from credentials."""
-    from app.adapters.google_ads.mock import MockGoogleAdsAdapter
+    integrations_service.ensure_configured("google_ads")
     from app.adapters.google_ads.real import RealGoogleAdsAdapter
-    from app.services import integrations_service
-    return RealGoogleAdsAdapter() if integrations_service.operating_mode() != "mock" else MockGoogleAdsAdapter()
+    return RealGoogleAdsAdapter()
 
 
 @lru_cache
 def keyword_research():
-    from app.adapters.keyword_research import GoogleKeywordPlannerAdapter, MockKeywordResearchAdapter
-    from app.services import integrations_service
-    if integrations_service.operating_mode() != "mock":
-        return GoogleKeywordPlannerAdapter(google_ads())
-    return MockKeywordResearchAdapter()
+    from app.adapters.keyword_research import GoogleKeywordPlannerAdapter
+    return GoogleKeywordPlannerAdapter(google_ads())
 
 
 @lru_cache
 def places():
-    from app.adapters.places import MockGooglePlacesAdapter, RealGooglePlacesAdapter
-    from app.services import integrations_service
-    real = integrations_service.resolve("places")["_enabled"] or get_settings().mode_for("PLACES") == "real"
-    return RealGooglePlacesAdapter() if real else MockGooglePlacesAdapter()
+    integrations_service.ensure_configured("places")
+    from app.adapters.places import RealGooglePlacesAdapter
+    return RealGooglePlacesAdapter()
 
 
 @lru_cache
 def pagespeed():
-    from app.adapters.pagespeed import MockPageSpeedAdapter, RealPageSpeedAdapter
-    from app.services import integrations_service
-    real = integrations_service.resolve("pagespeed")["_enabled"] or get_settings().mode_for("PAGESPEED") == "real"
-    return RealPageSpeedAdapter() if real else MockPageSpeedAdapter()
+    integrations_service.ensure_configured("pagespeed")
+    from app.adapters.pagespeed import RealPageSpeedAdapter
+    return RealPageSpeedAdapter()
 
 
 @lru_cache
 def crawler():
-    from app.adapters.crawler import FixtureCrawlerAdapter, LiveCrawlerAdapter
-    from app.services import integrations_service
-    v = integrations_service.resolve("crawler")
-    live = (v["_enabled"] and v.get("mode") == "live") or get_settings().CRAWLER_MODE == "live"
-    return LiveCrawlerAdapter() if live else FixtureCrawlerAdapter()
+    """Live HTTP fetching with SSRF protection. It needs no credentials, so it is always the real crawler."""
+    from app.adapters.crawler import LiveCrawlerAdapter
+    return LiveCrawlerAdapter()
 
 
 @lru_cache
 def ai():
-    from app.adapters.ai import GroqAIProvider, MockAIProvider
-    """The internal AI (Groq when enabled via Integrations or env, else the deterministic mock)."""
-    from app.services import integrations_service
-    s = get_settings()
-    if integrations_service.resolve("groq")["_enabled"] or (s.AI_PROVIDER == "groq" and s.GROQ_ENABLED):
-        return GroqAIProvider()
-    return MockAIProvider()
+    """The internal AI (Groq). No Groq key/model -> IntegrationNotConfigured; never a stand-in model."""
+    integrations_service.ensure_configured("groq")
+    from app.adapters.ai import GroqAIProvider
+    return GroqAIProvider()
 
 
 @lru_cache
 def claude_ai():
-    """The independent second AI. Falls back to the mock (labelled MOCK) when Claude is not enabled."""
-    from app.adapters.ai import MockAIProvider
+    """The independent second AI (Claude). Not configured -> IntegrationNotConfigured."""
+    v = integrations_service.ensure_configured("claude")
     from app.adapters.ai.claude import ClaudeAIProvider
-    from app.services import integrations_service
-    v = integrations_service.resolve("claude")
-    if v["_enabled"]:
-        return ClaudeAIProvider(v.get("api_key", ""), v.get("model", ""))
-    return MockAIProvider(variant="b")
+    return ClaudeAIProvider(v.get("api_key", ""), v.get("model", ""))
 
 
 @lru_cache
 def auth():
-    from app.adapters.auth import GoogleOIDCAuthenticationProvider, MockAuthenticationProvider
-    return GoogleOIDCAuthenticationProvider() if get_settings().AUTH_PROVIDER == "google" else MockAuthenticationProvider()
+    from app.adapters.auth import DevLoginAuthenticationProvider, GoogleOIDCAuthenticationProvider
+    from app.core.config import get_settings
+    return GoogleOIDCAuthenticationProvider() if get_settings().AUTH_PROVIDER == "google" else DevLoginAuthenticationProvider()
 
 
 @lru_cache
 def notifier():
-    from app.adapters.notifications import EmailNotifier, MockNotifier
-    return EmailNotifier() if get_settings().mode_for("NOTIFIER") == "real" else MockNotifier()
+    """Email via SMTP when SMTP is configured; otherwise alerts are kept in-app only and recorded as NOT_EMAILED."""
+    from app.adapters.notifications import EmailNotifier, InAppNotifier
+    from app.core.config import get_settings
+    return EmailNotifier() if get_settings().SMTP_HOST else InAppNotifier()
 
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,

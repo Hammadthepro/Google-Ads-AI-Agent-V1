@@ -182,27 +182,33 @@ def test_missing_credentials_report_configuration_required():
         assert svc.serialize(db, "google_ads")["display"]["label"] == "Not configured"
 
 
+@pytest.mark.real_registry
 def test_modes_require_a_passing_connection_and_writes_need_both_keys(monkeypatch):
+    from app.adapters import registry
+    from app.core.errors import IntegrationNotConfigured
     sup = Api(SUPER)
-    assert sup.get("/integrations/mode").json()["mode"] == "mock"
-    r = sup.c.put("/api/v1/integrations/mode", json={"mode": "read_only"}, headers=sup._h())
+    assert sup.get("/integrations/mode").json()["mode"] == "read_only"  # default: real account, read-only. There is no mock mode.
+    with pytest.raises(IntegrationNotConfigured) as exc:
+        registry.get("google_ads")  # nothing configured -> a clear error, never simulated data
+    assert "Integrations page" in exc.value.message
+    r = sup.c.put("/api/v1/integrations/mode", json={"mode": "execution"}, headers=sup._h())
     assert r.status_code in (400, 422) and "Test Connection" in r.text
     with session_scope() as db:
         _save_ads(db)
         svc.test_connection(db, "google_ads", http=_client(_google_handler()))
         svc.set_enabled(db, "google_ads", True, None)
+    assert registry.get("google_ads").source == "LIVE"
     r = sup.c.put("/api/v1/integrations/mode", json={"mode": "read_only"}, headers=sup._h())
     assert r.status_code == 200
     m = r.json()
     assert m["mode"] == "read_only" and m["real_reads"] and not m["real_writes_possible"]
-    from app.adapters import registry
-    assert registry.get("google_ads").source == "LIVE"
     r = sup.c.put("/api/v1/integrations/mode", json={"mode": "execution"}, headers=sup._h())
     assert r.status_code in (400, 422) and "GOOGLE_ADS_WRITES_ENABLED" in r.text  # key 1 off in tests
     # disconnecting Google Ads drops back to the safe mode
     sup.post("/integrations/google_ads/disconnect")
-    assert sup.get("/integrations/mode").json()["mode"] == "mock"
-    assert registry.get("google_ads").source == "MOCK"
+    assert sup.get("/integrations/mode").json()["mode"] == "read_only"
+    with pytest.raises(IntegrationNotConfigured):
+        registry.get("google_ads")
 
 
 def test_ga4_and_groq_and_claude_steps():

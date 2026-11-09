@@ -294,7 +294,7 @@ def execute(approval_id: str, user: User = Depends(require("execution.run")), db
                 learning.record_prediction(db, a.client_id, c, a.context["feasibility"].get("summary", {}))
     db.commit()
     return {**execution.serialize(op), "data_source": registry.get("google_ads").source,
-            "note": "MOCK operation — nothing was sent to Google Ads." if not registry.get("google_ads").is_real else "LIVE operation"}
+            "note": "LIVE operation" if registry.get("google_ads").is_real else "Simulated by a test adapter — nothing was sent to Google Ads."}
 
 
 @router.get("/operations", tags=["execution"])

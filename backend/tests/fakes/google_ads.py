@@ -1,4 +1,4 @@
-"""MockGoogleAdsAdapter: a persistent, DB-backed simulated Google Ads environment.
+"""TEST FIXTURE ONLY — never imported by the application. MockGoogleAdsAdapter: a persistent, DB-backed simulated Google Ads environment.
 
 It is NOT Google Ads. Every response is labelled MOCK. State lives in mock_gads_* tables, so simulated
 campaigns survive refreshes and restarts, and reset/reseed is explicit.
@@ -14,18 +14,17 @@ from app.adapters.base import InvalidInput, NotFoundError, PermissionDenied
 from app.adapters.google_ads.base import RESOURCE_COLLECTIONS, GoogleAdsAdapter
 from app.core import clock
 from app.db.session import session_scope
-from app.mock_world import simulator
-from app.mock_world.failures import EmptyResult, PartialResult, check_failure
+from app.services.ad_policy import ALLOWED_CAPS, DESCRIPTION_MAX, HEADLINE_MAX, PATH_MAX, policy_issues_for_text  # noqa: F401
+from tests.fakes.mock_world import simulator
+from tests.fakes.mock_world.failures import EmptyResult, PartialResult, check_failure
 from app.models import MockCallRecord, MockChangeEvent, MockCustomer, MockMetricDaily, MockResource, MockSearchTerm
 
 APP_API_USER = "api-user@napollo-agent.app"
-HEADLINE_MAX, DESCRIPTION_MAX, PATH_MAX = 30, 90, 15
 PARENT_FIELD = {
     "ad_group": "campaign", "ad_group_criterion": "ad_group", "ad_group_ad": "ad_group",
     "campaign_criterion": "campaign", "campaign_asset": "campaign", "campaign_shared_set": "campaign",
     "shared_criterion": "shared_set", "experiment": "base_campaign",
 }
-ALLOWED_CAPS = {"HVAC", "USA", "DUI", "LLC", "24/7", "AC", "CPR", "ER", "DDS", "FAQ"}
 
 
 def _rn(cid: str, rtype: str, rid: int) -> str:
@@ -35,22 +34,6 @@ def _rn(cid: str, rtype: str, rid: int) -> str:
 def _to_dict(r: MockResource) -> dict:
     return {**r.data, "resource_name": r.resource_name, "id": str(r.resource_id), "status": r.status,
             "parent": r.parent_resource_name, "labels": r.labels, "resource_type": r.resource_type}
-
-
-def policy_issues_for_text(text: str, kind: str) -> list[str]:
-    """Simplified subset of Google Ads editorial policy, applied by the mock (and by our validator)."""
-    issues = []
-    if kind == "headline" and "!" in text:
-        issues.append(f"Headline '{text}': exclamation marks are not allowed in headlines")
-    if "!!" in text or "??" in text:
-        issues.append(f"'{text}': repeated punctuation is not allowed")
-    for word in re.findall(r"[A-Za-z/0-9]{4,}", text):
-        if word.isupper() and word.isalpha() and word not in ALLOWED_CAPS:
-            issues.append(f"'{text}': excessive capitalisation ('{word}')")
-            break
-    if re.search(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", text):
-        issues.append(f"'{text}': phone numbers are not allowed in ad text (use a call asset)")
-    return issues
 
 
 class MockGoogleAdsAdapter(GoogleAdsAdapter):

@@ -1,5 +1,5 @@
 """Dashboard, monitoring, emergency brake, recommendations, weekly reports, experiments, learning, integrations,
-settings, activity logs, alerts and TEST_MODE mock controls."""
+settings, activity logs and alerts."""
 from __future__ import annotations
 
 
@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.errors import Forbidden, NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models import (ActivityLog, Alert, Approval, Campaign, Client, EmergencyEvent, Experiment, FixTrackerItem, GoogleAdsAccount,
-                        KillSwitch, MockFailureInjection, PlaybookRule, Prediction, Recommendation, RegressionCase,
+                        KillSwitch, PlaybookRule, Prediction, Recommendation, RegressionCase,
                         Task, User, WeeklyReport)
 from app.services import (activity, auth_service, emergency, experiments, learning, monitoring, optimization, reporting,
                           settings_service, tracking_gate)
@@ -46,8 +46,8 @@ def dashboard(user: User = Depends(require("reports.view")), db: Session = Depen
                       "pending_approvals": db.scalar(select(func.count(Approval.id)).where(Approval.client_id == c.id, Approval.status == "PENDING_APPROVAL")),
                       "source_type": camps[0]["source_type"] if camps else "MOCK"})
     cid_set = [c.id for c in clients]
-    return {"clients": cards, "now": clock.now().isoformat(), "simulated_clock": get_settings().TEST_MODE,
-            "integration_mode": get_settings().INTEGRATION_MODE, "google_ads_writes_enabled": get_settings().GOOGLE_ADS_WRITES_ENABLED,
+    return {"clients": cards, "now": clock.now().isoformat(),
+            "google_ads_writes_enabled": get_settings().GOOGLE_ADS_WRITES_ENABLED,
             "data_source": registry.get("google_ads").source,
             "recent_emergency": [emergency.serialize(e) for e in db.scalars(select(EmergencyEvent).where(EmergencyEvent.client_id.in_(cid_set or ["-"]))
                                                                             .order_by(EmergencyEvent.created_at.desc()).limit(6))],
@@ -363,70 +363,3 @@ def alerts(user: User = Depends(require("reports.view")), db: Session = Depends(
     return [{"id": a.id, "at": a.created_at.isoformat(), "subject": a.subject, "body": a.body, "status": a.delivery_status,
              "category": a.category, "client_id": a.client_id, "recipients": a.recipients}
             for a in db.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(200)) if ids is None or a.client_id in ids]
-
-
-# ------------------------------------------------------------------ TEST_MODE mock controls
-def _test_mode():
-    if not get_settings().TEST_MODE or get_settings().APP_ENV == "production":
-        raise Forbidden("Mock controls are only available in TEST_MODE")
-
-
-@router.post("/dev/mock/reset", tags=["mock controls"])
-def mock_reset(user: User = Depends(require("mock.control"))):
-    _test_mode()
-    from app.mock_world import seed
-    seed.reset()
-    return seed.seed()
-
-
-class AdvanceIn(BaseModel):
-    days: int = 1
-
-
-@router.post("/dev/mock/advance-time", tags=["mock controls"])
-def advance(body: AdvanceIn, user: User = Depends(require("mock.control"))):
-    _test_mode()
-    if not 1 <= body.days <= 30:
-        raise ValidationFailed("Advance 1-30 days at a time")
-    from app.workers import jobs
-    log = []
-    for _ in range(body.days):
-        clock.advance(24)
-        log.append(jobs.run_daily_cycle())
-    return {"now": clock.now().isoformat(), "days": body.days, "cycles": log}
-
-
-@router.get("/dev/mock/failures", tags=["mock controls"])
-def failures(user: User = Depends(require("mock.control")), db: Session = Depends(get_db)):
-    return [{"id": f.id, "adapter": f.adapter, "method": f.method, "failure": f.failure, "entity": f.entity, "times": f.times,
-             "used": f.used, "is_active": f.is_active} for f in db.scalars(select(MockFailureInjection).order_by(MockFailureInjection.created_at.desc()))]
-
-
-class FailureIn(BaseModel):
-    adapter: str
-    method: str = "*"
-    failure: str
-    entity: str = ""
-    times: int = 1
-
-
-@router.post("/dev/mock/failures", tags=["mock controls"])
-def add_failure(body: FailureIn, user: User = Depends(require("mock.control")), db: Session = Depends(get_db)):
-    _test_mode()
-    allowed = {"auth_failure", "permission_denied", "rate_limited", "timeout", "timeout_after_commit", "not_found", "missing_data",
-               "invalid_input", "outage", "empty", "partial_data", "invalid_json", "schema_mismatch"}
-    if body.failure not in allowed:
-        raise ValidationFailed(f"failure must be one of {sorted(allowed)}")
-    f = MockFailureInjection(**body.model_dump())
-    db.add(f)
-    db.commit()
-    return {"id": f.id}
-
-
-@router.delete("/dev/mock/failures/{failure_id}", tags=["mock controls"])
-def del_failure(failure_id: str, user: User = Depends(require("mock.control")), db: Session = Depends(get_db)):
-    f = db.get(MockFailureInjection, failure_id)
-    if f:
-        f.is_active = False
-        db.commit()
-    return {"ok": True}

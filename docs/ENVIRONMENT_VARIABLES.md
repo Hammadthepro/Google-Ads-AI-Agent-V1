@@ -18,7 +18,7 @@ Generated from `backend/app/core/env_audit.py` by `python -m app.cli docs-env` (
 | Flow | Google Identity Services returns an ID token; the backend verifies signature, issuer, audience, expiry, verified email and domain. **Only the client ID is needed** — no secret, no redirect URI. | Authorization-code flow with PKCE; needs client ID + secret + redirect URI and yields a refresh token. |
 | Grants | Access to this app only. Never grants Google Ads access. | Access to Google Ads data (read-only unless writes are separately enabled). |
 | Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; API access for the Cloud project |
-Google sign-in is optional for V1: with `AUTH_PROVIDER=mock` (development only) a demo-user picker is shown. `AUTH_PROVIDER=mock` is refused when `APP_ENV=production`.
+Google sign-in is optional for local use: with `AUTH_PROVIDER=dev` (development only) users that already exist can sign in by email. `AUTH_PROVIDER=dev` is refused when `APP_ENV=production`.
 
 ## Google Ads: no developer token
 Google **sunset developer tokens on 2026-09-09** ([official guide](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)). Sending one is optional and ignored, so the app neither requires nor sends `GOOGLE_ADS_DEVELOPER_TOKEN`. What matters now is the **API access level of the Google Cloud project that owns your OAuth client** (Test, Explorer, Basic or Standard), shown on the Google Ads API Overview page in Cloud Console:
@@ -30,7 +30,7 @@ Google **sunset developer tokens on 2026-09-09** ([official guide](https://devel
 `GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header; a manager account is no longer required unless you manage several accounts through it. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account (the one the connection test must read). Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).
 
 ## Groq
-Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=groq`, `GROQ_API_KEY`, `GROQ_MODEL` — or it is enabled on the Integrations page after its test passes. `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.
+Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on the Integrations page (recommended, then run Test Connection). `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.
 
 ## Checklist
 
@@ -39,8 +39,6 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
 | `APP_ENV` | optional | `development` | development | test | staging | production. production switches on the safety guards. | core/config.py, main.py |
-| `INTEGRATION_MODE` | optional | `mock` | Default mode for every integration: mock (simulated) or real. Real reads still need the Integrations page. | core/config.py (mode_for) |
-| `TEST_MODE` | optional | `true` | Enables the simulated clock and mock controls. Must be false in production. | core/clock.py, api/routers/ops.py |
 | `LOG_LEVEL` | optional | `INFO` | Python log level. | main.py |
 
 ### Safety
@@ -52,27 +50,11 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 | `AUTO_NEGATIVES_DAILY_LIMIT` | optional | `25` | Maximum automatic negatives per day. | services/optimization.py |
 | `EMERGENCY_BRAKE_WRITE_MODE` | optional | `simulate` | simulate | disabled | real — what the emergency brake does to Google Ads. | services/emergency.py, safety.py |
 
-### Modes
-
-| Variable | Needed | Default | Purpose | Read by |
-|---|---|---|---|---|
-| `GOOGLE_ADS_MODE` | optional | — | Legacy switch: real = real READ-ONLY Google Ads (never writes). The Integrations page operating mode is preferred. | integrations_service.py (operating_mode) |
-| `PLACES_MODE` | optional | — | real = use the Places API even if not enabled on the Integrations page. | adapters/registry.py |
-| `PAGESPEED_MODE` | optional | — | real = use the PageSpeed API even if not enabled on the Integrations page. | adapters/registry.py |
-| `NOTIFIER_MODE` | optional | — | real = send alert emails through SMTP. | adapters/registry.py |
-| `CRAWLER_MODE` | optional | `fixture` | fixture (bundled demo pages) or live (fetch real websites, SSRF-guarded). | adapters/registry.py |
-
 ### Login
 
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
-| `AUTH_PROVIDER` | optional | `mock` | mock = pick a demo user (never allowed in production); google = Google sign-in. | adapters/registry.py, auth_users.py |
-
-### AI
-
-| Variable | Needed | Default | Purpose | Read by |
-|---|---|---|---|---|
-| `AI_PROVIDER` | optional | `mock` | mock or groq. groq also needs GROQ_ENABLED=true. (Claude and Groq can also be enabled on the Integrations page.) | adapters/registry.py |
+| `AUTH_PROVIDER` | optional | `dev` | dev = email login for users that already exist (local development only; never allowed in production); google = Google sign-in. | adapters/registry.py, auth_users.py |
 
 ### Infrastructure
 
@@ -125,7 +107,6 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
-| `GROQ_ENABLED` | optional | `false` | true lets the env path use Groq. Needs AI_PROVIDER=groq, GROQ_API_KEY and GROQ_MODEL. | adapters/registry.py |
 | `GROQ_API_KEY` 🔒 | when: Groq is used | — | Groq API key (starts with gsk_). | integrations_service.py |
 | `GROQ_MODEL` | when: Groq is used | — | Groq model that writes drafts and explanations. Exact Groq model ID. | adapters/ai/__init__.py |
 | `GROQ_CHALLENGER_MODEL` | optional | — | Groq model that critiques plans. Blank = GROQ_MODEL (no independent second opinion). | adapters/ai/__init__.py |
@@ -140,7 +121,7 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
-| `SMTP_HOST` | when: NOTIFIER_MODE=real | — | SMTP server for alert emails. | adapters/notifications |
+| `SMTP_HOST` | when: alert emails are wanted | — | SMTP server for alert emails. | adapters/notifications |
 | `SMTP_PORT` | optional | `587` | SMTP port (STARTTLS). | adapters/notifications |
 | `SMTP_USER` | optional | — | SMTP username (blank = no login). | adapters/notifications |
 | `SMTP_PASSWORD` 🔒 | optional | — | SMTP password. | adapters/notifications |
@@ -150,7 +131,6 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
-| `MOCK_SEED` | optional | `42` | Seed for the deterministic simulated world. | mock_world/simulator.py |
 | `CRAWLER_MAX_PAGES` | optional | `40` | Pages crawled per website. | services/crawler_service.py |
 | `CRAWLER_MAX_DEPTH` | optional | `2` | Link depth crawled. | services/crawler_service.py |
 | `CRAWLER_TIMEOUT_SECONDS` | optional | `10` | Per-request crawler timeout. | adapters/crawler/__init__.py |
@@ -164,7 +144,17 @@ Groq is used only if **all** of these hold: `GROQ_ENABLED=true`, `AI_PROVIDER=gr
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | Not needed: Google sunset developer tokens on 2026-09-09. API access is now tied to the Google Cloud project that owns your OAuth client (see the Google Ads API overview page in Cloud Console). The app no longer sends or requires it. Remove it from .env. |
 | `GOOGLE_CLIENT_SECRET` | Not used: sign-in verifies Google ID tokens with the client ID only (no authorization-code exchange). Remove it from .env. Do not confuse it with GOOGLE_ADS_CLIENT_SECRET. |
 | `GOOGLE_REDIRECT_URI` | Not used: Google sign-in has no redirect (the Google button returns a token to the page). The Ads redirect is GOOGLE_ADS_REDIRECT_URI. |
-| `KEYWORD_RESEARCH_MODE` | Not used: Keyword Planner follows the Google Ads operating mode on the Integrations page. |
+| `KEYWORD_RESEARCH_MODE` | Not used: Keyword Planner follows the Google Ads connection on the Integrations page. |
+| `INTEGRATION_MODE` | Removed: there is no mock mode any more. Every integration is real; configure it on the Integrations page. |
+| `GOOGLE_ADS_MODE` | Removed: the app always talks to the real Google Ads API once it is configured; writes stay gated by the two safety keys. |
+| `PLACES_MODE` | Removed: Places is used as soon as its API key is saved on the Integrations page. |
+| `PAGESPEED_MODE` | Removed: PageSpeed is used as soon as it is configured on the Integrations page. |
+| `NOTIFIER_MODE` | Removed: alert emails are sent whenever SMTP_HOST is set. |
+| `CRAWLER_MODE` | Removed: the website crawler always fetches real pages (SSRF-guarded). |
+| `AI_PROVIDER` | Removed: Groq and Claude are used as soon as they are configured on the Integrations page. |
+| `GROQ_ENABLED` | Removed: configure Groq on the Integrations page (or GROQ_API_KEY / GROQ_MODEL). |
+| `MOCK_SEED` | Removed with the simulated world. |
+| `TEST_MODE` | Removed with the simulated clock and mock controls. |
 
 ### Read outside the backend
 

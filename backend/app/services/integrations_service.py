@@ -100,7 +100,7 @@ PROVIDERS: dict[str, dict] = {
     },
     "smtp": {
         "label": "Email alerts (SMTP)", "group": "System", "readonly": True,
-        "description": "Sends alert emails when NOTIFIER_MODE=real. Configured only through SMTP_* environment variables.",
+        "description": "Sends alert emails when SMTP_HOST is set. Configured only through SMTP_* environment variables.",
         "settings": {}, "secrets": {}, "required": [], "env_vars": ["SMTP_HOST"], "docs": "",
     },
     "google_login": {
@@ -128,7 +128,7 @@ PROVIDERS: dict[str, dict] = {
 
 STATUSES = ["NOT_CONNECTED", "CONFIGURATION_REQUIRED", "CONNECTED", "CONNECTION_FAILED", "AUTHORIZATION_EXPIRED",
             "SYNCHRONIZATION_REQUIRED"]
-MODES = ("mock", "read_only", "execution")
+MODES = ("read_only", "execution")
 
 
 # --------------------------------------------------------------------------------------------- store
@@ -278,6 +278,20 @@ def invalidate() -> None:
     registry.reset()
 
 
+def ensure_configured(provider: str) -> dict:
+    """Credentials for a provider, or IntegrationNotConfigured. The single gate every real adapter goes through:
+    no mock, no silent switch to another provider."""
+    from app.core.errors import IntegrationNotConfigured
+    spec = PROVIDERS[provider]
+    vals = resolve(provider)
+    gaps = readonly_missing(provider) if spec.get("readonly") else [k for k in spec["required"] if not vals.get(k)]
+    if vals.get("_disabled"):
+        raise IntegrationNotConfigured(provider, spec["label"], disabled=True)
+    if gaps:
+        raise IntegrationNotConfigured(provider, spec["label"], missing=gaps)
+    return vals
+
+
 def resolve(provider: str) -> dict:
     """Credentials for adapters (own short session; cached ~15s; cleared on every save/disconnect)."""
     hit = _cache.get(provider)
@@ -287,6 +301,7 @@ def resolve(provider: str) -> dict:
         row = _row(db, provider)
         vals = effective(provider, row)
         vals["_enabled"] = bool(row and row.enabled)
+        vals["_disabled"] = bool(row and row.status == "DISABLED")
         if PROVIDERS[provider].get("uses_google_client") or provider == "google_ads":
             if provider != "google_ads":
                 ads = effective("google_ads", _row(db, "google_ads"))
@@ -299,21 +314,18 @@ def resolve(provider: str) -> dict:
 # --------------------------------------------------------------------------------------------- operating mode
 def operating_mode(db: Session | None = None) -> str:
     from app.services import settings_service
-    mode = settings_service.get_value("operating_mode", "mock", db)
-    if mode == "mock" and get_settings().mode_for("GOOGLE_ADS") == "real":
-        return "read_only"  # legacy env switch means real reads, never writes
-    return mode if mode in MODES else "mock"
+    mode = settings_service.get_value("operating_mode", "read_only", db)
+    return mode if mode in MODES else "read_only"  # a retired value (e.g. the old "mock") is treated as read-only, never as writes
 
 
 def set_operating_mode(db: Session, mode: str, user_id: str | None) -> dict:
     from app.services import settings_service
     if mode not in MODES:
         raise ValidationFailed(f"mode must be one of {MODES}")
-    if mode != "mock":
+    if mode == "execution":
         row = _row(db, "google_ads")
         if not (row and row.enabled and row.last_test_ok):
-            raise ValidationFailed("Real modes need a Google Ads connection that has passed Test Connection and is enabled")
-    if mode == "execution":
+            raise ValidationFailed("Validated execution needs a Google Ads connection that has passed Test Connection and is enabled")
         s = get_settings()
         if not s.GOOGLE_ADS_WRITES_ENABLED:
             raise ValidationFailed("Validated Execution needs GOOGLE_ADS_WRITES_ENABLED=true in the server environment (key 1 of 2)")
@@ -330,13 +342,11 @@ def mode_summary(db: Session) -> dict:
     key1 = s.GOOGLE_ADS_WRITES_ENABLED
     key2 = bool(settings_service.get_value("real_writes_authorized", False, db))
     return {"mode": mode,
-            "label": {"mock": "Mock mode", "read_only": "Real account — read-only",
-                      "execution": "Validated execution"}[mode],
-            "real_reads": mode != "mock",
+            "label": {"read_only": "Real account — read-only", "execution": "Validated execution"}[mode],
+            "real_reads": True,
             "real_writes_possible": mode == "execution" and key1 and key2,
             "write_keys": {"environment_enabled": key1, "super_admin_authorized": key2},
             "explanation": {
-                "mock": "Everything runs against simulated data. Nothing can reach Google Ads.",
                 "read_only": "Real Google Ads data is read. Campaign writes are impossible in this mode.",
                 "execution": ("Real reads plus validated, approved writes. Campaigns are created PAUSED; enabling needs a "
                               "separate approval. Writes also need both safety keys.")}[mode]}
@@ -963,7 +973,7 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
     db.flush()
     invalidate()
     return {"provider": provider, "target": target, "ok": not steps.failed, "connected": bool(connected), "status": row.status, "steps": steps.items,
-            "subtests": subs, "tested_at": started.isoformat(), "mock": False}
+            "subtests": subs, "tested_at": started.isoformat()}
 
 
 def set_enabled(db: Session, provider: str, enabled: bool, user_id: str | None) -> IntegrationConfig:
@@ -977,8 +987,8 @@ def set_enabled(db: Session, provider: str, enabled: bool, user_id: str | None) 
         row.status = "CONNECTED"
     if not enabled and provider == "google_ads":
         from app.services import settings_service
-        if settings_service.get_value("operating_mode", "mock", db) != "mock":
-            settings_service.set_value(db, "operating_mode", "mock", user_id)  # fall back to safe mode
+        if settings_service.get_value("operating_mode", "read_only", db) != "read_only":
+            settings_service.set_value(db, "operating_mode", "read_only", user_id)  # fall back to the safe mode
     db.flush()
     invalidate()
     return row
@@ -1086,7 +1096,7 @@ def _readonly_info(provider: str) -> dict:
         u = urlparse(s.REDIS_URL)
         return {"host": u.hostname or "", "port": u.port}
     if provider == "smtp":
-        return {"host": s.SMTP_HOST, "port": s.SMTP_PORT, "login": bool(s.SMTP_USER), "from": s.SMTP_FROM, "notifier_mode": s.mode_for("NOTIFIER")}
+        return {"host": s.SMTP_HOST, "port": s.SMTP_PORT, "login": bool(s.SMTP_USER), "from": s.SMTP_FROM}
     if provider == "google_login":
         return {"auth_provider": s.AUTH_PROVIDER, "active": s.AUTH_PROVIDER == "google", "client_id_set": bool(s.GOOGLE_CLIENT_ID),
                 "bootstrap_admin_set": bool(s.BOOTSTRAP_ADMIN_EMAIL), "allowed_domains": s.allowed_login_domains}
@@ -1125,7 +1135,7 @@ def serialize(db: Session, provider: str) -> dict:
     if provider == "groq":
         info = {"primary_model": vals.get("model") or "", "challenger_model": vals.get("challenger_model") or "",
                 "challenger_falls_back": not vals.get("challenger_model"), "rate_limits": (row.discovered or {}).get("rate_limits") if row else None,
-                "active_in_app": registry_ai_active(), "env_activation": {"GROQ_ENABLED": bool(get_settings().GROQ_ENABLED), "AI_PROVIDER": get_settings().AI_PROVIDER}}
+                "active_in_app": registry_ai_active()}
     return {
         "provider": provider, "label": spec["label"], "group": spec["group"], "description": spec["description"],
         "status": status, "enabled": bool(row and row.enabled), "readonly": bool(spec.get("readonly")),
@@ -1148,8 +1158,13 @@ def serialize(db: Session, provider: str) -> dict:
 
 
 def registry_ai_active() -> bool:
-    from app.adapters import registry
-    return registry.get("ai").source == "LIVE"
+    """True when the app can actually use Groq (configured and not disabled)."""
+    from app.core.errors import IntegrationNotConfigured
+    try:
+        ensure_configured("groq")
+        return True
+    except IntegrationNotConfigured:
+        return False
 
 
 def health(db: Session) -> dict:

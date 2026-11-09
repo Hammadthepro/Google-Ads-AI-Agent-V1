@@ -9,14 +9,11 @@ EXAMPLE = pathlib.Path(__file__).resolve().parents[3] / ".env.example"
 
 
 def test_env_example_loads_with_safe_defaults(monkeypatch):
-    for key in ("APP_ENV", "INTEGRATION_MODE", "TEST_MODE", "GOOGLE_ADS_WRITES_ENABLED", "AI_PROVIDER", "AUTH_PROVIDER",
-                "AUTO_NEGATIVES_MODE", "GOOGLE_ADS_MODE", "EMERGENCY_BRAKE_WRITE_MODE", "GROQ_ENABLED"):
+    for key in ("APP_ENV", "GOOGLE_ADS_WRITES_ENABLED", "AUTH_PROVIDER", "AUTO_NEGATIVES_MODE", "EMERGENCY_BRAKE_WRITE_MODE"):
         monkeypatch.delenv(key, raising=False)
     s = Settings(_env_file=str(EXAMPLE))
-    assert s.INTEGRATION_MODE == "mock"
-    assert all(s.mode_for(n) == "mock" for n in ("GOOGLE_ADS", "KEYWORD_RESEARCH", "PLACES", "PAGESPEED", "NOTIFIER"))
     assert s.GOOGLE_ADS_WRITES_ENABLED is False
-    assert s.AUTH_PROVIDER == "mock" and s.AI_PROVIDER == "mock" and s.GROQ_ENABLED is False
+    assert s.AUTH_PROVIDER == "dev"
     assert s.AUTO_NEGATIVES_MODE == "shadow" and s.EMERGENCY_BRAKE_WRITE_MODE == "simulate"
 
 

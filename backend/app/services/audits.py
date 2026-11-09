@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
-from app.adapters.ai import label_keyword
+from app.services.keyword_labels import label_keyword
 from app.adapters.base import AdapterError
 from app.core import clock
 from app.core.util import from_micros, normalize_term

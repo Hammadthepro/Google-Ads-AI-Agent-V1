@@ -1,4 +1,5 @@
-"""AuthenticationProvider: MockAuthenticationProvider (dev login) and GoogleOIDCAuthenticationProvider.
+"""AuthenticationProvider: DevLoginAuthenticationProvider (local email login for existing users only; disabled in production)
+and GoogleOIDCAuthenticationProvider.
 
 Google sign-in is verified on the BACKEND (signature, audience, issuer, expiry, email_verified, domain).
 A frontend-only Google result is never trusted. App login never grants Google Ads access.
@@ -14,16 +15,21 @@ from app.core.errors import Unauthorized
 
 class AuthenticationProvider(ABC):
     name = "auth"
-    source = "MOCK"
+    source = "LIVE"
 
     @abstractmethod
     def verify(self, credential: dict) -> dict:
         """Return {email, name, sub} or raise Unauthorized."""
 
 
-class MockAuthenticationProvider(AuthenticationProvider):
-    name = "MockAuthenticationProvider"
-    source = "MOCK"
+
+
+class DevLoginAuthenticationProvider(AuthenticationProvider):
+    """Email-only sign-in for LOCAL development. It authenticates nobody new: auth_service.login only admits users that
+    already exist in the database (created with `python -m app.cli create-super-admin`). Refused when APP_ENV=production."""
+
+    name = "DevLoginAuthenticationProvider"
+    source = "DEV_LOGIN"
 
     def verify(self, credential: dict) -> dict:
         if get_settings().APP_ENV == "production":

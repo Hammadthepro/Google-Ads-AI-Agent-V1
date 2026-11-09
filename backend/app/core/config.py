@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Mode = Literal["mock", "real"]
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -36,8 +35,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=env_files(), env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True)
 
     APP_ENV: Literal["development", "test", "staging", "production"] = "development"
-    INTEGRATION_MODE: Mode = "mock"
-    TEST_MODE: bool = True
     LOG_LEVEL: str = "INFO"
 
     # Safety
@@ -46,14 +43,8 @@ class Settings(BaseSettings):
     AUTO_NEGATIVES_DAILY_LIMIT: int = 25
     EMERGENCY_BRAKE_WRITE_MODE: Literal["simulate", "disabled", "real"] = "simulate"
 
-    # Per-integration modes (blank -> INTEGRATION_MODE)
-    GOOGLE_ADS_MODE: Mode | None = None
-    PLACES_MODE: Mode | None = None
-    PAGESPEED_MODE: Mode | None = None
-    CRAWLER_MODE: Literal["fixture", "live"] = "fixture"
-    NOTIFIER_MODE: Mode | None = None
-    AUTH_PROVIDER: Literal["mock", "google"] = "mock"
-    AI_PROVIDER: Literal["mock", "groq"] = "mock"
+    # "dev" = email-only local login for users that already exist (refused in production); "google" = Google sign-in.
+    AUTH_PROVIDER: Literal["dev", "google"] = "dev"
 
     # Infrastructure
     DATABASE_URL: str = "postgresql+psycopg://app:app@localhost:5432/google_ads_agent"
@@ -85,21 +76,19 @@ class Settings(BaseSettings):
     PAGESPEED_API_KEY: str = ""
 
     # AI
-    GROQ_ENABLED: bool = False
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = ""
     GROQ_CHALLENGER_MODEL: str = ""
     ANTHROPIC_API_KEY: str = ""  # optional fallback for the Claude integration (model is set on the Integrations page)
 
-    # Email alerts (NOTIFIER_MODE=real)
+    # Email alerts (sent only when SMTP_HOST is set)
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "alerts@localhost"
 
-    # Mock / crawler
-    MOCK_SEED: int = 42
+    # Crawler
     CRAWLER_MAX_PAGES: int = 40
     CRAWLER_MAX_DEPTH: int = 2
     CRAWLER_TIMEOUT_SECONDS: float = 10.0
@@ -113,6 +102,11 @@ class Settings(BaseSettings):
             if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
                 v = v[1:-1].strip()
         return v
+
+    @field_validator("AUTH_PROVIDER", mode="before")
+    @classmethod
+    def _legacy_auth_provider(cls, v):
+        return "dev" if isinstance(v, str) and v.strip().lower() == "mock" else v  # old .env files
 
     @field_validator(*_ID_FIELDS, mode="after")
     @classmethod
@@ -131,23 +125,15 @@ class Settings(BaseSettings):
     def _production_guards(self) -> "Settings":
         if self.APP_ENV == "production":
             problems = []
-            if self.AUTH_PROVIDER == "mock":
-                problems.append("AUTH_PROVIDER=mock is not allowed in production")
-            if self.TEST_MODE:
-                problems.append("TEST_MODE=true is not allowed in production")
+            if self.AUTH_PROVIDER == "dev":
+                problems.append("AUTH_PROVIDER=dev is not allowed in production (use google)")
             if self.APP_SECRET_KEY.startswith("dev-") or len(self.APP_SECRET_KEY) < 32:
                 problems.append("APP_SECRET_KEY must be a strong secret in production")
             if problems:
                 raise ValueError("; ".join(problems))
-        if self.AI_PROVIDER == "groq" and not self.GROQ_ENABLED:
-            raise ValueError("AI_PROVIDER=groq requires GROQ_ENABLED=true")
         if self.AUTH_PROVIDER == "google" and not self.GOOGLE_CLIENT_ID:
             raise ValueError("AUTH_PROVIDER=google requires GOOGLE_CLIENT_ID (nobody could sign in otherwise)")
         return self
-
-    def mode_for(self, name: str) -> Mode:
-        value = getattr(self, f"{name}_MODE", None)
-        return value or self.INTEGRATION_MODE
 
     @property
     def cors_origins(self) -> list[str]:
@@ -161,15 +147,10 @@ class Settings(BaseSettings):
         """Safe, secret-free view of the configuration."""
         return {
             "app_env": self.APP_ENV,
-            "integration_mode": self.INTEGRATION_MODE,
-            "test_mode": self.TEST_MODE,
             "google_ads_writes_enabled": self.GOOGLE_ADS_WRITES_ENABLED,
             "auto_negatives_mode": self.AUTO_NEGATIVES_MODE,
             "emergency_brake_write_mode": self.EMERGENCY_BRAKE_WRITE_MODE,
             "auth_provider": self.AUTH_PROVIDER,
-            "ai_provider": self.AI_PROVIDER,
-            "crawler_mode": self.CRAWLER_MODE,
-            "modes": {n: self.mode_for(n) for n in ("GOOGLE_ADS", "PLACES", "PAGESPEED", "NOTIFIER")},
             "groq_model_configured": bool(self.GROQ_MODEL),
             "groq_key_configured": bool(self.GROQ_API_KEY),
         }

@@ -96,7 +96,7 @@ def northside():
 
 def test_audit_report_has_five_sections_scores_and_evidence(northside):
     admin, client, rep = northside
-    assert rep["status"] == "COMPLETED" and rep["version"] >= 1
+    assert rep["status"] == "COMPLETED" and rep["version"] >= 1, rep.get("error")
     assert set(rep["sections"]) == {"client", "website", "gbp", "competitors", "keywords"}
     ev = {"VERIFIED", "ESTIMATED", "AI_GENERATED", "UNAVAILABLE", "NOT_APPLICABLE"}
     allf = [f for s in rep["sections"].values() for f in s["findings"]]

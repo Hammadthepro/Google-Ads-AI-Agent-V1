@@ -29,8 +29,6 @@ def _v(name, group, need, purpose, used_by, *, secret=False, when="", default=""
 REGISTRY: list[dict] = [
     # ---- core
     _v("APP_ENV", "Core", "optional", "development | test | staging | production. production switches on the safety guards.", "core/config.py, main.py", default="development", allowed=["development", "test", "staging", "production"]),
-    _v("INTEGRATION_MODE", "Core", "optional", "Default mode for every integration: mock (simulated) or real. Real reads still need the Integrations page.", "core/config.py (mode_for)", default="mock", allowed=["mock", "real"]),
-    _v("TEST_MODE", "Core", "optional", "Enables the simulated clock and mock controls. Must be false in production.", "core/clock.py, api/routers/ops.py", default="true", allowed=["true", "false"]),
     _v("LOG_LEVEL", "Core", "optional", "Python log level.", "main.py", default="INFO", allowed=["DEBUG", "INFO", "WARNING", "ERROR"]),
     # ---- safety
     _v("GOOGLE_ADS_WRITES_ENABLED", "Safety", "optional", "Key 1 of 2 for real Google Ads writes. Keep false until you are ready; a Super Admin must also authorise.", "services/safety.py, integrations_service.py", default="false", allowed=["true", "false"]),
@@ -38,13 +36,7 @@ REGISTRY: list[dict] = [
     _v("AUTO_NEGATIVES_DAILY_LIMIT", "Safety", "optional", "Maximum automatic negatives per day.", "services/optimization.py", default="25"),
     _v("EMERGENCY_BRAKE_WRITE_MODE", "Safety", "optional", "simulate | disabled | real — what the emergency brake does to Google Ads.", "services/emergency.py, safety.py", default="simulate", allowed=["simulate", "disabled", "real"]),
     # ---- per integration modes
-    _v("GOOGLE_ADS_MODE", "Modes", "optional", "Legacy switch: real = real READ-ONLY Google Ads (never writes). The Integrations page operating mode is preferred.", "integrations_service.py (operating_mode)", allowed=["mock", "real"]),
-    _v("PLACES_MODE", "Modes", "optional", "real = use the Places API even if not enabled on the Integrations page.", "adapters/registry.py", allowed=["mock", "real"]),
-    _v("PAGESPEED_MODE", "Modes", "optional", "real = use the PageSpeed API even if not enabled on the Integrations page.", "adapters/registry.py", allowed=["mock", "real"]),
-    _v("NOTIFIER_MODE", "Modes", "optional", "real = send alert emails through SMTP.", "adapters/registry.py", allowed=["mock", "real"]),
-    _v("CRAWLER_MODE", "Modes", "optional", "fixture (bundled demo pages) or live (fetch real websites, SSRF-guarded).", "adapters/registry.py", default="fixture", allowed=["fixture", "live"]),
-    _v("AUTH_PROVIDER", "Login", "optional", "mock = pick a demo user (never allowed in production); google = Google sign-in.", "adapters/registry.py, auth_users.py", default="mock", allowed=["mock", "google"]),
-    _v("AI_PROVIDER", "AI", "optional", "mock or groq. groq also needs GROQ_ENABLED=true. (Claude and Groq can also be enabled on the Integrations page.)", "adapters/registry.py", default="mock", allowed=["mock", "groq"]),
+    _v("AUTH_PROVIDER", "Login", "optional", "dev = email login for users that already exist (local development only; never allowed in production); google = Google sign-in.", "adapters/registry.py, auth_users.py", default="dev", allowed=["dev", "google"]),
     # ---- infrastructure
     _v("DATABASE_URL", "Infrastructure", "required", "PostgreSQL connection string (local Postgres or the Supabase Session Pooler).", "db/session.py, migrations", secret=True),
     _v("COMPOSE_DATABASE_URL", "Infrastructure", "optional", "Docker Compose / Codespaces only: DATABASE_URL for the containers (blank = the bundled postgres).", "docker-compose.yml", secret=True),
@@ -71,19 +63,17 @@ REGISTRY: list[dict] = [
     _v("GOOGLE_PLACES_API_KEY", "Website research", "optional", "Places API (New) key for competitor and Business Profile research.", "integrations_service.py", secret=True),
     _v("PAGESPEED_API_KEY", "Website research", "optional", "PageSpeed Insights key (works without one at a low quota).", "integrations_service.py", secret=True),
     # ---- AI
-    _v("GROQ_ENABLED", "AI (Groq)", "optional", "true lets the env path use Groq. Needs AI_PROVIDER=groq, GROQ_API_KEY and GROQ_MODEL.", "adapters/registry.py", default="false", allowed=["true", "false"]),
     _v("GROQ_API_KEY", "AI (Groq)", "conditional", "Groq API key (starts with gsk_).", "integrations_service.py", secret=True, when="Groq is used"),
     _v("GROQ_MODEL", "AI (Groq)", "conditional", "Groq model that writes drafts and explanations. Exact Groq model ID.", "adapters/ai/__init__.py", when="Groq is used"),
     _v("GROQ_CHALLENGER_MODEL", "AI (Groq)", "optional", "Groq model that critiques plans. Blank = GROQ_MODEL (no independent second opinion).", "adapters/ai/__init__.py"),
     _v("ANTHROPIC_API_KEY", "AI (Claude)", "optional", "Fallback key for the Claude integration (model is chosen on the Integrations page; default claude-opus-5-5).", "integrations_service.py", secret=True),
     # ---- email
-    _v("SMTP_HOST", "Email", "conditional", "SMTP server for alert emails.", "adapters/notifications", when="NOTIFIER_MODE=real"),
+    _v("SMTP_HOST", "Email", "conditional", "SMTP server for alert emails.", "adapters/notifications", when="alert emails are wanted"),
     _v("SMTP_PORT", "Email", "optional", "SMTP port (STARTTLS).", "adapters/notifications", default="587"),
     _v("SMTP_USER", "Email", "optional", "SMTP username (blank = no login).", "adapters/notifications"),
     _v("SMTP_PASSWORD", "Email", "optional", "SMTP password.", "adapters/notifications", secret=True),
     _v("SMTP_FROM", "Email", "optional", "From address for alert emails.", "adapters/notifications", default="alerts@localhost"),
-    # ---- mock / crawler
-    _v("MOCK_SEED", "Mock & crawler", "optional", "Seed for the deterministic simulated world.", "mock_world/simulator.py", default="42"),
+    # ---- crawler
     _v("CRAWLER_MAX_PAGES", "Mock & crawler", "optional", "Pages crawled per website.", "services/crawler_service.py", default="40"),
     _v("CRAWLER_MAX_DEPTH", "Mock & crawler", "optional", "Link depth crawled.", "services/crawler_service.py", default="2"),
     _v("CRAWLER_TIMEOUT_SECONDS", "Mock & crawler", "optional", "Per-request crawler timeout.", "adapters/crawler/__init__.py", default="10"),
@@ -95,7 +85,17 @@ RETIRED = {
     "GOOGLE_ADS_DEVELOPER_TOKEN": "Not needed: Google sunset developer tokens on 2026-09-09. API access is now tied to the Google Cloud project that owns your OAuth client (see the Google Ads API overview page in Cloud Console). The app no longer sends or requires it. Remove it from .env.",
     "GOOGLE_CLIENT_SECRET": "Not used: sign-in verifies Google ID tokens with the client ID only (no authorization-code exchange). Remove it from .env. Do not confuse it with GOOGLE_ADS_CLIENT_SECRET.",
     "GOOGLE_REDIRECT_URI": "Not used: Google sign-in has no redirect (the Google button returns a token to the page). The Ads redirect is GOOGLE_ADS_REDIRECT_URI.",
-    "KEYWORD_RESEARCH_MODE": "Not used: Keyword Planner follows the Google Ads operating mode on the Integrations page.",
+    "KEYWORD_RESEARCH_MODE": "Not used: Keyword Planner follows the Google Ads connection on the Integrations page.",
+    "INTEGRATION_MODE": "Removed: there is no mock mode any more. Every integration is real; configure it on the Integrations page.",
+    "GOOGLE_ADS_MODE": "Removed: the app always talks to the real Google Ads API once it is configured; writes stay gated by the two safety keys.",
+    "PLACES_MODE": "Removed: Places is used as soon as its API key is saved on the Integrations page.",
+    "PAGESPEED_MODE": "Removed: PageSpeed is used as soon as it is configured on the Integrations page.",
+    "NOTIFIER_MODE": "Removed: alert emails are sent whenever SMTP_HOST is set.",
+    "CRAWLER_MODE": "Removed: the website crawler always fetches real pages (SSRF-guarded).",
+    "AI_PROVIDER": "Removed: Groq and Claude are used as soon as they are configured on the Integrations page.",
+    "GROQ_ENABLED": "Removed: configure Groq on the Integrations page (or GROQ_API_KEY / GROQ_MODEL).",
+    "MOCK_SEED": "Removed with the simulated world.",
+    "TEST_MODE": "Removed with the simulated clock and mock controls.",
 }
 # Read by the frontend dev server / Docker tooling, not by the backend.
 EXTERNAL = {"VITE_API_TARGET": "Vite dev server: where /api is proxied (default http://localhost:8000).", "CODESPACES": "Set by GitHub Codespaces; read by scripts/start-demo.sh.",
@@ -195,7 +195,7 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
             continue
         if v["allowed"] and val.lower() not in [a.lower() for a in v["allowed"]]:
             add("error", k, f"Invalid value; allowed: {', '.join(v['allowed'])}.", "Fix the value.")
-        if k in ("AUTO_NEGATIVES_DAILY_LIMIT", "SESSION_TTL_HOURS", "RATE_LIMIT_PER_MINUTE", "AUTH_RATE_LIMIT_PER_MINUTE", "MOCK_SEED", "CRAWLER_MAX_PAGES",
+        if k in ("AUTO_NEGATIVES_DAILY_LIMIT", "SESSION_TTL_HOURS", "RATE_LIMIT_PER_MINUTE", "AUTH_RATE_LIMIT_PER_MINUTE", "CRAWLER_MAX_PAGES",
                  "CRAWLER_MAX_DEPTH", "SMTP_PORT") and not val.isdigit():
             add("error", k, "Must be a whole number.", "Fix the value.")
         if k == "CRAWLER_TIMEOUT_SECONDS":
@@ -206,8 +206,6 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
     # -- safety posture
     if flag("GOOGLE_ADS_WRITES_ENABLED"):
         add("warn", "GOOGLE_ADS_WRITES_ENABLED", "Key 1 of 2 for REAL Google Ads writes is ON. Writes still need Validated-execution mode and a Super Admin authorisation.", "Set false unless you are deliberately enabling writes.")
-    if g("INTEGRATION_MODE").lower() == "real":
-        add("warn", "INTEGRATION_MODE", "Default mode is real.", "Use mock until each integration has passed its connection test.")
     if g("EMERGENCY_BRAKE_WRITE_MODE").lower() == "real":
         add("warn", "EMERGENCY_BRAKE_WRITE_MODE", "The emergency brake may change real campaigns.", "Use simulate.")
     if g("AUTO_NEGATIVES_MODE").lower() == "active":
@@ -226,10 +224,8 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
             add("error", "APP_SECRET_KEY", "Production needs a random secret of 32+ characters.", 'python -c "import secrets; print(secrets.token_urlsafe(48))"')
         if not tek:
             add("error", "TOKEN_ENCRYPTION_KEY", "Required in production.", "Generate a Fernet key (see .env.example).")
-        if g("AUTH_PROVIDER").lower() in ("", "mock"):
-            add("error", "AUTH_PROVIDER", "mock login is not allowed in production.", "Set AUTH_PROVIDER=google.")
-        if g("TEST_MODE").lower() in TRUE or not g("TEST_MODE"):
-            add("error", "TEST_MODE", "TEST_MODE must be false in production.", "Set TEST_MODE=false.")
+        if g("AUTH_PROVIDER").lower() in ("", "dev", "mock"):
+            add("error", "AUTH_PROVIDER", "dev login is not allowed in production.", "Set AUTH_PROVIDER=google.")
         if not flag("SESSION_COOKIE_SECURE"):
             add("error", "SESSION_COOKIE_SECURE", "Must be true in production (HTTPS-only cookie).", "Set true.")
     elif weak and not tek:
@@ -255,7 +251,8 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
         elif k == "DATABASE_URL" and p.password and any(c in g(k)[len(p.scheme) + 3:].rsplit("@", 1)[0].split(":", 1)[-1] for c in "/#?"):
             add("warn", k, "The password contains / # or ? unencoded, which breaks the URL.", "Percent-encode special characters (@ → %40, / → %2F).")
     # -- app login
-    ap = (g("AUTH_PROVIDER") or "mock").lower()
+    ap = (g("AUTH_PROVIDER") or "dev").lower()
+    ap = "dev" if ap == "mock" else ap
     cid, ads_cid = g("GOOGLE_CLIENT_ID"), g("GOOGLE_ADS_CLIENT_ID")
     if ap == "google":
         if not cid:
@@ -264,7 +261,7 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
             add("warn", "BOOTSTRAP_ADMIN_EMAIL", "No bootstrap admin: only users already in the database can sign in.", "Set it to the first admin's Google email (or run python -m app.cli create-super-admin EMAIL).")
     else:
         if cid:
-            add("info", "GOOGLE_CLIENT_ID", "Set, but ignored while AUTH_PROVIDER=mock (the demo user picker is shown).", "Set AUTH_PROVIDER=google to use Google sign-in.")
+            add("info", "GOOGLE_CLIENT_ID", "Set, but ignored while AUTH_PROVIDER=dev (email login for existing users).", "Set AUTH_PROVIDER=google to use Google sign-in.")
         if g("BOOTSTRAP_ADMIN_EMAIL"):
             add("info", "BOOTSTRAP_ADMIN_EMAIL", "Only used with AUTH_PROVIDER=google.", "")
     if cid and not cid.endswith(".apps.googleusercontent.com"):
@@ -292,14 +289,8 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
         add("warn", "GOOGLE_ADS_CUSTOMER_ID", "Same ID as GOOGLE_ADS_LOGIN_CUSTOMER_ID: that is the manager account, which holds no campaigns, so campaigns could not be read.", "Set GOOGLE_ADS_CUSTOMER_ID to a client account under the manager (or leave it blank and discover accounts).")
     if cust and not mcc:
         add("info", "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Blank. Needed only if this client account is accessed through a manager (MCC); leave blank for a directly accessible account.", "")
-    if g("GOOGLE_ADS_MODE").lower() == "real" and not all(g(k) for k in ads_vars):
-        add("error", "GOOGLE_ADS_MODE", "real needs the OAuth client ID, client secret and refresh token.", "Fill them in or set GOOGLE_ADS_MODE blank.")
     # -- groq
-    groq_in_use = flag("GROQ_ENABLED") or ap == "groq" or bool(g("GROQ_API_KEY") or g("GROQ_MODEL"))
-    if (g("AI_PROVIDER") or "mock").lower() == "groq" and not flag("GROQ_ENABLED"):
-        add("error", "GROQ_ENABLED", "AI_PROVIDER=groq requires GROQ_ENABLED=true (the app refuses to start otherwise).", "Set GROQ_ENABLED=true.")
-    if flag("GROQ_ENABLED") and (g("AI_PROVIDER") or "mock").lower() != "groq":
-        add("warn", "AI_PROVIDER", "GROQ_ENABLED=true has no effect until AI_PROVIDER=groq (or Groq is enabled on the Integrations page).", "Set AI_PROVIDER=groq.")
+    groq_in_use = bool(g("GROQ_API_KEY") or g("GROQ_MODEL"))
     if groq_in_use:
         if not g("GROQ_API_KEY"):
             add("error", "GROQ_API_KEY", "Groq is configured but there is no API key; the model name alone does nothing.", "Create a key at console.groq.com → API Keys (or enter it on the Integrations page).")
@@ -320,8 +311,8 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
     if groq_in_use and not g("GROQ_CHALLENGER_MODEL"):
         add("info", "GROQ_CHALLENGER_MODEL", "Blank: the challenger falls back to GROQ_MODEL.", "Optional but recommended: set a different model.")
     # -- email
-    if (g("NOTIFIER_MODE") or g("INTEGRATION_MODE")).lower() == "real" and not g("SMTP_HOST"):
-        add("error", "SMTP_HOST", "Real notifications need an SMTP host.", "Set SMTP_HOST (and SMTP_USER / SMTP_PASSWORD).")
+    if (g("SMTP_USER") or g("SMTP_PASSWORD")) and not g("SMTP_HOST"):
+        add("error", "SMTP_HOST", "SMTP credentials are set but there is no SMTP host, so no alert email can be sent.", "Set SMTP_HOST.")
     # -- rows
     rows = []
     for v in REGISTRY:
@@ -338,7 +329,7 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
                      "default": "", "used": False, "used_by": "—", "status": "warn" if g(k) else "ok", "notes": [why] if g(k) else [], "actions": ["Remove from .env."] if g(k) else []})
     counts = {lvl: sum(1 for p in problems if p["level"] == lvl) for lvl in ("error", "warn", "info")}
     return {"files": files or [], "rows": rows, "problems": problems, "counts": counts, "ok": counts["error"] == 0,
-            "mode": {"app_env": env, "auth_provider": ap, "integration_mode": g("INTEGRATION_MODE") or "mock", "real_writes_key1": flag("GOOGLE_ADS_WRITES_ENABLED"),
+            "mode": {"app_env": env, "auth_provider": ap, "real_writes_key1": flag("GOOGLE_ADS_WRITES_ENABLED"),
                      "emergency_mode": g("EMERGENCY_BRAKE_WRITE_MODE") or "simulate"}}
 
 
@@ -350,7 +341,7 @@ def _needed(k: str, g, flag, ap: str, groq: bool, prod: bool) -> bool:
     if k in ("GROQ_API_KEY", "GROQ_MODEL"):
         return groq
     if k == "SMTP_HOST":
-        return (g("NOTIFIER_MODE") or g("INTEGRATION_MODE")).lower() == "real"
+        return False
     if k in ("APP_SECRET_KEY", "TOKEN_ENCRYPTION_KEY"):
         return prod
     if k.startswith("GOOGLE_ADS_"):
@@ -361,7 +352,7 @@ def _needed(k: str, g, flag, ap: str, groq: bool, prod: bool) -> bool:
 # -------------------------------------------------------------------------------------------------- populate .env
 # Never copied from the environment unless the value is the safe one: the test environment stays a test environment.
 SAFE_VALUES = {"GOOGLE_ADS_WRITES_ENABLED": {"false"}, "EMERGENCY_BRAKE_WRITE_MODE": {"simulate", "disabled"}, "AUTO_NEGATIVES_MODE": {"shadow"},
-               "TEST_MODE": {"true"}, "INTEGRATION_MODE": {"mock"}, "AUTH_PROVIDER": {"mock"}, "APP_ENV": {"development", "test"}}
+               "AUTH_PROVIDER": {"dev"}, "APP_ENV": {"development", "test"}}
 
 
 def _quote(v: str) -> str:
@@ -448,7 +439,7 @@ def render_populate(res: dict, path: str) -> str:
 def render(report: dict, *, brief: bool = False) -> str:
     out = []
     m = report["mode"]
-    out.append(f"Environment audit — app env: {m['app_env']} · login: {m['auth_provider']} · default mode: {m['integration_mode']} · "
+    out.append(f"Environment audit — app env: {m['app_env']} · login: {m['auth_provider']} · "
                f"real-write key 1: {'ON' if m['real_writes_key1'] else 'off'} · emergency brake: {m['emergency_mode']}")
     out.append("File(s) read: " + (", ".join(report["files"]) or "none (process environment only)"))
     if not brief:

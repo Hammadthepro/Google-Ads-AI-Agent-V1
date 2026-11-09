@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.core import clock
 from app.models import Campaign, Client, Operation, Recommendation, SearchTermRow
 from app.services import optimization
 from tests.conftest import ADMIN, MANAGER, SUPER, Api
@@ -128,7 +127,7 @@ def test_weekly_report_numbers_and_diagnosis():
     assert "open_fixes" in rep["sections"] and "wasted_spend" in rep["sections"]
 
 
-def test_experiment_workflow_human_picks_winner(db):
+def test_experiment_workflow_human_picks_winner(db, sim_clock):
     admin, mgr, sup = Api(ADMIN), Api(MANAGER), Api(SUPER)
     camp = db.scalar(select(Campaign).where(Campaign.name == "Plumbing | Drain Cleaning & Water Heaters | Search"))
     r = mgr.post("/experiments", {"campaign_id": camp.id, "variable": "AD_ANGLE", "hypothesis": "Speed angle beats price angle",
@@ -144,9 +143,8 @@ def test_experiment_workflow_human_picks_winner(db):
     assert admin.post(f"/experiments/{exp['id']}/select-winner", {"arm": "treatment"}).status_code == 422  # not enough data
     sup.patch("/settings", {"key": "experiments.min_clicks_per_arm", "value": 5})
     sup.patch("/settings", {"key": "experiments.min_conversions_per_arm", "value": 0})
-    offset_before = clock.now()
     try:
-        assert sup.post("/dev/mock/advance-time", {"days": 3}).status_code == 200
+        sim_clock.advance_days(3)
         res = admin.get(f"/experiments/{exp['id']}/results").json()
         assert set(res["results"]["arms"]) == {"control", "treatment"} and res["results"]["enough_data"] is True
         assert res["experiment"]["status"] == "AWAITING_WINNER"  # never auto-completed
@@ -159,11 +157,8 @@ def test_experiment_workflow_human_picks_winner(db):
         done = [e for e in admin.get("/experiments").json() if e["id"] == exp["id"]][0]
         assert done["status"] == "COMPLETED" and done["winner_arm"] == "treatment"
     finally:
-        from app.core import clock as c
-        c.reset()
         sup.patch("/settings", {"key": "experiments.min_clicks_per_arm", "value": 100})
         sup.patch("/settings", {"key": "experiments.min_conversions_per_arm", "value": 10})
-    assert clock.now().date() <= offset_before.date()
 
 
 def test_learning_loop_playbook_feedback_and_regression():
