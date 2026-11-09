@@ -1,5 +1,5 @@
 # Google Ads AI Agent V1 — common commands
-.PHONY: up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint
+.PHONY: up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint live-tests
 
 up:            ## build and start everything with Docker Compose (mock mode)
 	docker compose up --build -d
@@ -26,3 +26,6 @@ e2e:           ## browser test against a running stack (default http://localhost
 	NODE_PATH=$$(npm root -g) node e2e/ui-smoke.mjs
 lint:
 	cd backend && .venv/bin/ruff check app tests --select F,E9
+
+live-tests:    ## real-API tests (read-only); report PASSED / NOT CONFIGURED / BLOCKED
+	bash scripts/live-tests.sh
