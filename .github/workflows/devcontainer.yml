@@ -40,7 +40,7 @@ jobs:
             docker compose exec -T backend python -m app.cli create-super-admin ci-check@example.com
             curl -fsS -X POST http://localhost:5173/api/v1/auth/dev-login -H 'Content-Type: application/json' \
               -d '{"email":"ci-check@example.com"}' | grep -q '"role":"SUPER_ADMIN"'
-            curl -fsS -X POST http://localhost:5173/api/v1/auth/dev-login -H 'Content-Type: application/json' \
+            curl -sS -X POST http://localhost:5173/api/v1/auth/dev-login -H 'Content-Type: application/json' \
               -d '{"email":"nobody@example.com"}' | grep -q 'not been invited'
             docker compose exec -T backend alembic current | grep -q '(head)'
             grep -q '^GOOGLE_ADS_WRITES_ENABLED=false' .env
