@@ -89,8 +89,8 @@ function ProviderFacts({ item }: { item: any }) {
         <Row label="Developer token"><span className="text-slate-600">Not required — Google sunset developer tokens on 2026-09-09</span></Row>
         <Row label="Google Cloud project">{i.cloud_project_number ? <>#{i.cloud_project_number} · <a className="text-brand-700 underline" href={i.console_url} target="_blank" rel="noreferrer">API overview</a></> : "—"}</Row>
         <Row label="Google Ads API access">{a.api_enabled === true ? "Enabled for the project" : a.api_enabled === false ? <span className="text-rose-700">Not enabled</span> : "Not tested"} · level: <b>{a.level === "production" ? "Production (Explorer/Basic/Standard)" : a.level === "test" ? "Test only" : a.level === "test-or-higher" ? "Test account read (production not proven)" : a.level ?? "unknown"}</b></Row>
-        <Row label="Manager account (MCC)">{i.manager_id_set ? (i.manager ? `${i.manager.name || i.manager.id} (${i.manager.id})` : "ID set — not verified") : "Not configured (optional)"}</Row>
-        <Row label="Client account">{i.client_id_set ? (i.client ? `${i.client.name || i.client.id} (${i.client.id})${i.client.test_account ? " · test account" : ""}` : "ID set — not verified") : <span className="text-amber-800">Not configured — required to be Connected</span>}</Row>
+        <Row label="Manager account (MCC)">{i.manager_id_set ? "Chosen — see “Choose manager account” below" : <span className="text-amber-800">Not chosen yet</span>}</Row>
+        <Row label="Enabled managers found">{(i.managers ?? []).filter((m: any) => m.status === "ENABLED").length ? (i.managers as any[]).filter((m: any) => m.status === "ENABLED").map((m: any) => `${m.name || m.customer_id} (${m.customer_id})`).join(", ") : <span className="text-amber-800">none found in the last test</span>}</Row>
         <Row label="Accounts this Google user can reach directly">{(item.discovered?.accessible_customers ?? []).length ? (item.discovered.accessible_customers as string[]).join(", ") : "—"}</Row>
         <Row label="Last successful connection test">{item.last_success_at ? dt(item.last_success_at) : "Never"}</Row>
         {a.basis && <p className="mt-2 text-xs text-slate-500">{a.basis}</p>}
@@ -123,6 +123,41 @@ function ProviderFacts({ item }: { item: any }) {
   );
 }
 
+function ManagerPicker({ canManage }: { canManage: boolean }) {
+  const status = useQuery({ queryKey: ["gads-status"], queryFn: () => api.get("/google-ads/status") });
+  const [load, setLoad] = useState(false);
+  const managers = useQuery({ queryKey: ["gads-managers"], enabled: load, retry: false, queryFn: () => api.get("/google-ads/managers") });
+  const KEYS = [["gads-status"], ["gads-accounts"], ["gads-managers"], ["integrations"], ["gads-selection"]];
+  const choose = useAction((customer_id: string) => api.put("/google-ads/manager", { customer_id }), KEYS);
+  const refresh = useAction(() => api.post("/google-ads/accounts/refresh"), KEYS);
+  const st = status.data;
+  return (
+    <div className="mt-4 space-y-3 border-t border-slate-100 pt-4" aria-label="Manager account">
+      <div className="text-sm font-semibold text-slate-800">Manager account (MCC) and client accounts</div>
+      <p className="text-xs text-slate-500">Connect with OAuth above, choose the manager account, then the app lists every client account below it. No customer IDs go in .env.</p>
+      {st?.manager_customer_id && <div className="text-sm">Selected manager: <b>{st.manager_name || st.manager_customer_id}</b> <span className="font-mono text-xs">({st.manager_customer_id})</span> · {st.client_accounts} client account(s){st.accounts_discovered_at ? ` · refreshed ${dt(st.accounts_discovered_at)}` : " · not refreshed yet"}</div>}
+      {canManage && <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => setLoad(true)} disabled={managers.isFetching}>{managers.isFetching ? "Loading…" : "Choose manager account"}</Button>
+        {st?.manager_customer_id && <Button size="sm" variant="primary" onClick={() => refresh.mutate({})} disabled={refresh.isPending}>{refresh.isPending ? "Discovering…" : "Discover client accounts"}</Button>}
+      </div>}
+      <ErrorBox error={managers.error || choose.error || refresh.error} />
+      {refresh.data && <Notice tone={refresh.data.errors?.length ? "amber" : "green"}>{refresh.data.found} account(s) found. <a className="underline" href="/accounts">Open the account selector</a>.</Notice>}
+      {managers.data && (
+        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200" aria-label="Accessible accounts">
+          {managers.data.candidates.map((m: any) => (
+            <li key={m.customer_id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+              <div><span className="font-medium">{m.descriptive_name || "(no name)"}</span> <span className="font-mono text-xs text-slate-500">{m.customer_id_display}</span>
+                <div className="text-xs text-slate-500">{m.is_manager ? "Manager (MCC)" : m.is_manager === false ? "Client account" : "Unknown"} · {m.status}{m.test_account ? " · test account" : ""}{m.note ? ` · ${m.note}` : ""}</div></div>
+              {m.selected ? <Badge tone="blue">selected</Badge> : <Button size="sm" disabled={!m.selectable || choose.isPending} onClick={() => choose.mutate(m.customer_id)}>Use as manager</Button>}
+            </li>
+          ))}
+          {managers.data.candidates.length === 0 && <li className="px-3 py-3 text-sm text-slate-500">This Google user cannot reach any Google Ads account.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: boolean; resultOf?: any }) {
   const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
   const [open, setOpen] = useState(["google_ads", "groq", "pagespeed"].includes(item.provider));
@@ -148,6 +183,7 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
       {item.last_error && d.label === "Connection failed" && <div className="mt-3"><Notice tone="red"><b>Last error:</b> {item.last_error}</Notice></div>}
       {open && <ProviderFacts item={item} />}
       {open && <SubtestRows item={item} busy={test.isPending} canManage={canManage} run={(t) => test.mutate(t)} />}
+      {open && item.provider === "google_ads" && !item.missing.length && <ManagerPicker canManage={canManage} />}
       {open && hasFields && (
         <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
           <div className="grid gap-3 md:grid-cols-2">

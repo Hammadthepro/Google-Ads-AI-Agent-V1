@@ -36,6 +36,18 @@ export function SafetyBanner() {
   );
 }
 
+function SelectedAccountChip() {
+  const { data } = useQuery({ queryKey: ["gads-selection"], queryFn: () => api.get("/google-ads/selection"), staleTime: 15_000, retry: false });
+  const s = data?.selected;
+  return (
+    <NavLink to="/accounts" className="mx-3 mb-2 block rounded-lg border border-slate-200 px-3 py-2 text-xs hover:bg-slate-50" title="Switch Google Ads account">
+      <div className="text-[10px] uppercase tracking-wide text-slate-400">Google Ads account</div>
+      <div className="truncate font-medium text-slate-800">{s ? (s.name || s.customer_id) : "None selected"}</div>
+      {s && <div className="font-mono text-slate-500">{s.customer_id_display ?? s.customer_id}</div>}
+    </NavLink>
+  );
+}
+
 export default function Layout() {
   const { user, logout } = useAuth();
   return (
@@ -59,6 +71,7 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
+          <SelectedAccountChip />
           {user && (
             <div className="border-t border-slate-100 px-4 py-3 text-xs">
               <div className="truncate font-medium text-slate-800">{user.name || user.email}</div>

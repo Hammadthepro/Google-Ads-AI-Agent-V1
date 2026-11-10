@@ -3,13 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
+import AccountSelector from "../components/AccountSelector";
 import { Badge, Button, Card, DataSourceBadge, dt, ErrorBox, Notice, PageHeader, Select, Spinner, StatusBadge, Table } from "../components/ui";
 
 export default function Accounts() {
   const { can } = useAuth();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.get("/ads-accounts") });
   const clients = useClients();
-  const discover = useAction(() => api.post("/ads-accounts/discover"), [["accounts"]]);
   const link = useAction(({ id, client_id }) => api.post(`/ads-accounts/${id}/link`, { client_id: client_id || null }), [["accounts"]]);
   const sync = useAction((id) => api.post(`/ads-accounts/${id}/sync`), [["accounts"]]);
   const [clientId, setClientId] = useState("");
@@ -17,14 +17,16 @@ export default function Accounts() {
   const nameOf = (id: string) => clients.data?.find((c: any) => c.id === id)?.name;
   return (
     <div className="space-y-6">
-      <PageHeader title="Google Ads Accounts" subtitle="Accounts reachable through the connected Google Ads login. Linking an account to a client never changes anything in Google Ads."
-        actions={can("clients.edit") && <Button variant="primary" onClick={() => discover.mutate({})} disabled={discover.isPending}>{discover.isPending ? "Discovering…" : "Discover accessible accounts"}</Button>} />
+      <PageHeader title="Google Ads Accounts" subtitle="Client accounts discovered below your manager (MCC). Selecting or linking an account to a client never changes anything in Google Ads."
+        />
       <Notice tone="blue">Accounts come from your connected Google Ads login (configure it on the <a className="underline" href="/integrations">Integrations page</a>). The app stays read-only until real writes are explicitly authorized.</Notice>
-      <ErrorBox error={discover.error || link.error || sync.error} />
-      <Card title="Accounts">
+      <AccountSelector canRefresh={can("clients.edit")} />
+      <ErrorBox error={link.error || sync.error} />
+      <Card title="Link accounts to clients">
         {accounts.isLoading ? <Spinner /> : (
           <Table rows={accounts.data ?? []} columns={[
-            { key: "customer_id", label: "Customer ID", render: (a) => <span className="font-mono text-xs">{a.customer_id}</span> },
+            { key: "customer_id", label: "Customer ID", render: (a) => <span className="font-mono text-xs">{a.customer_id_display ?? a.customer_id}</span> },
+            { key: "status", label: "Status", render: (a) => <StatusBadge value={a.status} /> },
             { key: "descriptive_name", label: "Name", render: (a) => <>{a.descriptive_name} {a.is_manager && <Badge tone="blue">MCC</Badge>}</> },
             { key: "client_id", label: "Client", render: (a) => a.is_manager ? "—" : can("clients.edit") ? (
               <Select value={a.client_id ?? ""} onChange={(e) => link.mutate({ id: a.id, client_id: e.target.value })}
