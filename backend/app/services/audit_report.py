@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.adapters import registry
 from app.adapters.base import AdapterError
 from app.core import clock
-from app.core.errors import Conflict, NotFound
+from app.core.errors import Conflict, IntegrationNotConfigured, NotFound
 from app.core.util import canonical_json, normalize_term
 from app.db.session import SessionLocal, session_scope
 from app.models import AuditReport, Business, Client
@@ -178,7 +178,7 @@ def audit_client(biz: Business, client: Client, ctx: dict, kw: dict, website: di
 
 # ======================================================================================== section 2
 def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
-    c = Collector("website", simulated_default=(w or {}).get("source") != "LIVE")
+    c = Collector("website", simulated_default=(w or {}).get("source") == "MOCK")
     if not w or w.get("error"):
         c.unavailable("site", "A. Content", "Website could be audited", (w or {}).get("error", "No website data"), needs="manual",
                       rec="Check the website URL and run the audit again.")
@@ -223,7 +223,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
     nf = w["services_not_in_profile"]
     c.add("consistency", "A. Content", "Website offerings match the client profile", "PASS" if not nf else "WARN", "ESTIMATED",
           "No extra services found on the site." if not nf else f"Site mentions services not in the profile: {', '.join(nf[:5])}", source=url, weight=1,
-          needs="client" if nf else None, rec="Confirm with the client whether these services should be advertised.", sim=w.get("source") != "LIVE")
+          needs="client" if nf else None, rec="Confirm with the client whether these services should be advertised.", sim=w.get("source") == "MOCK")
     c.unavailable("editorial", "A. Content", "Originality, grammar, objection handling, outdated pages, audience focus",
                   "Needs human reading; the audit does not judge writing quality.", needs="manual",
                   rec="Have a person review the key service pages for originality, accuracy and tone.")
@@ -258,7 +258,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
             continue
         sc = ps["performance_score"]
         c.add(f"speed_{strat}", "C. Technical & speed", f"{strat.title()} page speed (PageSpeed Insights)", "PASS" if sc >= 70 else "WARN" if sc >= 50 else "FAIL",
-              "VERIFIED", f"Performance score {sc}/100.", source="Google PageSpeed Insights", weight=wt, sim=w["pagespeed"].get(strat, {}).get("source") != "LIVE",
+              "VERIFIED", f"Performance score {sc}/100.", source="Google PageSpeed Insights", weight=wt, sim=w["pagespeed"].get(strat, {}).get("source") == "MOCK",
               rec="Compress images, remove unused scripts/widgets, defer render-blocking resources.", data={"opportunities": ps.get("opportunities", [])[:5]})
     cwv = (w["pagespeed"].get("mobile") or {}).get("core_web_vitals")
     if cwv:
@@ -268,7 +268,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
                 c.unavailable("cwv_" + key, "C. Technical & speed", f"Core Web Vital {label}", "Not returned.", needs="manual")
             else:
                 c.add("cwv_" + key, "C. Technical & speed", f"Core Web Vital {label} (mobile)", "PASS" if v <= ok else "WARN" if v <= bad else "FAIL", "VERIFIED",
-                      f"{label} = {v}", source="Google PageSpeed Insights", weight=2, sim=w["pagespeed"]["mobile"].get("source") != "LIVE",
+                      f"{label} = {v}", source="Google PageSpeed Insights", weight=2, sim=w["pagespeed"]["mobile"].get("source") == "MOCK",
                       rec=f"Improve {label} (good ≤ {ok}).")
     errs = w["crawl_errors"]
     c.add("broken", "C. Technical & speed", "No broken pages (4xx/5xx)", "PASS" if not errs else "FAIL", "VERIFIED",
@@ -289,7 +289,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
         if u:
             r = crawler_service.check_url(u)
             c.add(fid, "C. Technical & speed", label, "PASS" if r["ok"] else "FAIL", "VERIFIED", f"{u} → HTTP {r['status'] or r['error']}", source=u,
-                  weight=2, sim=r["source"] != "LIVE", rec="Fix the page or the URL in the client profile.")
+                  weight=2, sim=r["source"] == "MOCK", rec="Fix the page or the URL in the client profile.")
     c.unavailable("manual_tech", "C. Technical & speed", "Redirect chains, cross-browser rendering, working form submission, third-party script weight, accessibility",
                   "Needs browser-level testing (e.g. Lighthouse, GTmetrix, a test form submission).", needs="manual",
                   rec="Run Lighthouse/GTmetrix and submit a test lead.")
@@ -310,7 +310,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
     unv = w["claims_not_in_verified_list"]
     c.add("claims", "D. Trust & compliance", "No unsupported claims or guarantees", "PASS" if not unv else "WARN", "ESTIMATED",
           "All claims found are in the verified list." if not unv else f"Claims on the site not verified by the client: {'; '.join(unv[:3])}", source=url, weight=2,
-          needs="client" if unv else None, rec="Ask the client to confirm or remove these claims; ads will not use them.", sim=w.get("source") != "LIVE")
+          needs="client" if unv else None, rec="Ask the client to confirm or remove these claims; ads will not use them.", sim=w.get("source") == "MOCK")
     c.add("credentials", "D. Trust & compliance", "Credentials / licences / certifications shown", "PASS" if sig.get("has_credentials") else "WARN", "ESTIMATED",
           "Credential wording found." if sig.get("has_credentials") else "No licence/insurance/certification wording found.", source=url, weight=1,
           rec="Show licences, insurance and certifications on service pages.")
@@ -324,7 +324,7 @@ def audit_website(biz: Business, ctx: dict, w: dict) -> list[dict]:
 
 # ======================================================================================== section 3
 def audit_gbp(biz: Business, ctx: dict, g: dict) -> list[dict]:
-    c = Collector("gbp", simulated_default=(g or {}).get("source") != "LIVE")
+    c = Collector("gbp", simulated_default=(g or {}).get("source") == "MOCK")
     if biz.has_gbp is False:
         c.add("none", "A. Profile", "Business has a Google Business Profile", "WARN", "VERIFIED",
               "The client reported no Google Business Profile.", source="Client intake form", weight=2, sim=False,
@@ -336,7 +336,7 @@ def audit_gbp(biz: Business, ctx: dict, g: dict) -> list[dict]:
     if not g or g.get("error") or not g.get("client"):
         c.add("found", "A. Profile", "Profile found on Google Maps", "FAIL", "UNAVAILABLE" if (g or {}).get("error") else "VERIFIED",
               (g or {}).get("error") or "No matching listing found by name, website and location.", source="Google Places", weight=3,
-              rec="Confirm the profile exists and matches the business name/phone/website exactly; the audit looks it up by those.", needs="client", sim=(g or {}).get("source") != "LIVE")
+              rec="Confirm the profile exists and matches the business name/phone/website exactly; the audit looks it up by those.", needs="client", sim=(g or {}).get("source") == "MOCK")
         return c.items
     cl, comps = g["client"], [x for x in g.get("competitors", []) if x]
     src = "Google Places"
@@ -394,7 +394,7 @@ def urlhost(u: str) -> str:
 
 # ======================================================================================== section 4
 def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) -> tuple[list[dict], list[dict]]:
-    c = Collector("competitors", simulated_default=(comp or {}).get("source") != "LIVE")
+    c = Collector("competitors", simulated_default=(comp or {}).get("source") == "MOCK")
     suggested: list[dict] = []
     provided = ctx["competitors"]
     if not provided:
@@ -410,9 +410,11 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
         suggested = [{"name": f["name"], "website": f.get("website", ""), "place_id": f.get("place_id", "")} for f in found if normalize_term(f["name"]) not in have][:7]
         c.add("discovered", "A. Identification", "Additional local competitors discovered", "INFO", "VERIFIED",
               f"{len(suggested)} other '{ctx['category']}' listing(s) near {ctx['city']}: {', '.join(s_['name'] for s_ in suggested[:5]) or 'none'}",
-              source="Google Places text search", sim=registry.get("places").source != "LIVE")
+              source="Google Places text search", sim=registry.get("places").source == "MOCK")
     except AdapterError as exc:
         c.unavailable("discovered", "A. Identification", "Additional local competitors discovered", f"Places search failed ({exc.kind}).", needs="manual")
+    except IntegrationNotConfigured as exc:
+        c.unavailable("discovered", "A. Identification", "Additional local competitors discovered", exc.message, needs="integration")
     c.unavailable("advertisers", "A. Identification", "Who is advertising on Google Search / ranking organically",
                   "Needs the Google Ads Transparency Center (https://adstransparency.google.com) or a paid tool (Semrush/Ahrefs); neither is connected.", needs="manual",
                   rec="Check the Ads Transparency Center for each competitor and record observed ads.")
@@ -426,7 +428,7 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
         if r.get("website_url"):
             c.add(f"site.{i}", "C. Website", f"{name}: service-focused website", "INFO", "VERIFIED",
                   f"Services found: {', '.join(r.get('services', [])[:6]) or 'none identified'}; offers on site: {'; '.join(r.get('offers_on_site', [])[:2]) or 'none found'}",
-                  source=r["website_url"], sim=r.get("crawl_source") != "LIVE")
+                  source=r["website_url"], sim=r.get("crawl_source") == "MOCK")
             cs = [s_["score"] for s_ in r.get("content_scores", [])]
             if cs and client_avg is not None:
                 avg = sum(cs) / len(cs)
@@ -442,13 +444,13 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
         if gp:
             c.add(f"gbp.{i}", "D. Business Profile", f"{name}: rating and reviews", "INFO", "VERIFIED",
                   f"{gp.get('rating')} from {gp.get('user_rating_count', 0)} reviews; hours {'listed' if (gp.get('opening_hours') or {}).get('weekday_text') else 'missing'}",
-                  source="Google Places", sim=(g or {}).get("source") != "LIVE")
+                  source="Google Places", sim=(g or {}).get("source") == "MOCK")
         else:
             c.unavailable(f"gbp.{i}", "D. Business Profile", f"{name}: Business Profile found", "No listing found (add the Google Maps link for an exact match).", needs="client")
         if r.get("keyword_ideas"):
             c.add(f"kw.{i}", "B. Google Ads", f"{name}: keyword opportunities (estimated)", "INFO", "ESTIMATED",
                   f"{len(r['keyword_ideas'])} ideas from Keyword Planner URL seeding, e.g. {', '.join(r['keyword_ideas'][:4])}. These are NOT verified records of the competitor's targeting.",
-                  source="Keyword Planner (URL seeds)", sim=r.get("crawl_source") != "LIVE")
+                  source="Keyword Planner (URL seeds)", sim=r.get("crawl_source") == "MOCK")
     ads = (comp or {}).get("pasted_ads_analysis")
     if ads:
         c.add("ads", "B. Google Ads", "Competitor ad messaging (pasted by the team)", "INFO", "ESTIMATED",
@@ -466,7 +468,7 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
         if (cl.get("user_rating_count", 0) < best.get("user_rating_count", 0)):
             c.add("pos.reviews", "E. Positioning", "Social proof gap", "WARN", "VERIFIED",
                   f"Strongest competitor has {best.get('user_rating_count')} reviews vs the client's {cl.get('user_rating_count', 0)}.", source="Google Places", weight=2,
-                  sim=(g or {}).get("source") != "LIVE", rec="Differentiate on reviews: run a review-request campaign; until then avoid 'most trusted' style claims.")
+                  sim=(g or {}).get("source") == "MOCK", rec="Differentiate on reviews: run a review-request campaign; until then avoid 'most trusted' style claims.")
     offers = sorted({o for r in rows for o in r.get("offers_on_site", [])})[:4]
     if offers:
         c.add("pos.offers", "E. Positioning", "Competitor offers the client could answer", "WARN", "ESTIMATED", "; ".join(o.strip()[:90] for o in offers), source="Competitor websites",
@@ -497,9 +499,9 @@ def intent_of(kw: str, brand_words: set[str], comp_names: set[str]) -> str:
 
 
 def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> tuple[list[dict], dict]:
-    c = Collector("keywords", simulated_default=(kw or {}).get("source") != "LIVE")
+    c = Collector("keywords", simulated_default=(kw or {}).get("source") == "MOCK")
     src = f"Keyword Planner ({(kw or {}).get('source', 'MOCK')})"
-    sim = (kw or {}).get("source") != "LIVE"
+    sim = (kw or {}).get("source") == "MOCK"
     rows = (kw or {}).get("keywords", [])
     lp = (w or {}).get("landing_page_map", {}) or {}
     brand = {x for x in normalize_term(biz.name).split() if len(x) > 3}
@@ -656,7 +658,7 @@ def build_summary(biz: Business, client: Client, ctx: dict, sections: dict, scor
         "11_advertising_opportunities": [f"{cnt.get('HIGH', 0)} high-priority and {cnt.get('MEDIUM', 0)} medium-priority keywords across {len(ctx['service_names'])} service(s)"] +
                                         [x["text"] for x in recs["low"][:3]] + ([f"{len(suggested)} additional local competitors identified for the Ads Transparency check"] if suggested else []),
         "12_risks_and_limitations": [f"{scores[k]['checks_unavailable']} check(s) in '{dict(SECTIONS)[k]}' could not be verified" for k in scores if k != "overall" and scores[k] and scores[k].get("checks_unavailable")][:6] +
-                                    (["Part of this audit used simulated (mock) data — connect real integrations for live evidence"] if any(i.get("simulated") for v in items.values() for i in v) else []) +
+                                    (["Part of this audit used test-fixture data (not a real service)"] if any(i.get("simulated") for v in items.values() for i in v) else []) +
                                     ["Economics (margin, lead value, CPL targets) are unknown, so profitability cannot be judged"],
         "13_readiness": f"{readiness(scores['overall']['score'])} (overall {scores['overall']['score']}/100)",
         "14_action_plan": recs["next_steps"],

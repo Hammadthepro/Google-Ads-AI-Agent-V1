@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.adapters.base import AdapterError
+from app.adapters.base import AdapterError, InvalidInput
 
 class KeywordResearchAdapter(ABC):
     name = "keyword_research"
@@ -23,7 +23,7 @@ class KeywordResearchAdapter(ABC):
 
 
 class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
-    """KeywordPlanIdeaService.GenerateKeywordIdeas via the official client. Not verified against a live account."""
+    """KeywordPlanIdeaService.GenerateKeywordIdeas via the official client (read-only; shares the Google Ads connection)."""
 
     name = "GoogleKeywordPlannerAdapter"
     source = "LIVE"
@@ -31,12 +31,24 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
     def __init__(self, ads_adapter):
         self.ads = ads_adapter  # RealGoogleAdsAdapter (shares the client)
 
+    def _customer(self, customer_id: str) -> str:
+        """Keyword ideas do not depend on one client's data, so a client without a linked account uses the connection's
+        configured client account. With neither, fail clearly BEFORE calling Google (an empty ID is a guaranteed API error)."""
+        from app.services import integrations_service
+        cid = (customer_id or integrations_service.resolve("google_ads").get("customer_id") or "").replace("-", "").strip()
+        if not cid.isdigit():
+            raise InvalidInput("Keyword Planner needs a Google Ads client account. Link one to this client, or set the client customer ID "
+                               "on the Google Ads card of the Integrations page.", adapter=self.name)
+        return cid
+
     def generate_ideas(self, customer_id, seeds, *, page_url="", location_ids=None, language="en", city=""):
+        cid = self._customer(customer_id)
+
         def run():
             client = self.ads.client()
             svc = client.get_service("KeywordPlanIdeaService")
             req = client.get_type("GenerateKeywordIdeasRequest")
-            req.customer_id = customer_id.replace("-", "")
+            req.customer_id = cid
             req.language = "languageConstants/1000"  # English
             req.geo_target_constants.extend(location_ids or ["geoTargetConstants/2840"])  # United States
             req.keyword_plan_network = client.enums.KeywordPlanNetworkEnum.GOOGLE_SEARCH
@@ -56,7 +68,7 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
                             "low_top_of_page_bid_micros": m.low_top_of_page_bid_micros,
                             "high_top_of_page_bid_micros": m.high_top_of_page_bid_micros, "source": "LIVE"})
             return out
-        return self.ads._wrap(run)
+        return self.ads._read(run)
 
     def suggest_geo_targets(self, zip_codes, country="US"):
         """GeoTargetConstantService.SuggestGeoTargetConstants — ZIP codes -> Google location IDs (postal codes preferred)."""

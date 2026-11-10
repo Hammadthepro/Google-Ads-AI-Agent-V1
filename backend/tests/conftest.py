@@ -44,6 +44,11 @@ def seeded_db():
     from app.db.session import configure_engine
     configure_engine(os.environ["DATABASE_URL"])
     _migrate()
+    # The fake Google Ads world derives "spend so far today" from the time of day, so pin the clock to 18:30 UTC of the real date:
+    # otherwise rules such as the spend-spike brake only fire when the suite happens to run late in the day.
+    from app.core import clock
+    real_now = clock.now
+    clock.now = lambda: real_now().replace(hour=18, minute=30, second=0, microsecond=0)
     from tests.fakes.mock_world import seed
     seed.reset(include_users=True)
     install_fakes()
@@ -53,6 +58,7 @@ def seeded_db():
         registry.clear_overrides()
         registry.reset()
     yield
+    clock.now = real_now
 
 
 def install_fakes() -> None:

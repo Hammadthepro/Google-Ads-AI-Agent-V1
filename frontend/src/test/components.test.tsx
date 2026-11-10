@@ -1,11 +1,11 @@
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Badge, ConfirmDialog, DataSourceBadge, StatusBadge, Table, money, pct } from "../components/ui";
+import { Badge, ConfirmDialog, DataSourceBadge, DataStatusNotice, ErrorBox, StatusBadge, Table, money, pct } from "../components/ui";
 import { errorMessage, ApiError } from "../api/client";
 
 describe("DataSourceBadge", () => {
-  it("labels mock data clearly and never as live", () => {
+  it("labels test fixtures clearly and never as live", () => {
     render(<DataSourceBadge source="MOCK" />);
-    expect(screen.getByText("MOCK DATA")).toBeInTheDocument();
+    expect(screen.getByText("TEST FIXTURE")).toBeInTheDocument();
     expect(screen.queryByText("LIVE DATA")).toBeNull();
   });
   it("labels live and mixed data", () => {
@@ -13,9 +13,10 @@ describe("DataSourceBadge", () => {
     expect(screen.getByText("LIVE DATA")).toBeInTheDocument();
     expect(screen.getByText("MIXED DATA")).toBeInTheDocument();
   });
-  it("defaults to MOCK when the source is unknown", () => {
+  it("never claims live data when the source is unknown", () => {
     render(<DataSourceBadge source={null} />);
-    expect(screen.getByText("MOCK DATA")).toBeInTheDocument();
+    expect(screen.getByText("NO DATA SOURCE")).toBeInTheDocument();
+    expect(screen.queryByText("LIVE DATA")).toBeNull();
   });
 });
 
@@ -25,9 +26,34 @@ describe("StatusBadge", () => {
     expect(screen.getByText("RED")).toBeInTheDocument();
     expect(screen.getByText("PENDING APPROVAL")).toBeInTheDocument();
   });
-  it("shows MOCK CONNECTED, not Connected, for mocks", () => {
-    render(<StatusBadge value="MOCK CONNECTED" />);
-    expect(screen.getByText("MOCK CONNECTED")).toBeInTheDocument();
+});
+
+describe("DataStatusNotice", () => {
+  it("tells the user to configure Google Ads instead of showing numbers", () => {
+    render(<DataStatusNotice status={{ state: "not_configured" }} />);
+    expect(screen.getByText(/Google Ads integration is not configured/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Integrations page" })).toHaveAttribute("href", "/integrations");
+  });
+  it("labels data from a failed refresh as historical with its original retrieval time", () => {
+    render(<DataStatusNotice status={{ state: "historical", retrieved_at: "2026-11-01T10:00:00Z", message: "The latest refresh failed." }} />);
+    expect(screen.getByText("Historical data")).toBeInTheDocument();
+    expect(screen.getByText(/latest refresh failed/)).toBeInTheDocument();
+  });
+  it("says there is no data when connected but nothing was retrieved", () => {
+    render(<DataStatusNotice status={{ state: "no_data" }} />);
+    expect(screen.getByText(/No Google Ads data available/)).toBeInTheDocument();
+  });
+  it("shows nothing when the data is current", () => {
+    const { container } = render(<DataStatusNotice status={{ state: "data_available", retrieved_at: "2026-11-01T10:00:00Z" }} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("ErrorBox", () => {
+  it("links to the Integrations page for a not-configured integration", () => {
+    const err = Object.assign(new Error("Groq (internal AI) integration is not configured. Please configure and test your connection on the Integrations page."), { code: "integration_not_configured" });
+    render(<ErrorBox error={err} />);
+    expect(screen.getByRole("link", { name: "Open the Integrations page" })).toHaveAttribute("href", "/integrations");
   });
 });
 

@@ -26,11 +26,11 @@ const NAV: { to: string; label: string; icon: string }[] = [
 export function SafetyBanner() {
   const { data } = useQuery({ queryKey: ["integration-banner"], queryFn: () => api.get("/integrations/mode"), staleTime: 30_000 });
   if (!data) return null;
-  const tone = data.mode === "mock" ? "bg-violet-600 text-white" : data.mode === "read_only" ? "bg-sky-600 text-white" : "bg-amber-500 text-amber-950";
+  const tone = data.mode === "read_only" ? "bg-sky-600 text-white" : "bg-amber-500 text-amber-950";
   return (
     <div role="status" className={cx("flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-1.5 text-xs font-medium", tone)}>
       <span className="font-semibold uppercase tracking-wide">{data.label}</span>
-      <span>{data.mode === "mock" ? "Simulated Google Ads — nothing is sent to Google." : data.mode === "read_only" ? "Real Google Ads data is read. Writes are impossible." : "Real reads and approved writes."}</span>
+      <span>{data.mode === "read_only" ? "Real Google Ads data is read. Writes are impossible." : "Real reads and approved writes."}</span>
       <span className="opacity-90">Real campaign writes: {data.real_writes_possible ? "POSSIBLE (approval required)" : "DISABLED"}</span>
     </div>
   );

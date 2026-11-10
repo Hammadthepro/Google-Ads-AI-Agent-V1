@@ -168,7 +168,7 @@ export function TaskForm() {
         {client && client.businesses.length > 1 && <Field label="Business"><Select value={businessId} onChange={(e) => setBusinessId(e.target.value)} options={client.businesses.map((b: any) => ({ value: b.id, label: b.name }))} /></Field>}
         <Field label="Task"><Select value={type} onChange={(e) => setType(e.target.value)} options={TASKS} /></Field>
         {clientId && ["campaign", "ad_group", "ad"].includes(spec.needs) && (
-          <Field label="Campaign" hint="Read from the selected Google Ads adapter (MOCK)">
+          <Field label="Campaign" hint="Read from your connected Google Ads account">
             <Select value={campaignId} onChange={(e) => { setCampaignId(e.target.value); setAdGroupId(""); setAdId(""); }}
               options={[{ value: "", label: structure.isLoading ? "Loading…" : "Choose…" }, ...campaigns.map((c: any) => ({ value: c.id, label: `${c.name} · ${c.status}${c.read_only ? " · read-only" : ""}` }))]} />
           </Field>)}

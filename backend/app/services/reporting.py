@@ -7,8 +7,8 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.adapters import registry
 from app.core import clock
+from app.core.errors import IntegrationNotConfigured
 from app.models import (Approval, Business, Campaign, Client, EmergencyEvent, Experiment, FixTrackerItem, PerformanceSnapshot,
                         Recommendation, SourceType, WeeklyReport)
 from app.services import ai_service, monitoring, settings_service, tracking_gate
@@ -106,8 +106,8 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
                                                                      "rank_lost_is": m["rank_lost_is"]},
                                                          "tracking_state": state, "open_fixes": len(b_fixes)})
             ai_causes = list(ai.causes)
-        except ai_service.AIOutputInvalid:
-            ai_causes = []
+        except (ai_service.AIOutputInvalid, IntegrationNotConfigured):
+            ai_causes = []  # no AI opinion: only causes confirmed by the deterministic rules AND the AI are recommended, so none are
         agreed = [k for k in ORDER if k in rules and k in ai_causes]
         target = c.weekly_conversion_target or 0
         entry = {"campaign_id": c.id, "name": c.name, "status": c.status, "business": b.name if b else None, "target": target,
@@ -155,11 +155,14 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         "business_breakdown": by_business, "calls": calls,
         "wasted_spend": {"total": waste["total"], "window_days": waste["window_days"], "top_terms": waste["terms"][:10]},
     }
-    source = SourceType.combine(*sources) if sources else registry.get("google_ads").source
+    source = SourceType.combine(*sources) if sources else SourceType.NONE
+    sections["provenance"] = provenance(db, client, week_start, week_end, campaigns, source)
     try:
         summ, run = ai_service.generate(db, "REPORT_SUMMARY", {"client_name": client.name, "totals": totals,
                                                                "recommended_actions": recommended_all, "warnings": warnings})
         ai_text, run_id = summ.summary + ("\n" + "\n".join(f"• {h}" for h in summ.highlights) if summ.highlights else ""), run.id
+    except IntegrationNotConfigured as exc:
+        ai_text, run_id = f"(No AI summary was written: {exc.message} The figures in this report are complete.)", None
     except ai_service.AIOutputInvalid:
         ai_text, run_id = "(AI summary unavailable — figures above are complete.)", None
     report = WeeklyReport(client_id=client.id, week_start=week_start, week_end=week_end,
@@ -168,6 +171,29 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
     db.add(report)
     db.flush()
     return report
+
+
+def provenance(db: Session, client: Client, start: date, end: date, campaigns: list[dict], source: str) -> dict:
+    """Where the numbers came from, for which period, when they were retrieved, and what is missing or limited."""
+    ids = [a for (a,) in db.execute(select(PerformanceSnapshot.google_ads_account_id).where(
+        PerformanceSnapshot.client_id == client.id).distinct())]
+    newest = db.scalar(select(func.max(PerformanceSnapshot.fetched_at)).where(
+        PerformanceSnapshot.client_id == client.id, PerformanceSnapshot.date >= start, PerformanceSnapshot.date <= end))
+    status = monitoring.data_status(db, client.id)
+    missing = []
+    if not campaigns:
+        missing.append("No campaign data was retrieved for this period.")
+    if any(c["metrics"].get("budget_lost_is") is None for c in campaigns):
+        missing.append("Impression-share loss is unavailable for some campaigns (Google does not report it for them).")
+    if status["state"] in ("not_configured", "no_account", "no_data", "failed"):
+        missing.append(status.get("message") or "Google Ads data is unavailable.")
+    return {"data_source": "Google Ads API (read-only)" if source in ("LIVE", "MIXED") else "none — no Google Ads data was retrieved",
+            "source_type": source, "reporting_period": {"start": start.isoformat(), "end": end.isoformat()},
+            "retrieved_at": newest.isoformat() if newest else None, "accounts": len(ids), "data_status": status["state"],
+            "missing_or_unavailable": missing,
+            "limitations": ["Conversions can be adjusted by Google for several days after the click (attribution lag).",
+                            "Figures are exactly as returned by Google Ads; this application does not estimate missing values.",
+                            "Narrative text is written by an AI model from these figures; it never changes them."]}
 
 
 def serialize(r: WeeklyReport) -> dict:

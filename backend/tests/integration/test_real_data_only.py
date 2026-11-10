@@ -68,6 +68,7 @@ def test_disabled_integration_is_not_silently_replaced():
     finally:
         with session_scope() as db:
             svc.disconnect(db, "groq", None)
+            svc._row(db, "groq").settings = {}  # disconnect keeps non-secret settings; leave no trace for other tests
 
 
 def test_no_mock_code_or_fake_imports_in_the_application_package():
@@ -228,3 +229,29 @@ def test_purge_demo_data_is_a_dry_run_by_default_and_never_matches_real_clients(
     db.flush()
     assert real.id not in demo_purge.demo_client_ids(db)
     db.rollback()
+
+
+# --------------------------------------------------------------------------- a full audit with NOTHING configured stays honest
+@pytest.mark.real_registry
+def test_audit_report_completes_honestly_when_integrations_are_missing():
+    """Only the credential-free crawler/pagespeed are present (as test doubles, to avoid network). Google Ads, Places and the
+    AI providers are not configured: the report must complete, mark those checks unavailable with the actionable message,
+    and never invent ratings, keyword volumes or AI-derived findings."""
+    from tests.fakes.crawler import FixtureCrawlerAdapter
+    from tests.fakes.pagespeed import MockPageSpeedAdapter
+    registry.override("crawler", FixtureCrawlerAdapter())
+    registry.override("pagespeed", MockPageSpeedAdapter())
+    admin = Api(SUPER)
+    client = next(c for c in admin.get("/clients").json() if c["name"] == "Northside Home Services")
+    r = admin.post(f"/clients/{client['id']}/audit-reports?sync=true&business_id={client['businesses'][0]['id']}")
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    assert rep["status"] == "COMPLETED", rep.get("error")
+    findings = [i for sec in rep["sections"].values() for i in sec["findings"]]
+    unavailable = [i for i in findings if i["status"] == "UNAVAILABLE"]
+    assert unavailable, "missing integrations must show up as unavailable checks"
+    assert any("Integrations page" in (i.get("detail") or i.get("evidence_text") or str(i)) for i in unavailable)
+    gbp = rep["sections"]["gbp"]["findings"]
+    assert not any(i["status"] == "PASS" and "rating" in i["check"].lower() for i in gbp), "no review/rating result without Google Places"
+    kw = rep["sections"]["keywords"]["report"]
+    assert not any((k.get("volume") or 0) > 0 for k in (kw.get("rows") or kw.get("keywords") or [])), "no invented search volumes"

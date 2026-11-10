@@ -7,8 +7,7 @@ import { useAction } from "../lib/hooks";
 import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Spinner, Stat, Textarea } from "../components/ui";
 
 const MODES: { value: string; label: string; text: string }[] = [
-  { value: "mock", label: "Mock mode", text: "Everything is simulated. Nothing can reach Google Ads. This is the default." },
-  { value: "read_only", label: "Real account — read-only", text: "Real Google Ads data is read. No campaign write is possible in this mode." },
+  { value: "read_only", label: "Real account — read-only", text: "Real Google Ads data is read. No campaign write is possible in this mode. This is the default." },
   { value: "execution", label: "Validated execution", text: "Real reads plus approved, validated writes. Campaigns are created PAUSED; enabling needs a separate approval. Also needs both safety keys." },
 ];
 
@@ -106,8 +105,7 @@ function ProviderFacts({ item }: { item: any }) {
         <Row label="Challenger model">{i.challenger_model || <span className="text-amber-800">not set — falls back to the primary model</span>}</Row>
         {i.rate_limits && Object.keys(i.rate_limits).length > 0 && <Row label="Groq plan limit (tokens / minute)">{Object.entries(i.rate_limits).map(([m, l]: any) => `${m}: ${l.tokens_per_minute?.toLocaleString()}`).join(" · ")}
           {Math.min(...Object.values(i.rate_limits).map((l: any) => l.tokens_per_minute || 1e9)) < 20000 && <div className="text-xs font-normal text-amber-800">Low limit: long campaign drafts can exceed it. The app then reports the rate limit and falls back to a single draft; a higher Groq tier removes this.</div>}</Row>}
-        <Row label="Used by the application now">{i.active_in_app ? <Badge tone="green">Groq is active</Badge> : <Badge tone="slate">Mock AI (Groq not active)</Badge>}</Row>
-        <Row label="Environment switches">GROQ_ENABLED={String(i.env_activation?.GROQ_ENABLED)} · AI_PROVIDER={i.env_activation?.AI_PROVIDER}</Row>
+        <Row label="Used by the application now">{i.active_in_app ? <Badge tone="green">Groq is active</Badge> : <Badge tone="slate">Not configured — AI features report this instead of running</Badge>}</Row>
         <Row label="Last successful connection test">{item.last_success_at ? dt(item.last_success_at) : "Never"}</Row>
       </dl>
     );
@@ -125,7 +123,7 @@ function ProviderFacts({ item }: { item: any }) {
   );
 }
 
-function IntegrationCard({ item, canManage, mode, resultOf }: { item: any; canManage: boolean; mode: string; resultOf?: any }) {
+function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: boolean; resultOf?: any }) {
   const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
   const [open, setOpen] = useState(["google_ads", "groq", "pagespeed"].includes(item.provider));
   const [settings, setSettings] = useState<Record<string, string>>({});
@@ -148,7 +146,6 @@ function IntegrationCard({ item, canManage, mode, resultOf }: { item: any; canMa
       actions={<Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide details" : "Details"}</Button>}>
       <p className="text-sm text-slate-600">{item.description}</p>
       {item.last_error && d.label === "Connection failed" && <div className="mt-3"><Notice tone="red"><b>Last error:</b> {item.last_error}</Notice></div>}
-      {item.provider === "google_ads" && mode === "mock" && d.label === "Connected" && <div className="mt-3"><Notice tone="violet">Connected, but the app is still in <b>Mock mode</b>. Switch the operating mode above to read real data.</Notice></div>}
       {open && <ProviderFacts item={item} />}
       {open && <SubtestRows item={item} busy={test.isPending} canManage={canManage} run={(t) => test.mutate(t)} />}
       {open && hasFields && (
@@ -185,7 +182,7 @@ function IntegrationCard({ item, canManage, mode, resultOf }: { item: any; canMa
       {open && item.last_test_at && <p className="mt-2 text-xs text-slate-400">Last test {dt(item.last_test_at)} — every step is a real request; nothing is marked Connected unless all required steps pass.</p>}
       <ConfirmDialog open={confirm === "enable"} title={`Enable ${item.label}?`} confirmLabel="Enable" body={item.provider === "groq" ? "The application will use Groq for AI drafting and critique. Google Ads is not touched." : "Enabling lets the app use this integration. It does not by itself allow any Google Ads write."}
         onCancel={() => setConfirm("")} onConfirm={() => enable.mutate(true, { onSettled: () => setConfirm("") })} />
-      <ConfirmDialog open={confirm === "disable"} title={`Disable ${item.label}?`} confirmLabel="Disable" body={item.provider === "google_ads" ? "The app returns to Mock mode." : "The app falls back to its simulated implementation for this integration."}
+      <ConfirmDialog open={confirm === "disable"} title={`Disable ${item.label}?`} confirmLabel="Disable" body={item.provider === "google_ads" ? "Google Ads features report “not configured” until you enable it again, and the operating mode returns to read-only." : "Features that need this integration report “not configured” until you enable it again. Nothing is simulated in its place."}
         onCancel={() => setConfirm("")} onConfirm={() => enable.mutate(false, { onSettled: () => setConfirm("") })} />
       <ConfirmDialog open={confirm === "disconnect"} title={`Disconnect ${item.label}?`} tone="danger" confirmLabel="Disconnect" body="Credentials saved on this page and discovered data are deleted. Values from .env are not changed."
         onCancel={() => setConfirm("")} onConfirm={() => disconnect.mutate({}, { onSettled: () => setConfirm("") })} />
@@ -198,8 +195,8 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
   const [reason, setReason] = useState("");
   const change = useAction(() => api.put("/integrations/mode", { mode: target, reason }), [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]]);
   return (
-    <Card title="Operating mode" actions={<Badge tone={mode.mode === "mock" ? "violet" : mode.mode === "read_only" ? "blue" : "amber"}>{mode.label}</Badge>}>
-      <div className="grid gap-3 md:grid-cols-3">
+    <Card title="Operating mode" actions={<Badge tone={mode.mode === "read_only" ? "blue" : "amber"}>{mode.label}</Badge>}>
+      <div className="grid gap-3 md:grid-cols-2">
         {MODES.map((m) => (
           <button key={m.value} disabled={!canManage || m.value === mode.mode} onClick={() => setTarget(m.value)} aria-pressed={m.value === mode.mode}
             className={`rounded-lg border p-3 text-left text-sm transition ${m.value === mode.mode ? "border-brand-600 bg-brand-50" : "border-slate-200 hover:bg-slate-50"} disabled:cursor-default`}>
@@ -214,7 +211,7 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
         <div>Safety key 2 (Super Admin authorization): <b>{mode.write_keys.super_admin_authorized ? "on" : "off"}</b></div>
       </div>
       <p className="mt-2 text-sm text-slate-600">Real campaign writes possible right now: <b className={mode.real_writes_possible ? "text-rose-700" : "text-emerald-700"}>{mode.real_writes_possible ? "YES" : "NO"}</b>. {mode.explanation}</p>
-      {!googleOk && mode.mode === "mock" && <p className="mt-1 text-xs text-slate-500">Real modes unlock once Google Ads passes Test Connection (client account read) and is enabled.</p>}
+      {!googleOk && <p className="mt-1 text-xs text-slate-500">Validated execution unlocks once Google Ads passes Test Connection (client account read) and is enabled.</p>}
       <ConfirmDialog open={!!target} title={`Switch to “${MODES.find((m) => m.value === target)?.label}”?`} tone={target === "execution" ? "danger" : "primary"} confirmLabel="Switch mode"
         body={MODES.find((m) => m.value === target)?.text} onCancel={() => { setTarget(""); change.reset(); }}
         onConfirm={() => change.mutate({}, { onSuccess: () => setTarget("") })}>
@@ -285,7 +282,7 @@ export default function Integrations() {
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
       <section className="space-y-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Key integrations</h2>
-        <div className="grid gap-4 xl:grid-cols-2">{first.map((i: any) => <IntegrationCard key={i.provider} item={i} canManage={canManage} mode={q.data.mode.mode} resultOf={results[i.provider]} />)}</div>
+        <div className="grid gap-4 xl:grid-cols-2">{first.map((i: any) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
       </section>
       {["Google", "AI", "Website research", "System"].map((g) => {
         const list = rest.filter((i) => i.group === g);
@@ -293,7 +290,7 @@ export default function Integrations() {
         return (
           <section key={g} className="space-y-4">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{g === "Google" ? "Other Google" : g === "AI" ? "Other AI" : g}</h2>
-            <div className="grid gap-4 xl:grid-cols-2">{list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} mode={q.data.mode.mode} resultOf={results[i.provider]} />)}</div>
+            <div className="grid gap-4 xl:grid-cols-2">{list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
           </section>);
       })}
     </div>

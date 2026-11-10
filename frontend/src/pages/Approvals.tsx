@@ -71,7 +71,7 @@ export function ApprovalDetail() {
         subtitle={<>Version {a.payload_version} · hash <code className="text-xs">{a.payload_hash.slice(0, 16)}…</code> · requested by {a.requested_by_email} · {dt(a.created_at)}
           {a.supersedes_id && <> · supersedes <Link className="text-brand-700" to={`/approvals/${a.supersedes_id}`}>previous version</Link></>}</>}
         actions={<><StatusBadge value={a.status} /><Badge tone="blue">{a.approval_type}</Badge><DataSourceBadge source={a.source_type} /></>} />
-      {a.integration_mode === "MOCK" && <Notice tone="violet">MOCK — executing this approval changes only the simulated Google Ads environment.</Notice>}
+      {a.integration_mode === "MOCK" && <Notice tone="violet">Test fixture — executing this approval changes only a test double, never Google Ads.</Notice>}
       {a.superseded_by_id && <Notice tone="amber">This version was superseded. <Link className="font-medium underline" to={`/approvals/${a.superseded_by_id}`}>Open the current version →</Link></Notice>}
       {ctx.requires_super_admin && <Notice tone="amber">Budget increase above threshold — only a Super Admin can approve.</Notice>}
       <ErrorBox error={err} />

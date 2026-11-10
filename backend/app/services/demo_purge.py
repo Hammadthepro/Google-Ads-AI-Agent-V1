@@ -44,6 +44,15 @@ def demo_client_ids(db: Session) -> set[str]:
     return ids
 
 
+def demo_unlinked_accounts(db: Session) -> list[GoogleAdsAccount]:
+    """Account rows that came from the simulated world but belong to no client (e.g. the simulated MCC)."""
+    mock_customers: set[str] = set()
+    if "mock_gads_customers" in _mock_tables(db):
+        mock_customers = {c for (c,) in db.execute(text("select customer_id from mock_gads_customers"))}
+    return [a for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id.is_(None)))
+            if a.customer_id in mock_customers or "(SIMULATED)" in (a.descriptive_name or "") or a.integration_mode == "MOCK"]
+
+
 def _doomed_rows(db: Session, client_ids: set[str]) -> dict[str, set]:
     """Every row reachable from the demo clients through foreign keys, as {table: {pk,...}}."""
     meta = Base.metadata
@@ -72,6 +81,8 @@ def purge(db: Session, *, apply: bool = False) -> dict:
     for t in _mock_tables(db):
         report["mock_tables"][t] = db.execute(text(f'select count(*) from "{t}"')).scalar_one()
     cids = demo_client_ids(db)
+    orphan_accounts = demo_unlinked_accounts(db)
+    report["unlinked_demo_accounts"] = [a.customer_id for a in orphan_accounts]
     report["demo_clients"] = [{"id": c.id, "name": c.name} for c in db.scalars(select(Client).where(Client.id.in_(cids or {"-"})))]
     doomed = _doomed_rows(db, cids) if cids else {}
     report["rows_by_table"] = {t: len(v) for t, v in doomed.items() if v}
@@ -88,6 +99,8 @@ def purge(db: Session, *, apply: bool = False) -> dict:
     pk_of = {t.name: list(t.primary_key.columns)[0] for t in order}
     for t in order:
         db.execute(delete(t).where(pk_of[t.name].in_(doomed[t.name])))
+    for a in orphan_accounts:
+        db.delete(a)
     for t in _mock_tables(db):
         db.execute(text(f'delete from "{t}"'))
     for u in demo_users:

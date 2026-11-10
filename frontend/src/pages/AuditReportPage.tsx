@@ -54,7 +54,7 @@ function Findings({ items }: { items: any[] }) {
                     <Badge tone={STATUS_TONE[i.status]}>{i.status === "NA" ? "N/A" : i.status}</Badge>
                     <span className="font-medium text-slate-900">{i.check}</span>
                     <EvidenceBadge v={i.evidence} />
-                    {i.simulated && <Badge tone="violet" title="Produced by a mock adapter">simulated data</Badge>}
+                    {i.simulated && <Badge tone="violet" title="Produced by a test fixture, not a real service">test fixture data</Badge>}
                     {i.severity && <Badge tone={i.severity === "critical" || i.severity === "high" ? "red" : "slate"}>{i.severity}</Badge>}
                   </div>
                   <p className="mt-1 break-words text-slate-600">{i.finding}</p>
@@ -146,7 +146,7 @@ export function AuditReportPage() {
           <ScoreCard label="Business Profile" s={r.scores.gbp} /><ScoreCard label="Competitor positioning" s={r.scores.competitors} /><ScoreCard label="Keyword readiness" s={r.scores.keywords} />
         </div>
         <Notice tone={r.scores.overall.score >= 75 ? "green" : r.scores.overall.score >= 55 ? "amber" : "red"}><b>{r.scores.overall.label}.</b> <span className="opacity-80">{r.scores.overall.criteria}</span></Notice>
-        {r.source_type !== "LIVE" && <Notice tone="violet">Part of this audit used <b>simulated (mock)</b> data — such findings are marked “simulated data”. Connect real integrations on the Integrations page for live evidence.</Notice>}
+        {r.source_type !== "LIVE" && <Notice tone="amber">Some checks could not use live data (integration not configured or a request failed) — they are listed as <b>unavailable</b> and do not count toward the score. Check the <a className="underline" href="/integrations">Integrations page</a>.</Notice>}
         {r.changes?.previous_version && (
           <Card title={`Compared with audit v${r.changes.previous_version} (${dt(r.changes.previous_date)})`}>
             <div className="grid gap-4 text-sm md:grid-cols-4">

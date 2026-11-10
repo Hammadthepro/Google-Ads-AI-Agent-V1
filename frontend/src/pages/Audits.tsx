@@ -81,7 +81,7 @@ function Gbp({ r }: { r: any }) {
   const rows = [r.client && { ...r.client, who: "Client" }, ...(r.competitors ?? []).filter(Boolean).map((c: any) => ({ ...c, who: "Competitor" }))].filter(Boolean);
   return (
     <div className="space-y-4">
-      {r.client?.simulated && <Notice tone="violet">Business listings and reviews below are SIMULATED (mock Places data).</Notice>}
+      {r.client?.simulated && <Notice tone="violet">Business listings and reviews below come from a test fixture, not Google Places.</Notice>}
       <Table rows={rows} columns={[{ key: "who", label: "" }, { key: "name", label: "Business" }, { key: "rating", label: "Rating" },
         { key: "user_rating_count", label: "Reviews" }, { key: "primary_category", label: "Category" }, { key: "photo_count", label: "Photos (sample)" }, { key: "phone", label: "Phone" }]} />
       <ul className="list-disc pl-5 text-sm">{r.findings.map((f: string) => <li key={f}>{f}</li>)}</ul>

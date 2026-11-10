@@ -17,9 +17,9 @@ export default function Accounts() {
   const nameOf = (id: string) => clients.data?.find((c: any) => c.id === id)?.name;
   return (
     <div className="space-y-6">
-      <PageHeader title="Google Ads Accounts" subtitle="Accounts reachable through the selected Google Ads adapter. Linking an account to a client never changes anything in Google Ads."
+      <PageHeader title="Google Ads Accounts" subtitle="Accounts reachable through the connected Google Ads login. Linking an account to a client never changes anything in Google Ads."
         actions={can("clients.edit") && <Button variant="primary" onClick={() => discover.mutate({})} disabled={discover.isPending}>{discover.isPending ? "Discovering…" : "Discover accessible accounts"}</Button>} />
-      <Notice tone="violet">These accounts come from the <b>simulated</b> Google Ads environment (MOCK). Connecting real accounts uses the separate Google Ads OAuth flow on the Integrations page and stays read-only until real writes are explicitly authorized.</Notice>
+      <Notice tone="blue">Accounts come from your connected Google Ads login (configure it on the <a className="underline" href="/integrations">Integrations page</a>). The app stays read-only until real writes are explicitly authorized.</Notice>
       <ErrorBox error={discover.error || link.error || sync.error} />
       <Card title="Accounts">
         {accounts.isLoading ? <Spinner /> : (

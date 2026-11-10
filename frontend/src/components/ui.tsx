@@ -54,7 +54,7 @@ const STATUS_TONE: Record<string, string> = {
   NOT_APPLIED: "slate", RECONCILE_CONFLICT: "red", COMPLETED: "green", RUNNING: "blue", QUEUED: "slate",
   AWAITING_APPROVAL: "amber", BLOCKED_TRACKING: "red", EXECUTED_PAUSED: "blue", OPEN: "amber", RESOLVED: "green",
   IN_PROGRESS: "blue", HELD: "slate", SHADOW: "violet", PROPOSED: "blue", APPLIED: "green", GO: "green", HOLD: "slate",
-  FEASIBLE: "green", PARTIALLY_FEASIBLE: "amber", UNREALISTIC: "red", "MOCK CONNECTED": "violet", CONNECTED: "green", ERROR: "red",
+  FEASIBLE: "green", PARTIALLY_FEASIBLE: "amber", UNREALISTIC: "red", CONNECTED: "green", ERROR: "red", NOT_CONFIGURED: "slate", AUTH_FAILED: "red", RATE_LIMITED: "amber",
   AWAITING_WINNER: "amber", HIGH: "red", MEDIUM: "amber", LOW: "slate", CRITICAL: "red", SIMULATED: "violet", INTERNAL: "blue",
   APPROVE: "green", REVISE: "amber", REJECT: "red", PASS: "green", FAIL: "red", WARN: "amber",
 };
@@ -64,11 +64,32 @@ export function StatusBadge({ value }: { value?: string | null }) {
   return <Badge tone={STATUS_TONE[value] ?? "slate"}>{value.replace(/_/g, " ")}</Badge>;
 }
 
-/** Every result shows where its data came from. Mock data is never presented as live. */
+/** Every result shows where its data came from. Only data retrieved from a real service is labelled LIVE. */
 export function DataSourceBadge({ source }: { source?: string | null }) {
-  const s = (source || "MOCK").toUpperCase();
-  const tone = s === "LIVE" ? "green" : s === "MIXED" ? "amber" : "violet";
-  return <Badge tone={tone} title="Data source">{s === "MOCK" ? "MOCK DATA" : s === "LIVE" ? "LIVE DATA" : "MIXED DATA"}</Badge>;
+  const s = (source || "NONE").toUpperCase();
+  const tone = s === "LIVE" ? "green" : s === "MIXED" ? "amber" : s === "MOCK" ? "violet" : "slate";
+  const label = s === "LIVE" ? "LIVE DATA" : s === "MIXED" ? "MIXED DATA" : s === "MOCK" ? "TEST FIXTURE" : "NO DATA SOURCE";
+  return <Badge tone={tone} title="Data source">{label}</Badge>;
+}
+
+export type DataStatus = { state: "not_configured" | "no_account" | "no_data" | "data_available" | "historical" | "failed"; message?: string; retrieved_at?: string | null };
+
+/** What the numbers on a screen are: current, historical (a refresh failed), missing, or blocked by a missing integration. */
+export function DataStatusNotice({ status }: { status?: DataStatus | null }) {
+  if (!status || status.state === "data_available") return null;
+  const when = status.retrieved_at ? new Date(status.retrieved_at).toLocaleString() : "";
+  switch (status.state) {
+    case "not_configured":
+      return <Notice tone="amber"><b>Google Ads integration is not configured.</b> Please configure and test your connection on the <a className="underline" href="/integrations">Integrations page</a>.</Notice>;
+    case "no_account":
+      return <Notice tone="blue">{status.message || "No Google Ads account is linked to this client yet."}</Notice>;
+    case "no_data":
+      return <Notice tone="blue">No Google Ads data available. {status.message}</Notice>;
+    case "historical":
+      return <Notice tone="amber"><b>Historical data</b> — last retrieved {when}. {status.message}</Notice>;
+    default:
+      return <Notice tone="red">{status.message || "Google Ads data could not be retrieved."}</Notice>;
+  }
 }
 
 type BtnProps = { children: ReactNode; onClick?: () => void; variant?: "primary" | "secondary" | "danger" | "ghost"; disabled?: boolean; type?: "button" | "submit"; title?: string; size?: "sm" | "md" };
@@ -168,9 +189,11 @@ export function ErrorBox({ error }: { error: unknown }) {
   const msg = (error as any)?.message ?? String(error);
   const reasons: string[] = (error as any)?.details?.reasons ?? [];
   const errs: any[] = (error as any)?.details?.errors ?? [];
+  const notConfigured = (error as any)?.code === "integration_not_configured";
   return (
-    <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+    <div role="alert" className={cx("rounded-lg border px-4 py-3 text-sm", notConfigured ? "border-amber-200 bg-amber-50 text-amber-900" : "border-rose-200 bg-rose-50 text-rose-800")}>
       <div className="font-medium">{msg}</div>
+      {notConfigured && <a className="mt-1 inline-block underline" href="/integrations">Open the Integrations page</a>}
       {reasons.length > 0 && <ul className="mt-1 list-disc pl-5">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
       {errs.length > 0 && <ul className="mt-1 list-disc pl-5">{errs.slice(0, 6).map((e, i) => <li key={i}>{e.msg ?? JSON.stringify(e)}</li>)}</ul>}
     </div>

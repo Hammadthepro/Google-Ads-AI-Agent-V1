@@ -15,7 +15,7 @@ export function CompetitionPanel({ comp }: { comp: any }) {
       <div className="grid gap-3 md:grid-cols-2">
         {Object.entries(comp.providers).map(([side, p]: any) => (
           <div key={side} className="rounded-lg border border-slate-200 p-3 text-sm">
-            <div className="flex items-center justify-between"><b>{SIDE_LABEL[side]}</b><Badge tone={p.source === "LIVE" ? "green" : "violet"}>{p.source === "LIVE" ? "LIVE AI" : "MOCK AI"}</Badge></div>
+            <div className="flex items-center justify-between"><b>{SIDE_LABEL[side]}</b><Badge tone={p.source === "LIVE" ? "green" : "violet"}>{p.source === "LIVE" ? "LIVE AI" : "TEST FIXTURE"}</Badge></div>
             <div className="mt-1 text-slate-600">{p.provider} · {p.model ?? "no draft"}</div>
             <div className="text-xs text-slate-500">prompt {p.prompt ?? "—"}</div>
             {comp.errors?.[side] && <div className="mt-1 text-xs text-rose-700">Failed: {comp.errors[side]}</div>}

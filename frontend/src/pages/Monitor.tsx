@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
-import { Badge, Button, Card, DataSourceBadge, dt, ErrorBox, money, Notice, PageHeader, pct, Select, Spinner, Stat, StatusBadge, Table, Tabs } from "../components/ui";
+import { Badge, Button, Card, DataSourceBadge, DataStatusNotice, dt, ErrorBox, money, Notice, PageHeader, pct, Select, Spinner, Stat, StatusBadge, Table, Tabs } from "../components/ui";
 
 function Spark({ points }: { points: number[] }) {
   if (points.length < 2) return null;
@@ -47,6 +47,7 @@ export default function Monitor() {
       {opt.data && <Notice tone="violet">Optimisation ({opt.data.mode} mode): {opt.data.negatives_proposed} negatives proposed, {opt.data.negatives_applied} applied, {opt.data.negatives_held} held; {opt.data.big_changes} big-change proposals, {opt.data.held} held.</Notice>}
       {!data ? <Spinner /> : (
         <>
+          <DataStatusNotice status={data.data_status} />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Stat label="Spend (30d)" value={money(totals.cost)} />
             <Stat label="Conversions (30d)" value={totals.conv.toFixed(1)} />
@@ -81,7 +82,7 @@ export default function Monitor() {
             { key: "waste", label: "Wasted spend", content: <Card><Table rows={data.wasted_spend.terms} columns={[{ key: "term", label: "Search term" }, { key: "campaign", label: "Campaign" }, { key: "clicks", label: "Clicks" }, { key: "cost", label: "Cost", render: (t) => money(t.cost) }, { key: "conversions_90d", label: "Conv. 90d" }]} /></Card> },
             { key: "terms", label: "Search terms", content: <Card><Table rows={terms.data ?? []} columns={[{ key: "term", label: "Search term" }, { key: "matched_keyword", label: "Keyword" }, { key: "campaign", label: "Campaign" }, { key: "clicks", label: "Clicks" }, { key: "cost", label: "Cost", render: (t) => money(t.cost) }, { key: "conversions", label: "Conv." }]} /></Card> },
             { key: "changes", label: "Change history", content: <Card><Table rows={data.change_events} columns={[{ key: "changed_at", label: "When", render: (c) => dt(c.changed_at) }, { key: "user", label: "User" }, { key: "client_type", label: "Via" }, { key: "change", label: "Change" }, { key: "resource", label: "Resource", className: "text-xs" }, { key: "made_outside_app", label: "", render: (c) => c.made_outside_app ? <Badge tone="amber">manual change outside app</Badge> : <Badge>this app</Badge> }]} /></Card> },
-            { key: "brake", label: "Emergency brake", content: <Card><Notice tone="violet">Deterministic hourly rules, no AI. In V1 Google Ads actions are SIMULATED; freezing automation is applied internally.</Notice><div className="mt-3"><Table rows={(events.data ?? []).filter((e: any) => e.client_id === clientId)} empty="No events for this client." columns={[{ key: "created_at", label: "When", render: (e) => dt(e.created_at) }, { key: "rule", label: "Rule" }, { key: "severity", label: "Severity", render: (e) => <StatusBadge value={e.severity} /> }, { key: "action", label: "Action" }, { key: "action_mode", label: "Mode", render: (e) => <StatusBadge value={e.action_mode} /> }, { key: "message", label: "Detail", className: "max-w-md text-xs" }]} /></div></Card> },
+            { key: "brake", label: "Emergency brake", content: <Card><Notice tone="violet">Deterministic hourly rules, no AI. By default the brake only freezes automation inside the app; changing real campaigns requires EMERGENCY_BRAKE_WRITE_MODE=real.</Notice><div className="mt-3"><Table rows={(events.data ?? []).filter((e: any) => e.client_id === clientId)} empty="No events for this client." columns={[{ key: "created_at", label: "When", render: (e) => dt(e.created_at) }, { key: "rule", label: "Rule" }, { key: "severity", label: "Severity", render: (e) => <StatusBadge value={e.severity} /> }, { key: "action", label: "Action" }, { key: "action_mode", label: "Mode", render: (e) => <StatusBadge value={e.action_mode} /> }, { key: "message", label: "Detail", className: "max-w-md text-xs" }]} /></div></Card> },
           ]} />
         </>
       )}
