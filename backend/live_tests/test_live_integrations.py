@@ -73,6 +73,8 @@ def test_google_ads_account_read_and_campaign_data(integration):
 def test_provider_connection(integration, provider, target):
     res = integration(provider, target)
     why = blocker(res)
+    if provider == "crawler" and not res["ok"] and "HTTP 0" in str(res["steps"]) and not why:
+        why = "the crawler could not fetch (network)"
     if why and not res["ok"]:
         blocked(why)
     assert res["ok"], [s for s in res["steps"] if s["status"] == "FAILED"]
