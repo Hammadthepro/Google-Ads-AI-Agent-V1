@@ -70,10 +70,10 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 - Credentials from environment variables win over `.env`; if `AI_PROVIDER` is set in the environment, change it there. Enabling Groq on the Integrations page activates it regardless.
 
 ## Real-integration transition (2026-11)
-* **Google Ads data retrieval is BLOCKED for this project's Google Cloud project**: it only has Test access to the Google Ads API
-  (`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`). OAuth, token refresh and the accessible-customer list work; reading client-account data
-  (campaigns, metrics, search terms, Keyword Planner) needs Explorer access or higher. The real adapter is covered by contract tests with a
-  fake client, but a live read of production data has **not** been verified.
+* **Google Ads client account is not a test account (diagnosed 2026-11-10).** The OAuth client, refresh token and API enablement are valid. The
+  configured client account 4433432999 is a non-test account, and Google answers `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` ("only approved for use with
+  test accounts"). The only test account reachable by this Google user is manager 9952730299 (status CLOSED, no client accounts). Fix: create a test
+  manager + test client in Google Ads and enter their IDs, or raise the project's access level to read the real account. Keyword Planner needs Basic or Standard.
 * Not configured on the verified setup: Claude, Places, GA4, Business Profile, SMTP (live tests report NOT CONFIGURED).
 * Lead Generation Agent, Outreach Agent, a separate Market Research Agent and a GA4 analytics view are not implemented (nothing was faked).
 * Legacy `mock_gads_*` tables remain in the schema (no destructive migration); nothing reads them.

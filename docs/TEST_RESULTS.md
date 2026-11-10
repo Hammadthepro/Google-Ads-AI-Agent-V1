@@ -7,7 +7,7 @@
 | Lint (`ruff --select F,E9`) | clean |
 | Migrations | head 0005 (no new migration; legacy mock tables kept, unused) |
 | Browser E2E (`e2e/ui-smoke.mjs`, real stack, empty DB) | passed |
-| Live suite (`bash scripts/live-tests.sh`) | 7 PASSED, 5 NOT CONFIGURED (Claude, Places, GA4, Business Profile, SMTP), 5 BLOCKED (Google Ads API access = Test level; PageSpeed keyless quota; crawler: this sandbox has no DNS). Skipped is never counted as passed. |
+| Live suite (`bash scripts/live-tests.sh`) | 7 PASSED, 5 NOT CONFIGURED (Claude, Places, GA4, Business Profile, SMTP), 5 BLOCKED (Google Ads: the configured client account is not a test account; PageSpeed keyless quota; crawler: this sandbox has no DNS). Skipped is never counted as passed. |
 
 Older results below are historical (mock-mode era).
 

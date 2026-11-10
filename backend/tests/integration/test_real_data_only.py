@@ -154,7 +154,7 @@ def test_test_access_only_project_gets_the_exact_fix_not_a_generic_error():
     from app.adapters.base import PermissionDenied
     with pytest.raises(PermissionDenied) as exc:
         _ads_with(stream).get_customer("1112223333")
-    assert "Explorer access" in exc.value.message
+    assert "not a test account" in exc.value.message
 
 
 def test_adapter_errors_reach_the_user_as_safe_messages():

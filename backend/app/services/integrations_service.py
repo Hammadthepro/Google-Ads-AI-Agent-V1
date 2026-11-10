@@ -462,8 +462,9 @@ def _ads_hint(resp: httpx.Response, project: str) -> tuple[str, str]:
         return (f"The Google Ads API is not enabled in the Cloud project that owns your OAuth client. Enable it: {ADS_LIBRARY}"
                 + (f"?project={project}" if project else ""), "api_disabled")
     if "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION" in both or "ACTION_NOT_PERMITTED" in both:
-        return ("Your Google Cloud project only has Test access, which works with test accounts. Apply for Explorer access on the "
-                f"Google Ads API Overview page: {link}", "test_only")
+        return ("This Google Cloud project has Test access, which can only call Google Ads TEST accounts, and the account you entered is not a "
+                "test account. Either enter a test client account (create a test manager + test client in Google Ads and use their IDs), or, to read "
+                f"a real account, apply for a higher access level on the Google Ads API Overview page: {link}", "test_only")
     if "USER_PERMISSION_DENIED" in both or "PERMISSION_DENIED" in both:
         return ("The Google user who authorised the refresh token cannot access this account. Give that user access in Google Ads, "
                 "or set the manager (login) customer ID that links the accounts.", "no_permission")
@@ -555,7 +556,7 @@ def _test_google_ads(vals: dict, http: httpx.Client, steps: Steps, row: Integrat
                 steps.fail("Client account: read account information", _http_error(r), hint=hint, sub="client")
                 if kind == "test_only":
                     access["level"] = "test"
-                    access["basis"] = "Google answered CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION: this project has Test access only (test accounts)."
+                    access["basis"] = "Google answered CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION: this project is approved for test accounts only, and the account queried is not a test account."
                 return disc
             c = (r.json().get("results") or [{}])[0].get("customer", {})
             disc["client"] = {"id": c.get("id", cust), "name": c.get("descriptiveName", ""), "manager": bool(c.get("manager")),

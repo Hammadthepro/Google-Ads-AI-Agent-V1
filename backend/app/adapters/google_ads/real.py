@@ -1,7 +1,7 @@
 """RealGoogleAdsAdapter — official google-ads Python library.
 
 STATUS: the connection test (OAuth, accessible customers, customer read) is verified live; reading campaign data from a
-production account additionally needs API access (Explorer or higher) for the Google Cloud project that owns the OAuth client.
+non-test account needs a higher API access level than Test for the Google Cloud project that owns the OAuth client.
 Contract tests run against a fake client; live tests report NOT CONFIGURED / BLOCKED instead of passing without credentials.
 
 Defence in depth: `mutate()` refuses every non-validate-only call unless ALL write keys are set,
@@ -140,8 +140,8 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
             self._flag_integration("AUTHORIZATION_EXPIRED", "Google rejected the saved authorization. Reconnect Google Ads on the Integrations page.")
             return AuthError("Google Ads rejected the saved authorization. Reconnect Google Ads on the Integrations page.", adapter=self.name)
         if "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION" in text:
-            return PermissionDenied("Your Google Cloud project only has Test access to the Google Ads API, so production accounts cannot be read. "
-                                    "Apply for Explorer access in Google Cloud Console (APIs & Services > Google Ads API).", adapter=self.name,
+            return PermissionDenied("Your Google Cloud project has Test access to the Google Ads API, which only works with test accounts, and this account is not a test "
+                                    "account. Use a test account ID, or apply for a higher API access level to read real accounts.", adapter=self.name,
                                     details={"reason": "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"})
         if "AUTHORIZATION" in text or "PERMISSION_DENIED" in text or "USER_PERMISSION_DENIED" in text:
             return PermissionDenied("The authorised Google user cannot access this Google Ads account. Check the customer ID and manager (login) ID.", adapter=self.name)

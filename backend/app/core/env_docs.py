@@ -34,7 +34,7 @@ NOTES = {
                            "# This is NOT the Google Ads OAuth client below. BOOTSTRAP_ADMIN_EMAIL becomes the first Super Admin; everyone else is invited."),
     "Google Ads": ("# Google Ads API. NO developer token: Google sunset them on 2026-09-09. API access levels (Test / Explorer / Basic / Standard)\n"
                    "# belong to the Google Cloud project that owns the OAuth client below; see the Google Ads API Overview page in Cloud Console.\n"
-                   "# A production account needs Explorer access or higher (apply there); test accounts work with Test access.\n"
+                   "# Test access calls TEST accounts only; a non-test account needs a higher level. Keyword Planner needs Basic or Standard.\n"
                    "# OAuth client = where you authorise Ads (different from the sign-in client above).\n"
                    "# GOOGLE_ADS_LOGIN_CUSTOMER_ID = your MANAGER (MCC) account, only if you use one; GOOGLE_ADS_CUSTOMER_ID = a CLIENT account.\n"
                    "# 10 digits, dashes allowed. Do not put the manager ID in both."),
@@ -94,7 +94,7 @@ def render_docs() -> str:
          "## Google Ads: no developer token",
          "Google **sunset developer tokens on 2026-09-09** ([official guide](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)). Sending one is optional and ignored, so the app neither requires nor sends `GOOGLE_ADS_DEVELOPER_TOKEN`. "
          "What matters now is the **API access level of the Google Cloud project that owns your OAuth client** (Test, Explorer, Basic or Standard), shown on the Google Ads API Overview page in Cloud Console:",
-         "- Test access works with Google Ads *test accounts* only. Calling a production account returns `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; the Integrations page then tells you to apply for **Explorer access** (automatic) for that project.",
+         "- Test access works with Google Ads *test accounts* only. Calling a production account returns `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; the Integrations page then tells you to use a test account ID or apply for a higher access level. Keyword Planner services need Basic or Standard access.",
          "- The Google Ads API must be enabled in that project; the connection test says so if it is not.",
          "- The Google API does not expose the access level, so the dashboard shows what the real responses prove (API enabled; test-only / production account readable) and links to the Overview page.", "",
          "## Google Ads IDs",

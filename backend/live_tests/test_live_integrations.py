@@ -58,8 +58,8 @@ def test_google_ads_account_read_and_campaign_data(integration):
         metrics = ads.get_metrics(cid, end - dt.timedelta(days=6), end)
         terms = ads.get_search_terms(cid, end - dt.timedelta(days=29), end)
     except PermissionDenied as exc:
-        if "Explorer access" in exc.message:
-            blocked("the Google Cloud project only has Test access to the Google Ads API (apply for Explorer access)")
+        if "not a test account" in exc.message:
+            blocked("the configured customer is not a Google Ads test account but the project has Test access only")
         raise
     assert customer["customer_id"] == cid.replace("-", "")
     assert isinstance(camps, list) and isinstance(metrics, list) and isinstance(terms, list)

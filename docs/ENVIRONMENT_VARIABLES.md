@@ -22,7 +22,7 @@ Google sign-in is optional for local use: with `AUTH_PROVIDER=dev` (development 
 
 ## Google Ads: no developer token
 Google **sunset developer tokens on 2026-09-09** ([official guide](https://developers.google.com/google-ads/api/docs/api-policy/developer-token)). Sending one is optional and ignored, so the app neither requires nor sends `GOOGLE_ADS_DEVELOPER_TOKEN`. What matters now is the **API access level of the Google Cloud project that owns your OAuth client** (Test, Explorer, Basic or Standard), shown on the Google Ads API Overview page in Cloud Console:
-- Test access works with Google Ads *test accounts* only. Calling a production account returns `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; the Integrations page then tells you to apply for **Explorer access** (automatic) for that project.
+- Test access works with Google Ads *test accounts* only. Calling a production account returns `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`; the Integrations page then tells you to use a test account ID or apply for a higher access level. Keyword Planner services need Basic or Standard access.
 - The Google Ads API must be enabled in that project; the connection test says so if it is not.
 - The Google API does not expose the access level, so the dashboard shows what the real responses prove (API enabled; test-only / production account readable) and links to the Overview page.
 
