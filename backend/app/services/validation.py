@@ -188,7 +188,7 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
         if cur and (new - cur) > 0 and ((new - cur) / cur * 100 > pct or new - cur > abs_lim):
             warnings.append(_err("BUDGET_THRESHOLD", f"Budget increase {cur:.0f} → {new:.0f} exceeds the threshold; Super Admin approval required",
                                  severity="warning"))
-    # Google-side validate-only (mock simulates; real uses validate_only=true, which creates nothing)
+    # Google-side validate-only (validate_only=true asks Google to validate and creates nothing)
     adapter_result: dict = {}
     if run_adapter and ops and not errors:
         try:

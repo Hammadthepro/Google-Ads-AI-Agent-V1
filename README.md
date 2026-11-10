@@ -81,7 +81,8 @@ React + TypeScript + Vite + Tailwind → FastAPI (modular monolith) → PostgreS
 | [MODULE_BREAKDOWN](docs/MODULE_BREAKDOWN.md) | Modules and task-type flows |
 | [DATABASE_SCHEMA](docs/DATABASE_SCHEMA.md) | Entities |
 | [API_ENDPOINTS](docs/API_ENDPOINTS.md) | REST API (OpenAPI at `/api/docs`) |
-| [MOCK_API_GUIDE](docs/MOCK_API_GUIDE.md) | Simulated world, scenarios, failure injection |
+| [REAL_DATA_ONLY](docs/REAL_DATA_ONLY.md) | How missing/failed integrations behave, data status, demo-data purge |
+| [TEST_FAKES_GUIDE](docs/TEST_FAKES_GUIDE.md) | Test-only fakes and live tests |
 | [REAL_API_INTEGRATION_PLAN](docs/REAL_API_INTEGRATION_PLAN.md) | **How to connect real credentials** |
 | [AUTHENTICATION_AND_ROLES](docs/AUTHENTICATION_AND_ROLES.md) | Login, sessions, permissions |
 | [GOOGLE_ADS_SAFETY_RULES](docs/GOOGLE_ADS_SAFETY_RULES.md) | Non-negotiable safety rules |
@@ -92,4 +93,4 @@ React + TypeScript + Vite + Tailwind → FastAPI (modular monolith) → PostgreS
 | [KNOWN_ISSUES](docs/KNOWN_ISSUES.md) | Limitations, unverified integrations |
 | [IMPLEMENTATION_PROGRESS](docs/IMPLEMENTATION_PROGRESS.md) | Phase tracker |
 
-All clients, businesses, people, reviews and `*.example` domains in the mock data are fictional.
+

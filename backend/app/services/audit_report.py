@@ -6,7 +6,7 @@ Every finding carries:
   evidence  VERIFIED (confirmed from a source) | ESTIMATED (tool/indicator based) | AI_GENERATED (hypothesis to validate)
             | UNAVAILABLE (could not be accessed) | NOT_APPLICABLE
   status    PASS | WARN | FAIL | INFO | UNAVAILABLE | NA
-  source + date, and `simulated` when the underlying data came from a mock adapter.
+  source + date, and `simulated` only when the data came from a test fixture.
 Scores are computed from findings only (weight × credit); UNAVAILABLE / N/A / INFO checks are excluded from the
 denominator and reported as coverage, never silently counted as passes or failures. Nothing here is fabricated:
 a metric the sources did not return is labelled unavailable.

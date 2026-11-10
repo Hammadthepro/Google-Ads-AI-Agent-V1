@@ -23,7 +23,7 @@ PHONE = re.compile(r"\d{3}[\s.\-)]*\d{3}[\s.\-]*\d{4}")
 
 
 def _label(side: str, provider) -> str:
-    return f"{side}:{'live' if provider.source == 'LIVE' else 'mock'}"
+    return f"{side}:{'live' if provider.source == 'LIVE' else 'test'}"
 
 
 def _providers() -> dict:

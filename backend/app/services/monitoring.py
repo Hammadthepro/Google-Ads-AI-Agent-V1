@@ -1,4 +1,4 @@
-"""Daily monitoring (step 10): pulls/simulates results, re-downloads the last 30 days (conversion lag),
+"""Daily monitoring (step 10): pulls real results, re-downloads the last 30 days (conversion lag),
 re-checks tracking, records search terms, calls and manual changes. Numbers come only from the adapter."""
 from __future__ import annotations
 

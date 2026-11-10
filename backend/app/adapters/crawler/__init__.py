@@ -1,7 +1,5 @@
-"""CrawlerAdapter: fetches raw HTTP responses. Parsing lives in services/crawler_service.py (shared by both modes).
+"""CrawlerAdapter: fetches raw HTTP responses. Parsing lives in services/crawler_service.py.
 
-FixtureCrawlerAdapter serves the fictional *.example sites from mock_world.fixtures, rendered to real HTML,
-so the genuine BeautifulSoup/lxml/extruct parsing code is exercised without touching the internet.
 LiveCrawlerAdapter uses httpx with an SSRF guard applied to every redirect hop.
 """
 from __future__ import annotations
@@ -86,11 +84,6 @@ class CrawlerAdapter(ABC):
 
     def render_js(self, url: str) -> FetchResult | None:
         return None
-
-
-# ---------------------------------------------------------------- fixture mode
-
-
 
 
 # ---------------------------------------------------------------- live mode

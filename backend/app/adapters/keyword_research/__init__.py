@@ -1,4 +1,4 @@
-"""KeywordResearchAdapter interface + mock + real (Google Ads KeywordPlanIdeaService)."""
+"""KeywordResearchAdapter interface + real (Google Ads KeywordPlanIdeaService)."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

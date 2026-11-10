@@ -1,3 +1,5 @@
+> **Note:** the app is now real-integration-only (no mock mode, no demo data). Mentions of mock mode, seeding or demo users below are historical; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md).
+
 # Implementation Plan V2 — Product Vision "Google Search Ads AI Agent"
 
 Scope: Google Ads **Search** campaigns only (lead generation). No Meta / Facebook / Instagram / Local Services Ads.

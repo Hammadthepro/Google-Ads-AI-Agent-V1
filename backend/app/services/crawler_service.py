@@ -1,4 +1,4 @@
-"""Website crawling + parsing (identical code path for fixture and live crawler adapters).
+"""Website crawling + parsing (the same code path serves any CrawlerAdapter).
 
 Detecting a Google tag proves only that a tag is INSTALLED — never that a conversion fires.
 """

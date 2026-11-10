@@ -118,10 +118,9 @@ PROVIDERS: dict[str, dict] = {
     },
     "crawler": {
         "label": "Website crawler", "group": "Website research",
-        "description": "SSRF-guarded crawler. 'live' fetches real sites; 'fixture' uses bundled demo pages.",
-        "settings": {"mode": "fixture | live"}, "secrets": {}, "required": [],
+        "description": "SSRF-guarded crawler that fetches real websites. Needs no credentials.",
+        "settings": {}, "secrets": {}, "required": [],
         "subtests": [("fetch", "Live page fetch")], "required_subtests": ["fetch"],
-        "default_settings": {"mode": "fixture"},
         "docs": "",
     },
 }
@@ -164,8 +163,6 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
         if k not in spec["settings"]:
             raise ValidationFailed(f"Unknown setting '{k}' for {provider}")
         cur[k] = (v or "").strip() if isinstance(v, str) else v
-    if provider == "crawler" and cur.get("mode") not in (None, "fixture", "live"):
-        raise ValidationFailed("crawler mode must be 'fixture' or 'live'")
     for k in ("customer_id", "login_customer_id"):
         if cur.get(k):
             digits = cur[k].replace("-", "")
@@ -872,11 +869,6 @@ def _test_places(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
 
 
 def _test_crawler(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
-    mode = vals.get("mode", "fixture")
-    steps.ok("Mode", mode)
-    if mode != "live":
-        steps.skip("Fetch a page", "Fixture mode serves bundled demo pages; nothing real is fetched, so this is NOT a connection. Set the crawler mode to live to test.", sub="fetch")
-        return {}
     from app.adapters.crawler import LiveCrawlerAdapter
     try:
         res = LiveCrawlerAdapter().fetch("https://example.com/")

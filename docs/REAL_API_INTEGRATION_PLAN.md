@@ -1,3 +1,5 @@
+> **Note:** the app is now real-integration-only (no mock mode, no demo data). Mentions of mock mode, seeding or demo users below are historical; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md).
+
 # Real API Integration Plan
 
 Status: **Real adapters implemented, not verified live.** No real integration is enabled; real writes are disabled. Access requirements below must be re-verified against official documentation at the time each adapter is built (Phase 16); Google changes access tiers and procedures.

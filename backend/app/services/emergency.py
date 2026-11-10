@@ -1,7 +1,7 @@
 """Emergency brake (step 10b): hourly, deterministic rules only — no AI.
 
-In V1 every Google Ads action is SIMULATED (recorded, not executed). Freezing automation is an internal
-flag and is always applied. Real emergency writes need EMERGENCY_BRAKE_WRITE_MODE=real AND a separate
+By default (EMERGENCY_BRAKE_WRITE_MODE=simulate) a Google Ads action is only RECORDED as SIMULATED, never executed — a
+safety mode, not demo data. Freezing automation is an internal flag and is always applied. Real emergency writes need EMERGENCY_BRAKE_WRITE_MODE=real AND a separate
 Super Admin authorization (decision D-09) — both off by default.
 """
 from __future__ import annotations

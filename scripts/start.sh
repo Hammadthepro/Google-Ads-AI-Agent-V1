@@ -44,7 +44,7 @@ echo "    Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || 
 # ---------------------------------------------------------------- 3. .env (writes disabled)
 bash scripts/create-env.sh
 if grep -qE '^GOOGLE_ADS_WRITES_ENABLED=true' .env; then
-  echo "WARNING: .env sets GOOGLE_ADS_WRITES_ENABLED=true. The demo is meant to run with real writes disabled." >&2
+  echo "WARNING: .env sets GOOGLE_ADS_WRITES_ENABLED=true. The app is meant to run with real writes disabled." >&2
 fi
 
 # ---------------------------------------------------------------- 4. Build + start the six services
@@ -79,7 +79,7 @@ fi
 echo
 compose ps
 echo
-echo "==> Configuration check (prints no secret values; warnings do not stop the demo)…"
+echo "==> Configuration check (prints no secret values; warnings do not stop the start-up)…"
 compose exec -T backend python -m app.cli check-env --brief || echo "    ^ fix the errors above, or run: bash scripts/check-env.sh"
 echo
 echo "Ready. Open the forwarded port 5173 (Ports tab → globe icon), sign in, then open Integrations to connect Google Ads, Groq and the rest."

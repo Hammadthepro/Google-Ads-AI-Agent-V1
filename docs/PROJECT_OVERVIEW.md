@@ -1,3 +1,5 @@
+> **Note:** this document describes the original V1 design, which included a mock mode. The application is now real-integration-only; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md) and [TEST_FAKES_GUIDE.md](TEST_FAKES_GUIDE.md). Mentions of mock mode below are historical.
+
 # Project Overview
 
 Status: **Implemented in V1 (mock mode).** See IMPLEMENTATION_PROGRESS.md and KNOWN_ISSUES.md.

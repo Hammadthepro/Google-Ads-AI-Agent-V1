@@ -1,3 +1,5 @@
+> **Note:** the app is now real-integration-only (no mock mode, no demo data). Mentions of mock mode, seeding or demo users below are historical; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md).
+
 # Authentication and Roles
 
 Status: **Implemented in V1** (tests: see TEST_RESULTS.md). Built in Phase 2.

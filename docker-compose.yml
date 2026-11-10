@@ -1,4 +1,4 @@
-# Local / single-server deployment. Mock mode by default — no external credentials needed.
+# Local / single-server deployment. Starts empty: configure integrations on the Integrations page.
 #   cp .env.example .env   (set APP_SECRET_KEY)
 #   docker compose up --build -d
 #   docker compose exec backend python -m app.cli create-super-admin you@example.com

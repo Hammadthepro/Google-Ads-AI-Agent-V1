@@ -32,4 +32,3 @@ Original plan: Prefix `/api/v1`. Every route except health and login requires a 
 | Integrations | `GET /integrations`, `POST /integrations/{name}/test` | Admin |
 | Settings | `GET/PATCH /settings`, `POST /settings/real-writes-authorization` | Super Admin |
 | Activity | `GET /activity-logs` | per role |
-| Mock controls (TEST_MODE only) | `POST /dev/mock/reset`, `POST /dev/mock/advance-time`, `POST /dev/mock/failures` | Super Admin |

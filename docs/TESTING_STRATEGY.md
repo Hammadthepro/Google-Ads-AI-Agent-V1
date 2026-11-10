@@ -1,3 +1,5 @@
+> **Note:** the app is now real-integration-only (no mock mode, no demo data). Mentions of mock mode, seeding or demo users below are historical; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md).
+
 # Testing Strategy
 
 Status: **Implemented in V1** (tests: see TEST_RESULTS.md).

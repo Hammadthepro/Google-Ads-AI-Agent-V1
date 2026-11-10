@@ -1,3 +1,5 @@
+> **Note:** the app is now real-integration-only (no mock mode, no demo data). Mentions of mock mode, seeding or demo users below are historical; see [REAL_DATA_ONLY.md](REAL_DATA_ONLY.md).
+
 # Deployment & Setup Guide
 
 Everything runs in **mock mode** with no external credentials. Real Google Ads writes stay disabled.

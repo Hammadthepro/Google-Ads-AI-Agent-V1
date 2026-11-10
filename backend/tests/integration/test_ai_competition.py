@@ -38,7 +38,7 @@ def test_both_sides_get_identical_inputs_and_cross_challenge():
     assert c["mode"] == "dual" and c["identical_inputs"] and c["agreement_is_not_proof"]
     drafts = [r for r in runs if r[0] == "DRAFT_CAMPAIGN"]
     assert len(drafts) == 2 and drafts[0][2:] == drafts[1][2:]  # same template, version AND input hash
-    assert {r[1] for r in drafts} == {"internal:mock", "claude:mock"}
+    assert {r[1] for r in drafts} == {"internal:test", "claude:test"}
     assert set(c["challenges"]) == {"internal_on_claude", "claude_on_internal"}
     assert c["comparison"]["comparable"] and "signal, not proof" in c["comparison"]["note"]
 

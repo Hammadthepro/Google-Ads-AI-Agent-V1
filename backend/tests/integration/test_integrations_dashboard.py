@@ -65,11 +65,18 @@ def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
         reset_settings_cache()
 
 
-def test_crawler_in_fixture_mode_is_never_reported_connected():
+def test_crawler_is_connected_only_after_a_real_fetch_succeeds(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from app.adapters.crawler import LiveCrawlerAdapter
     with session_scope() as db:
-        res = svc.test_connection(db, "crawler", http=_client(lambda r: httpx.Response(404)))
-        assert res["connected"] is False and res["subtests"]["fetch"]["status"] == "SKIPPED"
-        assert svc.serialize(db, "crawler")["display"]["label"] == "Not tested"
+        assert svc.serialize(db, "crawler")["settings"] == {}  # no fixture/live switch any more
+        monkeypatch.setattr(LiveCrawlerAdapter, "fetch", lambda self, url: NS(status=503))
+        res = svc.test_connection(db, "crawler")
+        assert res["connected"] is False and res["subtests"]["fetch"]["status"] == "FAILED"
+        monkeypatch.setattr(LiveCrawlerAdapter, "fetch", lambda self, url: NS(status=200))
+        res = svc.test_connection(db, "crawler")
+        assert res["connected"] is True and svc.serialize(db, "crawler")["display"]["label"] == "Connected"
 
 
 def test_database_and_redis_are_real_checks():

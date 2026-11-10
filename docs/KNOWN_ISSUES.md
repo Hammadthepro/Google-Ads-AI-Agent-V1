@@ -68,3 +68,13 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 - Google sign-in has no automatic test (it is verified by signing in). The crawler in fixture mode is never "Connected".
 - Which Groq models work depends on the Groq plan; the dashboard lists the chat models your key can use and sends a real JSON-mode request to the primary and challenger.
 - Credentials from environment variables win over `.env`; if `AI_PROVIDER` is set in the environment, change it there. Enabling Groq on the Integrations page activates it regardless.
+
+## Real-integration transition (2026-11)
+* **Google Ads data retrieval is BLOCKED for this project's Google Cloud project**: it only has Test access to the Google Ads API
+  (`CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`). OAuth, token refresh and the accessible-customer list work; reading client-account data
+  (campaigns, metrics, search terms, Keyword Planner) needs Explorer access or higher. The real adapter is covered by contract tests with a
+  fake client, but a live read of production data has **not** been verified.
+* Not configured on the verified setup: Claude, Places, GA4, Business Profile, SMTP (live tests report NOT CONFIGURED).
+* Lead Generation Agent, Outreach Agent, a separate Market Research Agent and a GA4 analytics view are not implemented (nothing was faked).
+* Legacy `mock_gads_*` tables remain in the schema (no destructive migration); nothing reads them.
+* PageSpeed without an API key can hit the keyless quota (live test reports BLOCKED).

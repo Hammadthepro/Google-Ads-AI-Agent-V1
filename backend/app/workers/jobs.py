@@ -73,7 +73,7 @@ def evaluate_predictions():
 
 
 def run_daily_cycle() -> list[dict]:
-    """One simulated day: the same jobs Celery beat runs on a schedule."""
+    """One daily cycle: the same jobs Celery beat runs on a schedule."""
     out = [daily_sync(), recheck_tracking(), optimize_all(), hourly_brake(), recheck_fixes(), approvals_sweep(), evaluate_predictions()]
     if clock.today().weekday() == 0:
         out.append(weekly_reports())

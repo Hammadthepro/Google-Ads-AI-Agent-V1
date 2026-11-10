@@ -78,7 +78,7 @@ FAILURE_CLASSES: dict[str, type[AdapterError]] = {
 @dataclass
 class AdapterResult(Generic[T]):
     data: T
-    source: str  # MOCK / LIVE
+    source: str  # LIVE (a test fake reports MOCK)
     adapter: str
     partial: bool = False
     warnings: list[str] = field(default_factory=list)

@@ -1,7 +1,7 @@
 # Google Ads AI Agent V1 — common commands
 .PHONY: up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint live-tests
 
-up:            ## build and start everything with Docker Compose (mock mode)
+up:            ## build and start everything with Docker Compose 
 	docker compose up --build -d
 down:
 	docker compose down
