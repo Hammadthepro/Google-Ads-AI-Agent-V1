@@ -74,8 +74,8 @@ def auth():
 def notifier():
     """Email via SMTP when SMTP is configured; otherwise alerts are kept in-app only and recorded as NOT_EMAILED."""
     from app.adapters.notifications import EmailNotifier, InAppNotifier
-    from app.core.config import get_settings
-    return EmailNotifier() if get_settings().SMTP_HOST else InAppNotifier()
+    v = integrations_service.resolve("smtp")
+    return EmailNotifier() if v.get("host") and v.get("from_email") and not v.get("_disabled") else InAppNotifier()
 
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,

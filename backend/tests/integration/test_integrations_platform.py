@@ -241,7 +241,7 @@ def test_ga4_and_groq_and_claude_steps():
         _save_ads(db)
         svc.save(db, "ga4", settings={"property_id": "42"}, secrets={"refresh_token": "1//0ga4refresh"}, user_id=None)
         res = svc.test_connection(db, "ga4", http=_client(_google_handler()))
-        assert res["ok"] and [s["name"] for s in res["steps"]][-1] == "Run report"
+        assert res["ok"] and [s["name"] for s in res["steps"]][-1] == "Run report (Data API)"
 
         svc.save(db, "groq", settings={"model": "llama-x", "challenger_model": "other"}, secrets={"api_key": "gsk_abcdefghijk"}, user_id=None)
         chat_calls = []

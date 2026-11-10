@@ -33,7 +33,8 @@ def test_every_implemented_integration_is_listed_with_the_six_statuses():
     items = sup.get("/integrations").json()["integrations"]
     assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "gbp", "keyword_planner", "crawler",
                                                "smtp", "database", "redis", "google_login"}
-    allowed = {"Configured", "Not configured", "Connected", "Connection failed", "Not tested", "Disabled"}
+    allowed = {"Configured", "Not configured", "Connected", "Connection failed", "Credentials present", "Configuration saved", "Blocked by dependency",
+               "Requires approval", "Disabled"}
     for i in items:
         assert i["display"]["config"] in {"Configured", "Not configured"} and i["display"]["label"] in allowed, i["provider"]
     assert by(items, "google_ads")["display"]["label"] == "Not configured" and by(items, "groq")["display"]["label"] == "Not configured"
@@ -46,7 +47,7 @@ def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
     try:
         sup = Api(SUPER)
         ps = by(sup.get("/integrations").json()["integrations"], "pagespeed")
-        assert ps["display"] == {"config": "Configured", "connection": "Not tested", "label": "Not tested", "testable": True}  # a key exists ≠ connected
+        assert ps["display"] == {"config": "Configured", "connection": "Credentials present", "label": "Credentials present", "testable": True}  # a key exists ≠ connected
         assert ps["secrets"]["api_key"]["saved"] and "AIza" not in json.dumps(ps)
         with session_scope() as db:
             ok = svc.test_connection(db, "pagespeed", http=_client(lambda r: httpx.Response(200, json={"lighthouseResult": {"categories": {"performance": {"score": 0.73}}}})))
@@ -103,12 +104,10 @@ def test_smtp_test_is_a_real_connection(monkeypatch):
 
     class FakeSMTP:
         def __init__(self, host, port, timeout=0): self.host = host
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
         def ehlo(self): return (250, b"ok")
-        def has_extn(self, name): return True
-        def starttls(self): return (220, b"go")
+        def starttls(self, context=None): return (220, b"go")
         def login(self, u, p): raise smtplib.SMTPAuthenticationError(535, b"bad credentials")
+        def quit(self): return (221, b"bye")
     from app.core.config import reset_settings_cache
     monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
     monkeypatch.setenv("SMTP_USER", "u")
@@ -118,7 +117,7 @@ def test_smtp_test_is_a_real_connection(monkeypatch):
     try:
         with session_scope() as db:
             res = svc.test_connection(db, "smtp")
-            assert not res["connected"] and any("SMTPAuthenticationError" in s["detail"] for s in res["steps"])
+            assert not res["connected"] and any("rejected the username or password" in s["detail"] for s in res["steps"])
             assert "p-fake-secret" not in json.dumps(res)
     finally:
         monkeypatch.undo()
@@ -139,7 +138,10 @@ def test_keyword_planner_runs_a_real_readonly_request_and_explains_access_errors
         assert not res["connected"] and "Test access" in res["steps"][-1]["hint"]
         ok = svc.test_connection(db, "keyword_planner", http=_client(lambda r: httpx.Response(200, json={"access_token": "t"}) if "oauth2" in str(r.url)
                                                                        else httpx.Response(200, json={"results": [{"text": "plumber near me"}]})))
-        assert ok["connected"] and svc.serialize(db, "keyword_planner")["display"]["label"] == "Connected"
+        assert ok["connected"]  # the Keyword Planner request itself succeeded…
+        card = svc.serialize(db, "keyword_planner")
+        # …but it is NOT shown as Connected while its dependencies (here: Google Ads has not passed its own test) fail
+        assert card["display"]["label"] == "Blocked by dependency" and "google_ads" in {d["key"] for d in card["blocked_by"]}
 
 
 def test_test_endpoint_accepts_targets_and_stores_results_for_the_dashboard(monkeypatch):

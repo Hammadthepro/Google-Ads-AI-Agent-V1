@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import re
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import Integer, select
 from sqlalchemy.orm import Session
 
 from app.adapters.ads_oauth import decrypt_token, encrypt_token
@@ -52,13 +54,13 @@ PROVIDERS: dict[str, dict] = {
         "label": "Google Analytics 4", "group": "Google",
         "description": "Supporting traffic and key-event data (Analytics Data API). Never mixed into Ads conversion counts.",
         "settings": {"property_id": "GA4 property ID"}, "secrets": {"refresh_token": "Refresh token"},
-        "required": ["refresh_token"], "oauth": True, "scopes": GOOGLE_SCOPES["ga4"], "uses_google_client": True,
+        "required": ["refresh_token", "property_id"], "oauth": True, "scopes": GOOGLE_SCOPES["ga4"], "uses_google_client": True,
         "docs": "https://developers.google.com/analytics/devguides/reporting/data/v1",
     },
     "gbp": {
         "label": "Google Business Profile", "group": "Google",
         "description": "Business Profile data. Requires Google's Business Profile API access approval for the Cloud project.",
-        "settings": {"account_name": "Business Profile account (accounts/…)"}, "secrets": {"refresh_token": "Refresh token"},
+        "settings": {"account_name": "Business Profile account (accounts/…)", "location_name": "Location (locations/…)"}, "secrets": {"refresh_token": "Refresh token"},
         "required": ["refresh_token"], "oauth": True, "scopes": GOOGLE_SCOPES["gbp"], "uses_google_client": True,
         "docs": "https://developers.google.com/my-business/content/prereqs",
     },
@@ -98,9 +100,13 @@ PROVIDERS: dict[str, dict] = {
         "docs": "https://developers.google.com/maps/documentation/places/web-service/overview",
     },
     "smtp": {
-        "label": "Email alerts (SMTP)", "group": "System", "readonly": True,
-        "description": "Sends alert emails when SMTP_HOST is set. Configured only through SMTP_* environment variables.",
-        "settings": {}, "secrets": {}, "required": [], "env_vars": ["SMTP_HOST"], "docs": "",
+        "label": "Email alerts (SMTP)", "group": "System", "system": True,
+        "description": "Sends alert emails. Configured by a Super Admin here (password encrypted); SMTP_* environment variables are the fallback. Without it alerts stay in the app and are marked “not emailed”.",
+        "settings": {"host": "SMTP host", "port": "Port", "security": "Security (starttls | ssl | none)", "username": "Username (optional)",
+                     "from_email": "From email", "from_name": "From name (optional)"},
+        "secrets": {"password": "Password"}, "required": ["host", "from_email"],
+        "default_settings": {"port": "587", "security": "starttls"},
+        "docs": "https://docs.python.org/3/library/smtplib.html",
     },
     "google_login": {
         "label": "Google sign-in (app login)", "group": "System", "readonly": True, "testable": False,
@@ -125,17 +131,46 @@ PROVIDERS: dict[str, dict] = {
 }
 
 STATUSES = ["NOT_CONNECTED", "CONFIGURATION_REQUIRED", "CONNECTED", "CONNECTION_FAILED", "AUTHORIZATION_EXPIRED",
-            "SYNCHRONIZATION_REQUIRED"]
+            "SYNCHRONIZATION_REQUIRED", "REQUIRES_APPROVAL"]
+# Settings that only the deployment (environment) can change; the page shows them read-only with instructions.
+DEPLOYMENT_MANAGED = {"database", "redis", "google_login"}
 MODES = ("read_only", "execution")
 
 
 # --------------------------------------------------------------------------------------------- store
+_workspace_override: ContextVar[str | None] = ContextVar("integration_workspace", default=None)
+
+
+@contextmanager
+def use_workspace(workspace_id: str):
+    """Run integration reads/writes for another workspace (default: the single default workspace). Credentials never cross workspaces."""
+    token = _workspace_override.set(workspace_id)
+    try:
+        yield
+    finally:
+        _workspace_override.reset(token)
+
+
+def workspace_id(db: Session) -> str:
+    from app.models import Workspace
+    if _workspace_override.get():
+        return _workspace_override.get()
+    wid = db.scalar(select(Workspace.id).where(Workspace.slug == "default"))
+    if wid is None:
+        ws = Workspace(name="Default workspace", slug="default")
+        db.add(ws)
+        db.flush()
+        wid = ws.id
+    return wid
+
+
 def _row(db: Session, provider: str, create: bool = False) -> IntegrationConfig | None:
     if provider not in PROVIDERS:
         raise NotFound("Unknown integration")
-    row = db.scalar(select(IntegrationConfig).where(IntegrationConfig.provider == provider))
+    wid = workspace_id(db)
+    row = db.scalar(select(IntegrationConfig).where(IntegrationConfig.provider == provider, IntegrationConfig.workspace_id == wid))
     if not row and create:
-        row = IntegrationConfig(provider=provider, settings=dict(PROVIDERS[provider].get("default_settings", {})),
+        row = IntegrationConfig(provider=provider, workspace_id=wid, settings=dict(PROVIDERS[provider].get("default_settings", {})),
                                 secret_fingerprints={}, last_test_steps=[], scopes=[], discovered={})
         db.add(row)
         db.flush()
@@ -151,6 +186,18 @@ def _secrets(row: IntegrationConfig | None) -> dict:
         return {}
 
 
+def secrets_unreadable(row: IntegrationConfig | None) -> bool:
+    """True when credentials ARE stored but cannot be decrypted (TOKEN_ENCRYPTION_KEY changed or ciphertext damaged). Without this the
+    page would silently show the fields as missing."""
+    if not row or not row.secrets_ciphertext:
+        return False
+    try:
+        decrypt_token(row.secrets_ciphertext)
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | None, user_id: str | None) -> IntegrationConfig:
     """Write-only secrets: blank values mean 'keep existing'. Returns the row (status reset to needs-test)."""
     spec = PROVIDERS[provider]
@@ -161,7 +208,17 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
     for k, v in (settings or {}).items():
         if k not in spec["settings"]:
             raise ValidationFailed(f"Unknown setting '{k}' for {provider}")
-        cur[k] = (v or "").strip() if isinstance(v, str) else v
+        new = (v or "").strip() if isinstance(v, str) else v
+        if new in ("", None) and k in spec["required"] and cur.get(k):
+            continue  # a blank required value keeps the saved one (like secrets); use Disconnect to remove a configuration
+        cur[k] = new
+    if provider == "smtp":
+        if cur.get("security") and cur["security"] not in ("starttls", "ssl", "none"):
+            raise ValidationFailed("SMTP security must be starttls, ssl or none")
+        if cur.get("port") and not str(cur["port"]).isdigit():
+            raise ValidationFailed("SMTP port must be a number")
+        if cur.get("from_email") and not re.match(r"^[^@\s]+@[^@\s]+$", cur["from_email"]):
+            raise ValidationFailed("From email must look like name@example.com")
     cur.pop("customer_id", None)  # retired: the client account is chosen in the application (workspace account selector)
     for k in ("login_customer_id",):
         if cur.get(k):
@@ -240,6 +297,7 @@ _ENV = {
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
     "places": {"api_key": "GOOGLE_PLACES_API_KEY"},
     "pagespeed": {"api_key": "PAGESPEED_API_KEY"},
+    "smtp": {"host": "SMTP_HOST", "port": "SMTP_PORT", "username": "SMTP_USER", "password": "SMTP_PASSWORD", "from_email": "SMTP_FROM"},
 }
 
 
@@ -302,7 +360,8 @@ def ensure_configured(provider: str) -> dict:
 
 def resolve(provider: str) -> dict:
     """Credentials for adapters (own short session; cached ~15s; cleared on every save/disconnect)."""
-    hit = _cache.get(provider)
+    ckey = f"{_workspace_override.get() or 'default'}:{provider}"
+    hit = _cache.get(ckey)
     if hit and time.monotonic() - hit[0] < 15:
         return hit[1]
     with session_scope() as db:
@@ -315,7 +374,7 @@ def resolve(provider: str) -> dict:
                 ads = effective("google_ads", _row(db, "google_ads"))
                 vals.setdefault("client_id", ads.get("client_id", ""))
                 vals.setdefault("client_secret", ads.get("client_secret", ""))
-    _cache[provider] = (time.monotonic(), vals)
+    _cache[ckey] = (time.monotonic(), vals)
     return vals
 
 
@@ -369,14 +428,17 @@ class Steps:
         self.items: list[dict] = []
         self.failed = False
         self.auth_expired = False
+        self.needs_approval = False  # the provider requires an access application/approval before the API works
 
     def ok(self, step: str, detail: str = "", *, sub: str | None = None, **data):
         self.items.append({"name": step, "status": "PASSED", "detail": _clean(detail), **({"sub": sub} if sub else {}),
                            **({"data": redact(data)} if data else {})})
 
-    def fail(self, step: str, detail: str, *, hint: str = "", expired: bool = False, sub: str | None = None):
-        self.items.append({"name": step, "status": "FAILED", "detail": _clean(detail), "hint": hint, **({"sub": sub} if sub else {})})
+    def fail(self, step: str, detail: str, *, hint: str = "", expired: bool = False, sub: str | None = None, approval: bool = False):
+        self.items.append({"name": step, "status": "FAILED", "detail": _clean(detail), "hint": hint, **({"sub": sub} if sub else {}),
+                           **({"needs_approval": True} if approval else {})})
         self.failed, self.auth_expired = True, self.auth_expired or expired
+        self.needs_approval = self.needs_approval or approval
 
     def skip(self, step: str, why: str, *, sub: str | None = None):
         self.items.append({"name": step, "status": "SKIPPED", "detail": why, **({"sub": sub} if sub else {})})
@@ -556,6 +618,11 @@ def _test_google_ads(vals: dict, http: httpx.Client, steps: Steps, row: Integrat
                      sub="manager", managers=[d["customer_id"] for d in usable])
     if target in ("all", "hierarchy"):
         mcc = _selected_manager(vals)
+        known = {d["customer_id"]: d for d in described}
+        if mcc and known.get(mcc, {}).get("manager") is False:
+            steps.fail("Client accounts: the selected manager is a manager", f"{mcc} is a regular client account, not a manager (MCC) account",
+                       hint="Choose a manager account on this card (or clear the default manager ID). Only manager accounts can list client accounts.", sub="hierarchy")
+            return disc
         if not mcc:
             steps.skip("Client accounts: read the hierarchy", "No manager account has been chosen yet — choose one on this card to discover its client accounts", sub="hierarchy")
         else:
@@ -599,47 +666,55 @@ def _ads_error_code(r: httpx.Response) -> str:
 
 
 def _test_ga4(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    """Admin API (discover properties) + Data API (real report on the selected property). Both APIs must be enabled in the Cloud project."""
     need = [k for k in ("client_id", "client_secret", "refresh_token") if not vals.get(k)]
     if need:
-        steps.fail("Credentials present", f"Missing: {', '.join(need)} (OAuth client comes from the Google Ads card)",
-                   hint="Authorize Google with the Analytics scope.")
+        steps.fail("Credentials present", f"Missing: {', '.join(need)} (the OAuth client comes from the Google Ads card)",
+                   hint="Save the OAuth client on the Google Ads card, then use “Connect with Google” on this card (Analytics scope).")
         return {}
     steps.ok("Credentials present")
     token = refresh_access_token(vals, http, steps)
     if not token:
         return {}
     h = {"Authorization": f"Bearer {token}"}
+    project = _cloud_project_number(vals.get("client_id", ""))
+    enable = lambda svc: (f"Enable {svc} in Google Cloud project {project or '(your project)'}: https://console.cloud.google.com/apis/library/{svc}"  # noqa: E731
+                          + (f"?project={project}" if project else ""))
     try:
-        r = http.get("https://analyticsadmin.googleapis.com/v1beta/accountSummaries", headers=h)
+        r = http.get("https://analyticsadmin.googleapis.com/v1beta/accountSummaries", headers=h, params={"pageSize": 200})
     except httpx.HTTPError as exc:
-        steps.fail("List GA4 properties", f"Could not reach analyticsadmin.googleapis.com: {type(exc).__name__}")
+        steps.fail("List GA4 properties (Admin API)", f"Could not reach analyticsadmin.googleapis.com: {type(exc).__name__}")
         return {}
     if r.status_code != 200:
-        steps.fail("List GA4 properties", _http_error(r),
-                   hint="Enable the Google Analytics Admin API in the Cloud project and grant analytics.readonly.")
+        steps.fail("List GA4 properties (Admin API)", _http_error(r),
+                   hint=enable("analyticsadmin.googleapis.com") + ". The consent must include the analytics.readonly scope." if r.status_code == 403 else "")
         return {}
-    props = [{"property": p.get("property", "").split("/")[-1], "name": p.get("displayName", ""),
-              "account": a.get("displayName", "")} for a in r.json().get("accountSummaries", [])
-             for p in a.get("propertySummaries", [])]
-    steps.ok("List GA4 properties", f"{len(props)} propert(ies)", properties=props[:50])
+    props = [{"property": p.get("property", "").split("/")[-1], "name": p.get("displayName", ""), "account": a.get("displayName", "")}
+             for a in r.json().get("accountSummaries", []) for p in a.get("propertySummaries", [])]
+    steps.ok("List GA4 properties (Admin API)", f"{len(props)} propert(ies) visible to this Google user", properties=props[:100])
     pid = (vals.get("property_id") or "").replace("properties/", "")
     if not pid:
-        steps.skip("Run report", "Pick a property to test reporting")
+        steps.fail("Select a GA4 property", "No property is selected", hint="Choose one of the discovered properties on this card.")
+        return {"properties": props}
+    if props and pid not in {p["property"] for p in props}:
+        steps.fail("Select a GA4 property", f"Property {pid} is not visible to the authorised Google user", hint="Pick a property from the list, or grant that user Viewer access in Analytics.")
         return {"properties": props}
     try:
         r = http.post(f"https://analyticsdata.googleapis.com/v1beta/properties/{pid}:runReport", headers=h, json={
-            "dateRanges": [{"startDate": "7daysAgo", "endDate": "yesterday"}], "metrics": [{"name": "sessions"}]})
+            "dateRanges": [{"startDate": "7daysAgo", "endDate": "yesterday"}], "metrics": [{"name": "sessions"}, {"name": "keyEvents"}]})
     except httpx.HTTPError as exc:
-        steps.fail("Run report", f"Request failed: {type(exc).__name__}")
+        steps.fail("Run report (Data API)", f"Request failed: {type(exc).__name__}")
         return {"properties": props}
     if r.status_code != 200:
-        steps.fail("Run report", _http_error(r), hint="Check the property ID and that the Analytics Data API is enabled.")
+        steps.fail("Run report (Data API)", _http_error(r), hint=enable("analyticsdata.googleapis.com") + " and make sure the user has Viewer access to the property.")
     else:
-        steps.ok("Run report", "Analytics Data API returned a report")
+        rows = r.json().get("rows", [])
+        steps.ok("Run report (Data API)", f"Property {pid}: report answered ({len(rows)} row(s), sessions + key events, last 7 days). Never mixed into Ads conversions.")
     return {"properties": props}
 
 
 def _test_gbp(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    """Account Management API (accounts) then Business Information API (locations). OAuth alone is not enough: both must answer."""
     need = [k for k in ("client_id", "client_secret", "refresh_token") if not vals.get(k)]
     if need:
         steps.fail("Credentials present", f"Missing: {', '.join(need)}", hint="Authorize Google with the Business Profile scope.")
@@ -648,19 +723,49 @@ def _test_gbp(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "
     token = refresh_access_token(vals, http, steps)
     if not token:
         return {}
+    h = {"Authorization": f"Bearer {token}"}
+    project = _cloud_project_number(vals.get("client_id", ""))
+
+    def explain(r: httpx.Response, api: str, service: str) -> tuple[str, bool]:
+        body = r.text.lower()
+        if "service_disabled" in body or "has not been used" in body:
+            return (f"Enable “{api}” ({service}) in Google Cloud project {project or '(your project)'}: "
+                    f"https://console.cloud.google.com/apis/library/{service}" + (f"?project={project}" if project else ""), False)
+        if r.status_code == 429 or "quota" in body:
+            return ("Google has not granted this Cloud project Business Profile API access (quota 0). Apply for Basic API access: "
+                    "https://developers.google.com/my-business/content/prereqs#request-access (your website domain must match your email domain). "
+                    "A quota increase is not the fix.", True)
+        if r.status_code == 403:
+            return ("The authorised Google user cannot manage a Business Profile, or the consent did not include the business.manage scope.", False)
+        return ("", False)
     try:
-        r = http.get("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", headers={"Authorization": f"Bearer {token}"})
+        r = http.get("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", headers=h)
     except httpx.HTTPError as exc:
         steps.fail("List Business Profile accounts", f"Request failed: {type(exc).__name__}")
         return {}
     if r.status_code != 200:
-        hint = ("Google must approve Business Profile API access for your Cloud project before this works."
-                if r.status_code in (403, 429) else "")
-        steps.fail("List Business Profile accounts", _http_error(r), hint=hint)
+        hint, approval = explain(r, "My Business Account Management API", "mybusinessaccountmanagement.googleapis.com")
+        steps.fail("List Business Profile accounts", _http_error(r), hint=hint, approval=approval)
         return {}
-    accts = [{"name": a.get("name"), "account": a.get("accountName", "")} for a in r.json().get("accounts", [])]
+    accts = [{"name": a.get("name"), "account": a.get("accountName", ""), "type": a.get("type", "")} for a in r.json().get("accounts", [])]
     steps.ok("List Business Profile accounts", f"{len(accts)} account(s)", accounts=accts[:50])
-    return {"accounts": accts}
+    chosen = vals.get("account_name") or (accts[0]["name"] if accts else "")
+    if not chosen:
+        steps.fail("List locations", "This Google user has no Business Profile account, so there are no locations to read",
+                   hint="Authorise with the Google user that owns or manages the Business Profile listings.")
+        return {"accounts": accts}
+    try:
+        r = http.get(f"https://mybusinessbusinessinformation.googleapis.com/v1/{chosen}/locations", headers=h, params={"readMask": "name,title", "pageSize": 100})
+    except httpx.HTTPError as exc:
+        steps.fail("List locations", f"Request failed: {type(exc).__name__}")
+        return {"accounts": accts}
+    if r.status_code != 200:
+        hint, approval = explain(r, "My Business Business Information API", "mybusinessbusinessinformation.googleapis.com")
+        steps.fail("List locations", _http_error(r), hint=hint, approval=approval)
+        return {"accounts": accts}
+    locs = [{"name": x.get("name"), "title": x.get("title", "")} for x in r.json().get("locations", [])]
+    steps.ok("List locations", f"{len(locs)} location(s) in {chosen}", locations=locs[:100])
+    return {"accounts": accts, "locations": locs}
 
 
 def _groq_probe(http: httpx.Client, key: str, model: str, ids: list[str], steps: Steps, label: str, sub: str) -> dict:
@@ -769,56 +874,141 @@ def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, tar
     return {}
 
 
-def _test_smtp(vals: dict, http, steps: Steps, row, target: str = "all") -> dict:
+def _smtp_open(vals: dict, steps: Steps | None = None):
+    """Open an authenticated SMTP connection with the saved/environment settings. Caller closes it."""
     import smtplib
-    s_ = get_settings()
-    if not s_.SMTP_HOST:
-        steps.fail("Credentials present", "SMTP_HOST is not set", hint="Set SMTP_HOST (and SMTP_USER / SMTP_PASSWORD) to send alert emails.")
+    import ssl
+    host, port = vals["host"], int(vals.get("port") or 587)
+    security = (vals.get("security") or "starttls").lower()
+    ctx = ssl.create_default_context()
+    srv = smtplib.SMTP_SSL(host, port, timeout=15, context=ctx) if security == "ssl" else smtplib.SMTP(host, port, timeout=15)
+    srv.ehlo()
+    if security == "starttls":
+        srv.starttls(context=ctx)
+        srv.ehlo()
+    if vals.get("username"):
+        srv.login(vals["username"], vals.get("password", ""))
+    return srv
+
+
+def _test_smtp(vals: dict, http, steps: Steps, row, target: str = "all") -> dict:
+    """Real connection: TCP + TLS (per setting) + EHLO + login. Sending a message is a separate, explicit action (test email)."""
+    import smtplib
+    if not vals.get("host") or not vals.get("from_email"):
+        steps.fail("Credentials present", "SMTP host and From email are required", hint="Fill in the host, port, security and sender, then save.")
         return {}
-    steps.ok("Credentials present", f"Host {s_.SMTP_HOST}:{s_.SMTP_PORT}")
+    steps.ok("Credentials present", f"{vals['host']}:{vals.get('port') or 587} · {(vals.get('security') or 'starttls')} · login {'yes' if vals.get('username') else 'no'}")
     try:
-        with smtplib.SMTP(s_.SMTP_HOST, s_.SMTP_PORT, timeout=15) as c:
-            c.ehlo()
-            steps.ok("Connect and EHLO", "Server answered")
-            if c.has_extn("starttls"):
-                c.starttls()
-                c.ehlo()
-                steps.ok("STARTTLS", "Encrypted connection established")
-            else:
-                steps.fail("STARTTLS", "Server does not offer STARTTLS", hint="The app sends alerts over STARTTLS.")
-                return {}
-            if s_.SMTP_USER:
-                c.login(s_.SMTP_USER, s_.SMTP_PASSWORD)
-                steps.ok("Login", "Credentials accepted")
-            else:
-                steps.skip("Login", "No SMTP_USER configured")
-    except Exception as exc:  # noqa: BLE001
-        steps.fail("SMTP connection", f"{type(exc).__name__}: {str(exc)[:160]}", hint="Check host, port and credentials.")
+        srv = _smtp_open(vals)
+    except smtplib.SMTPAuthenticationError:
+        steps.fail("Connect, secure and log in", "The server rejected the username or password", hint="Check the credentials (many providers need an app password).")
+        return {}
+    except (OSError, smtplib.SMTPException) as exc:
+        steps.fail("Connect, secure and log in", f"{type(exc).__name__}: {str(exc)[:120]}", hint="Check host, port and security (587 = starttls, 465 = ssl) and that the server allows connections from here.")
+        return {}
+    try:
+        steps.ok("Connect, secure and log in", f"Connected to {vals['host']} with {(vals.get('security') or 'starttls')}" + (" and authenticated" if vals.get("username") else ""))
+    finally:
+        try:
+            srv.quit()
+        except Exception:  # noqa: BLE001
+            pass
     return {}
 
 
+def send_test_email(db: Session, to: str) -> dict:
+    """Send ONE real message to an address the administrator typed. Never used implicitly."""
+    import smtplib
+    from email.message import EmailMessage
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to or ""):
+        raise ValidationFailed("Enter a valid recipient email address")
+    vals = effective("smtp", _row(db, "smtp"))
+    if not vals.get("host") or not vals.get("from_email"):
+        raise ValidationFailed("Configure the SMTP host and From email first")
+    msg = EmailMessage()
+    msg["From"] = f"{vals.get('from_name')} <{vals['from_email']}>" if vals.get("from_name") else vals["from_email"]
+    msg["To"], msg["Subject"] = to, "Google Ads AI Agent — SMTP test"
+    msg.set_content("This is a test message from the Integrations page. If you received it, alert emails can be delivered.")
+    try:
+        srv = _smtp_open(vals)
+        try:
+            srv.send_message(msg)
+        finally:
+            srv.quit()
+    except (OSError, smtplib.SMTPException) as exc:
+        return {"sent": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+    return {"sent": True, "to": to}
+
+
 def _test_database(vals: dict, http, steps: Steps, row, target: str = "all") -> dict:
+    """Real checks on the database this process is actually connected to: query, TLS, write+read, migration state, pool."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
     from sqlalchemy import text
+
+    from app.db.session import get_engine
     started = time.monotonic()
     try:
         with session_scope() as db:
             version = (db.execute(text("select version()")).scalar() or "")[:40]
             head = db.execute(text("select version_num from alembic_version")).scalar()
+            ssl_on = db.execute(text("select coalesce((select ssl from pg_stat_ssl where pid = pg_backend_pid()), false)")).scalar()
+            db.execute(text("create temporary table _gaa_probe (v int) on commit drop"))
+            db.execute(text("insert into _gaa_probe values (42)"))
+            rw = db.execute(text("select v from _gaa_probe")).scalar()
+            db.rollback()
         steps.ok("Query the database", f"Answered in {int((time.monotonic() - started) * 1000)} ms ({version.split(' on ')[0]})")
-        steps.ok("Schema version", f"Migration {head}")
+        steps.ok("Write and read back", "A temporary table accepted a write and returned it (rolled back; no application data touched)") if rw == 42 else \
+            steps.fail("Write and read back", "The write could not be read back", hint="Check that the database user can write.")
+        (steps.ok("Encrypted connection", "The session uses TLS") if ssl_on else
+         steps.skip("Encrypted connection", "This session is not using TLS (fine for local PostgreSQL; Supabase needs sslmode=require)"))
+        try:
+            import os
+            cfg = Config(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "alembic.ini"))
+            cfg.set_main_option("script_location", os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "migrations"))
+            code_head = ScriptDirectory.from_config(cfg).get_current_head()
+            (steps.ok("Schema version", f"Migration {head} = latest ({code_head})") if head == code_head else
+             steps.fail("Schema version", f"Database is at {head} but the code expects {code_head}", hint="Run: alembic upgrade head (the container does this at start-up)."))
+        except Exception:  # noqa: BLE001
+            steps.ok("Schema version", f"Migration {head}")
+        pool = get_engine().pool
+        steps.ok("Connection pool", f"{pool.checkedout()} in use, size {pool.size()}") if hasattr(pool, "checkedout") else None
     except Exception as exc:  # noqa: BLE001
         steps.fail("Query the database", f"{type(exc).__name__}", hint="Check DATABASE_URL, network access and that migrations ran.")
     return {}
 
 
 def _test_redis(vals: dict, http, steps: Steps, row, target: str = "all") -> dict:
+    """PING, Celery broker queue, live worker heartbeat, and the last scheduled-job run (the only beat signal that is observable)."""
     import redis as redis_lib
     try:
         started = time.monotonic()
-        redis_lib.Redis.from_url(get_settings().REDIS_URL, socket_timeout=5).ping()
+        r = redis_lib.Redis.from_url(get_settings().REDIS_URL, socket_timeout=5)
+        r.ping()
         steps.ok("PING", f"Answered in {int((time.monotonic() - started) * 1000)} ms")
     except Exception as exc:  # noqa: BLE001
         steps.fail("PING", f"{type(exc).__name__}", hint="Check REDIS_URL and that Redis is running.")
+        return {}
+    try:
+        steps.ok("Broker queue", f"{r.llen('celery')} task(s) waiting in the Celery queue")
+    except Exception as exc:  # noqa: BLE001
+        steps.fail("Broker queue", type(exc).__name__)
+    try:
+        from app.workers.celery_app import celery
+        replies = celery.control.inspect(timeout=2).ping() or {}
+        (steps.ok("Worker heartbeat", f"{len(replies)} Celery worker(s) answered") if replies else
+         steps.skip("Worker heartbeat", "WARNING: no Celery worker answered within 2 s. Redis itself is fine, but scheduled jobs and background tasks cannot run until a worker "
+                                        "is started (docker compose up -d worker)."))
+    except Exception as exc:  # noqa: BLE001
+        steps.fail("Worker heartbeat", f"{type(exc).__name__}", hint="Start the worker: docker compose up -d worker.")
+    try:
+        from app.models import JobRun
+        with session_scope() as db:
+            last = db.scalar(select(JobRun).where(JobRun.job.like("%daily_sync%")).order_by(JobRun.created_at.desc()).limit(1))
+        steps.ok("Scheduler (beat)", f"Last daily sync job: {last.status} at {last.created_at:%Y-%m-%d %H:%M} UTC") if last else \
+            steps.skip("Scheduler (beat)", "No scheduled job has run yet (daily sync runs at 06:17 UTC). Beat cannot be probed directly.")
+    except Exception:  # noqa: BLE001
+        pass
     return {}
 
 
@@ -838,10 +1028,22 @@ def _test_claude(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
         return {}
     ids = [m.get("id", "") for m in r.json().get("data", [])]
     steps.ok("Authenticate / list models", f"{len(ids)} model(s) available")
-    if vals["model"] in ids:
-        steps.ok("Model available", vals["model"])
-    else:
-        steps.fail("Model available", f"'{vals['model']}' not returned by the Models API", hint="Check the model name.")
+    if vals["model"] not in ids:
+        steps.fail("Model available", f"'{vals['model']}' is not in the list your key can use", hint="Pick a model from the list on this card.")
+        return {"models": ids[:100]}
+    steps.ok("Model available", vals["model"])
+    started = time.monotonic()
+    try:  # a real 1-token completion: listing models proves the key, not that the model answers
+        r = http.post("https://api.anthropic.com/v1/messages", timeout=45, headers={"x-api-key": vals["api_key"], "anthropic-version": "2023-06-01"},
+                      json={"model": vals["model"], "max_tokens": 8, "messages": [{"role": "user", "content": "Reply with OK"}]})
+    except httpx.HTTPError as exc:
+        steps.fail("Completion", f"Request failed: {type(exc).__name__}", hint="Check network access to api.anthropic.com.")
+        return {"models": ids[:100]}
+    if r.status_code != 200:
+        steps.fail("Completion", _http_error(r), hint={401: "Check the API key.", 403: "The key lacks access to this model.", 429: "Rate limit or credit balance reached."}.get(r.status_code, ""))
+        return {"models": ids[:100]}
+    u = r.json().get("usage", {})
+    steps.ok("Completion", f"The model answered in {int((time.monotonic() - started) * 1000)} ms ({u.get('input_tokens', 0)} in / {u.get('output_tokens', 0)} out tokens)")
     return {"models": ids[:100]}
 
 
@@ -881,20 +1083,28 @@ def _test_places(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
         steps.fail("Text search", f"Request failed: {type(exc).__name__}")
         return {}
     if r.status_code != 200:
-        steps.fail("Text search", _http_error(r), hint="Enable Places API (New) and billing for the key's project.")
+        steps.fail("Text search", _http_error(r), hint="Enable “Places API (New)” (places.googleapis.com) in the key's Google Cloud project, turn on billing, and make sure the key's API restriction includes Places API (New) — Places API (New) is a different service from the legacy Places API and from the Business Profile API.")
     else:
         steps.ok("Text search", f"{len(r.json().get('places', []))} place(s) returned")
     return {}
 
 
 def _test_crawler(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
-    from app.adapters.crawler import LiveCrawlerAdapter
+    """Fetches one safe public page through the SSRF-guarded crawler, and proves the guard works by refusing a private address."""
+    from app.adapters.crawler import LiveCrawlerAdapter, SSRFBlocked, check_url_safe
+    try:
+        check_url_safe("http://169.254.169.254/latest/meta-data/")
+        steps.fail("SSRF guard", "A cloud-metadata address was NOT blocked", hint="This is a security defect; do not enable the crawler.", sub="fetch")
+        return {}
+    except SSRFBlocked:
+        steps.ok("SSRF guard", "Private/reserved addresses (e.g. 169.254.169.254) are refused before any request is made", sub="fetch")
     try:
         res = LiveCrawlerAdapter().fetch("https://example.com/")
         if getattr(res, "status", 0) and 200 <= res.status < 300:
-            steps.ok("Fetch a page", f"HTTP {res.status} via the SSRF-guarded crawler", sub="fetch")
+            steps.ok("Fetch a page", f"HTTP {res.status} via the SSRF-guarded crawler (https://example.com/)", sub="fetch")
         else:
-            steps.fail("Fetch a page", f"HTTP {getattr(res, 'status', '?')}", sub="fetch")
+            steps.fail("Fetch a page", f"HTTP {getattr(res, 'status', '?')} {getattr(res, 'error', '')}".strip(), sub="fetch",
+                       hint="The server could not fetch a public page: check outbound network access and DNS from the backend container.")
     except Exception as exc:  # noqa: BLE001
         steps.fail("Fetch a page", f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))}", sub="fetch")
     return {}
@@ -980,6 +1190,7 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
         failed = next(s for s in steps.items if s["status"] == "FAILED")
         row.last_error = f"{failed['name']}: {failed['detail']}"
         row.status = "AUTHORIZATION_EXPIRED" if steps.auth_expired else (
+            "REQUIRES_APPROVAL" if steps.needs_approval else
             "CONFIGURATION_REQUIRED" if failed["name"] == "Credentials present" else "CONNECTION_FAILED")
         row.enabled = False
     elif connected:
@@ -1087,22 +1298,63 @@ def oauth_callback(db: Session, state: str, code: str, user_id: str, *, http: ht
 
 
 # --------------------------------------------------------------------------------------------- views
-def _display(provider: str, row: IntegrationConfig | None, miss: list[str]) -> dict:
-    """The six statuses a person sees. Connected is shown ONLY after a real successful request (row.last_test_ok)."""
+# --------------------------------------------------------------------------------------------- dependencies
+def dependencies(db: Session, provider: str) -> list[dict]:
+    """What this integration needs from other integrations/state, evaluated live. Each: {key, label, ok, detail, action}.
+    A dependent integration is never shown as Connected while one of these fails."""
+    out: list[dict] = []
+
+    def dep(key, label, ok, detail, action=""):
+        out.append({"key": key, "label": label, "ok": bool(ok), "detail": detail, "action": action})
+    if provider in ("ga4", "gbp"):
+        ads = effective("google_ads", _row(db, "google_ads"))
+        have = bool(ads.get("client_id") and ads.get("client_secret"))
+        dep("oauth_client", "Google OAuth client (shared, set on the Google Ads card)", have,
+            "OAuth client ID and secret are saved" if have else "Save the OAuth client ID and secret on the Google Ads card first",
+            "" if have else "google_ads")
+        own = effective(provider, _row(db, provider))
+        dep("authorisation", f"{PROVIDERS[provider]['label']} authorisation (own refresh token with its own scope)", bool(own.get("refresh_token")),
+            "A refresh token with this integration's scope is saved" if own.get("refresh_token") else "Use “Connect with Google” on this card",
+            "" if own.get("refresh_token") else provider)
+    if provider == "keyword_planner":
+        from app.services import mcc_service
+        g = _row(db, "google_ads")
+        connected = bool(g and g.last_test_ok is True)
+        dep("google_ads", "Google Ads connected (real OAuth + enabled manager found)", connected,
+            "Google Ads passed its connection test" if connected else "Run Test Connection on the Google Ads card", "google_ads")
+        ws = mcc_service.default_workspace(db)
+        dep("manager", "Manager (MCC) account chosen", bool(ws.google_ads_manager_customer_id),
+            f"Manager {ws.google_ads_manager_customer_id}" if ws.google_ads_manager_customer_id else "Choose a manager on the Google Ads card", "google_ads")
+        client = mcc_service.any_client_account(db)
+        dep("client_account", "At least one enabled client account discovered", bool(client),
+            f"Client account {client} is available" if client else "No client account has been discovered yet — choose a manager, then “Discover client accounts”", "google_ads")
+        level = (((g.discovered or {}).get("cloud_access") or {}).get("level") if g else None) or "unknown"
+        dep("access_level", "Google Ads API access level allows Keyword Planner (Basic or Standard)", level not in ("test",),
+            "Level not known to be insufficient" if level != "test" else
+            "The Cloud project is Test-access only. Keyword Planner services need Basic or Standard access", "google_ads")
+    return out
+
+
+def _display(provider: str, row: IntegrationConfig | None, miss: list[str], blocked: list[dict] | None = None, any_saved: bool = False) -> dict:
+    """The status a person sees. Connected is shown ONLY after a real successful request AND with every dependency satisfied."""
     spec = PROVIDERS[provider]
     config = "Not configured" if miss else "Configured"
     if spec.get("testable") is False:
         return {"config": config, "connection": config, "label": config, "testable": False}
-    if miss:
-        label = "Not configured"
-    elif row and row.status == "DISABLED":
+    if row and row.status == "DISABLED":
         label = "Disabled"
+    elif miss:
+        label = "Not configured"
+    elif [d for d in (blocked or []) if not d["ok"]]:
+        label = "Blocked by dependency"
+    elif row and row.status == "REQUIRES_APPROVAL":
+        label = "Requires approval"
     elif row and row.last_test_ok is True:
         label = "Connected"
     elif row and row.last_test_ok is False:
         label = "Connection failed"
     else:
-        label = "Not tested"
+        label = "Configuration saved" if any_saved else "Credentials present"
     return {"config": config, "connection": label, "label": label, "testable": True}
 
 
@@ -1154,19 +1406,54 @@ def serialize(db: Session, provider: str) -> dict:
                 "api_access": disc.get("cloud_access") or {"api_enabled": None, "level": "not tested", "basis": "Run Test Connection"},
                 "manager_id_set": bool(_selected_manager(vals)), "managers": disc.get("managers"),
                 "hierarchy": disc.get("hierarchy_preview")}
+    if provider == "claude":
+        info = {"usage": ai_usage(db, "claude:%"), "models": (row.discovered or {}).get("models", []) if row else [],
+                "independent": "Claude uses its own API key and model and drafts the same inputs separately from Groq; each side then reviews the other's draft. "
+                               "If Claude is unavailable the plan is created from the single available draft and says so."}
+    if provider in ("ga4", "gbp"):
+        info = {"shared_oauth_client": "Uses the OAuth client ID/secret saved on the Google Ads card; has its OWN refresh token and scope.",
+                "properties": (row.discovered or {}).get("properties", []) if row else [], "accounts": (row.discovered or {}).get("accounts", []) if row else [],
+                "locations": (row.discovered or {}).get("locations", []) if row else [],
+                "required_apis": (["analyticsadmin.googleapis.com", "analyticsdata.googleapis.com"] if provider == "ga4" else
+                                  ["mybusinessaccountmanagement.googleapis.com", "mybusinessbusinessinformation.googleapis.com"]),
+                "approval": None if provider == "ga4" else "Google must approve Business Profile API access for the Cloud project (quota 0 until approved)."}
+    if provider == "places":
+        info = {"required_apis": ["places.googleapis.com (Places API (New))"], "note": "Billing must be enabled and the key restricted to Places API (New). Not the Business Profile API."}
+    if provider == "crawler":
+        from app.adapters.crawler import MAX_BYTES
+        info = {"guarantees": ["Resolves DNS itself and refuses private, loopback, link-local and reserved addresses", "Re-checks every redirect hop",
+                               f"Response size limit {MAX_BYTES // 1_000_000} MB", f"Timeout {get_settings().CRAWLER_TIMEOUT_SECONDS:g} s per request",
+                               "Needs no credentials"]}
+    if provider == "smtp":
+        info = {"transport_security": (vals.get("security") or "starttls"), "login": bool(vals.get("username")),
+                "alerts_are_emailed": bool(vals.get("host") and vals.get("from_email"))}
     if provider == "groq":
         info = {"primary_model": vals.get("model") or "", "challenger_model": vals.get("challenger_model") or "",
                 "challenger_falls_back": not vals.get("challenger_model"), "rate_limits": (row.discovered or {}).get("rate_limits") if row else None,
                 "active_in_app": registry_ai_active()}
+    deps = dependencies(db, provider)
+    saved_settings = {k for k, v in ((row.settings if row else None) or {}).items() if v not in (None, "")}
+    any_saved = bool(saved_settings or fps)
+
+    def setting_source(k: str) -> str:
+        if k in saved_settings:
+            return "saved"
+        if env_vals.get(k) and k in _ENV.get(provider, {}):
+            return "environment"
+        return "default" if vals.get(k) else "missing"
     return {
         "provider": provider, "label": spec["label"], "group": spec["group"], "description": spec["description"],
         "status": status, "enabled": bool(row and row.enabled), "readonly": bool(spec.get("readonly")),
-        "display": _display(provider, row, miss), "subtests": subtests, "targets": spec.get("targets", {}), "info": info,
+        "deployment_managed": provider in DEPLOYMENT_MANAGED, "credentials_unreadable": secrets_unreadable(row),
+        "dependencies": deps, "blocked_by": [d for d in deps if not d["ok"]],
+        "display": _display(provider, row, miss, deps, any_saved), "subtests": subtests, "targets": spec.get("targets", {}), "info": info,
         "settings": {k: {"label": lbl, "value": (vals.get(k) if k in (row.settings if row else {}) or k in env_vals else
-                                                  vals.get(k, "")) or ""} for k, lbl in spec["settings"].items()},
+                                                  vals.get(k, "")) or "", "source": setting_source(k), "required": k in spec["required"]}
+                     for k, lbl in spec["settings"].items()},
         "secrets": {k: {"label": lbl, "saved": bool(fps.get(k)) or bool(env_vals.get(k) and k in _ENV.get(provider, {})),
                         "fingerprint": fps.get(k) or (fingerprint(str(env_vals[k]))[:8] if env_vals.get(k) and k in _ENV.get(provider, {}) else ""),
-                        "source": "saved" if fps.get(k) else ("environment" if env_vals.get(k) and k in _ENV.get(provider, {}) else "")}
+                        "source": "saved" if fps.get(k) else ("environment" if env_vals.get(k) and k in _ENV.get(provider, {}) else ""),
+                        "required": k in spec["required"]}
                     for k, lbl in spec["secrets"].items()},
         "required": spec["required"], "missing": miss, "scopes": (row.scopes if row else []) or spec.get("scopes", []),
         "oauth": bool(spec.get("oauth")), "docs": spec["docs"],
@@ -1177,6 +1464,49 @@ def serialize(db: Session, provider: str) -> dict:
         "last_sync_at": row.last_sync_at.isoformat() if row and row.last_sync_at else None,
         "last_error": row.last_error if row else "", "discovered": discovered,
     }
+
+
+def ai_usage(db: Session, prefix: str) -> dict:
+    """Token usage of one AI provider over the last 30 days from our own run log. No price is invented: cost is in the provider's console."""
+    from sqlalchemy import func
+
+    from app.core import clock
+    from app.models import AIRun
+    since = clock.now() - timedelta(days=30)
+    q = select(func.count(AIRun.id), func.coalesce(func.sum(AIRun.tokens_in), 0), func.coalesce(func.sum(AIRun.tokens_out), 0),
+               func.coalesce(func.sum(func.cast(AIRun.validation_ok, Integer)), 0)).where(AIRun.created_at >= since, AIRun.provider.like(prefix))
+    n, tin, tout, ok = db.execute(q).one()
+    return {"window_days": 30, "runs": int(n), "valid_outputs": int(ok), "tokens_in": int(tin), "tokens_out": int(tout),
+            "cost_note": "Tokens are counted from this application's own calls. Billing is shown in the provider's console."}
+
+
+def options(db: Session, provider: str, *, http: httpx.Client | None = None) -> dict:
+    """Real, read-only discovery of the choices a user must pick from (GA4 properties, Business Profile accounts/locations, Claude models).
+    Nothing is saved and no connection status changes."""
+    if provider not in ("ga4", "gbp", "claude"):
+        raise ValidationFailed(f"{provider} has no selectable options")
+    row = _row(db, provider)
+    vals = effective(provider, row)
+    if provider in ("ga4", "gbp"):
+        ads = effective("google_ads", _row(db, "google_ads"))
+        vals.setdefault("client_id", ads.get("client_id", ""))
+        vals.setdefault("client_secret", ads.get("client_secret", ""))
+    steps = Steps()
+    own = http is None
+    client = http or httpx.Client(timeout=20)
+    try:
+        found = _TESTERS[provider](vals, client, steps, row, "all") or {}
+    finally:
+        if own:
+            client.close()
+    failed = next((x for x in steps.items if x["status"] == "FAILED"), None)
+    return {"provider": provider, "ok": failed is None or provider == "ga4" and bool(found.get("properties")),
+            "error": ({"step": failed["name"], "detail": failed["detail"], "hint": failed.get("hint", "")} if failed else None),
+            "properties": found.get("properties", []), "accounts": found.get("accounts", []), "locations": found.get("locations", []),
+            "models": [m for m in found.get("models", []) if not NOT_CLAUDE_CHAT.search(m)] if provider == "claude" else []}
+
+
+NOT_CLAUDE_CHAT = re.compile(r"embed|moderation", re.I)
 
 
 def registry_ai_active() -> bool:

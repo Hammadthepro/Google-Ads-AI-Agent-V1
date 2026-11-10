@@ -116,6 +116,28 @@ def test_integration(provider: str, target: str = "all", user: User = Depends(re
     return {**res, "integration": svc.serialize(db, provider)}
 
 
+@router.get("/integrations/{provider}/options")
+def integration_options(provider: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    """Live, read-only discovery for pickers: GA4 properties, Business Profile accounts/locations, Claude models."""
+    out = svc.options(db, _provider(provider))
+    activity.log(db, "integrations.options_listed", actor=user, entity="integration", entity_id=provider, details={"ok": out["ok"]})
+    db.commit()
+    return out
+
+
+class TestEmailIn(BaseModel):
+    to: str
+
+
+@router.post("/integrations/smtp/test-email")
+def smtp_test_email(body: TestEmailIn, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    """Sends ONE real message to the address typed by the administrator."""
+    out = svc.send_test_email(db, body.to)
+    activity.log(db, "integrations.smtp_test_email", actor=user, entity="integration", entity_id="smtp", details={"to": body.to, "sent": out["sent"]})
+    db.commit()
+    return out
+
+
 class EnableIn(BaseModel):
     enabled: bool
 

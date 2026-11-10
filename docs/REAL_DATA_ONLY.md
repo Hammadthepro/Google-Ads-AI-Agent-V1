@@ -9,7 +9,7 @@
 | Google Ads API fails | Safe message to the user (HTTP 424/429/503…), technical detail only in the backend log. Reads retry with backoff (1s, 2s, 4s) on rate limits/outages. Auth failure marks the integration "Connection failed" on the Integrations page. |
 | Refresh fails after earlier success | Previously retrieved snapshots are kept untouched; screens show **Historical data** with the original retrieval time. |
 | AI provider missing | AI steps report it; audits continue with the checks that do not need AI, and the report lists the rest as unavailable. |
-| SMTP missing | Alerts stay in the app, recorded as `NOT_EMAILED_SMTP_NOT_CONFIGURED`. Nothing is emailed without SMTP. |
+| SMTP missing | Alerts stay in the app, recorded as `NOT_EMAILED`. Nothing is emailed without SMTP. |
 
 ## Data status shown in the UI
 `not_configured` · `no_account` · `no_data` ("Connected but no data") · `data_available` · `historical` · `failed`

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONType, TimestampMixin, utcnow
@@ -14,7 +14,9 @@ from app.models.base import Base, JSONType, TimestampMixin, utcnow
 
 class IntegrationConfig(TimestampMixin, Base):
     __tablename__ = "integration_configs"
-    provider: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    __table_args__ = (UniqueConstraint("provider", "workspace_id", name="uq_integration_provider_workspace"),)
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)  # whose credentials these are
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     settings: Mapped[dict] = mapped_column(JSONType, default=dict)            # non-secret values (ids, model names)
     secrets_ciphertext: Mapped[str] = mapped_column(Text, default="")         # Fernet(JSON {name: value})

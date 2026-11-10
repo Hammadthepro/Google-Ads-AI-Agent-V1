@@ -26,8 +26,26 @@ def _label(side: str, provider) -> str:
     return f"{side}:{'live' if provider.source == 'LIVE' else 'test'}"
 
 
+class _Unavailable:
+    """Stands in for a side whose integration is not configured, so the other side still runs (single-AI mode, clearly labelled)."""
+    source, name = "NONE", "not configured"
+
+    def __init__(self, exc):
+        self.error = exc
+
+
 def _providers() -> dict:
-    return {"internal": registry.get("ai"), "claude": registry.get("claude_ai")}
+    """Both AIs are independent integrations. A missing one is recorded, not fatal; if BOTH are missing the first error is raised."""
+    from app.core.errors import IntegrationNotConfigured
+    out = {}
+    for side, name in (("internal", "ai"), ("claude", "claude_ai")):
+        try:
+            out[side] = registry.get(name)
+        except IntegrationNotConfigured as exc:
+            out[side] = _Unavailable(exc)
+    if all(isinstance(p, _Unavailable) for p in out.values()):
+        raise out["internal"].error
+    return out
 
 
 # ------------------------------------------------------------------------------------------ ad scoring
@@ -216,6 +234,9 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
     provs = _providers()
     drafts, runs, errors = {}, {}, {}
     for side in SIDES:
+        if isinstance(provs[side], _Unavailable):
+            errors[side] = provs[side].error.message  # "<AI> integration is not configured. Please configure…"
+            continue
         d, r, e = _draft_side(db, side, provs[side], purpose, payload, task_id)
         if d:
             drafts[side], runs[side] = d, r

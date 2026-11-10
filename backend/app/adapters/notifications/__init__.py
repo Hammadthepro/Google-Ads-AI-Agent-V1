@@ -1,11 +1,9 @@
 """Notifier interface. InAppNotifier records alerts in the app only (no email); EmailNotifier sends via SMTP."""
 from __future__ import annotations
 
-import smtplib
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
 
-from app.core.config import get_settings
 
 
 class Notifier(ABC):
@@ -30,8 +28,8 @@ class InAppNotifier(Notifier):
         from app.models import Alert
         with session_scope() as db:
             db.add(Alert(client_id=client_id, recipients=recipients, subject=subject, body=body,
-                         delivery_status="NOT_EMAILED_SMTP_NOT_CONFIGURED", category=category, channel="in_app"))
-        return "NOT_EMAILED_SMTP_NOT_CONFIGURED"
+                         delivery_status="NOT_EMAILED", category=category, channel="in_app"))
+        return "NOT_EMAILED"
 
 
 class EmailNotifier(Notifier):
@@ -45,17 +43,18 @@ class EmailNotifier(Notifier):
         from app.models import Alert
         status = "SENT"
         try:
+            from app.services import integrations_service as isvc
+            cfg = isvc.ensure_configured("smtp")  # saved settings first, SMTP_* environment as fallback
             msg = EmailMessage()
-            cfg = get_settings()
-            msg["From"] = cfg.SMTP_FROM
+            msg["From"] = f"{cfg['from_name']} <{cfg['from_email']}>" if cfg.get("from_name") else cfg["from_email"]
             msg["To"] = ", ".join(recipients)
             msg["Subject"] = subject
             msg.set_content(body)
-            with smtplib.SMTP(cfg.SMTP_HOST or "localhost", cfg.SMTP_PORT, timeout=15) as s:
-                s.starttls()
-                if cfg.SMTP_USER:
-                    s.login(cfg.SMTP_USER, cfg.SMTP_PASSWORD)
-                s.send_message(msg)
+            srv = isvc._smtp_open(cfg)
+            try:
+                srv.send_message(msg)
+            finally:
+                srv.quit()
         except Exception as exc:  # delivery failure is recorded, never hidden
             status = f"FAILED: {type(exc).__name__}"
         with session_scope() as db:
