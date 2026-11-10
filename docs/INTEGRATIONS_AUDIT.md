@@ -82,3 +82,28 @@ Weakness: Claude only lists models (no completion), so "Connected" there means k
 * Business Profile: quota 0 = access not granted; apply for Basic API access (website domain must match the email domain) — a quota increase is not the fix.
 * Places API (New): enable the API and billing; restrict the key to *Places API (New)*; every request needs `X-Goog-FieldMask`.
 * Anthropic: `GET /v1/models` lists available models (lifecycle active/deprecated); usage is returned per Messages response, not by the models endpoint.
+
+
+---
+
+# Deliverable E — final verification (2026-11-10, live = real request from this environment)
+
+| Integration | Status shown | Managed by | Real auth passed | Real API request passed | Dependent functionality | Remaining blocker |
+|---|---|---|---|---|---|---|
+| Google Ads API | Connection failed | user (Super Admin) | **Yes** (OAuth refresh) | **Yes** (`listAccessibleCustomers`, per-account `customer`) | No — no ENABLED manager reachable | `9952730299` CLOSED test manager; `4929726198` CUSTOMER_NOT_ENABLED; `4433432999` non-test account vs Test-access project. Create an enabled test manager + test clients, or raise the project's access level. |
+| Google Analytics 4 | Not configured | user | not attempted (no refresh token / property) | no | no | Authorise with the Analytics scope, enable Admin + Data APIs, pick a property. Not live-verified. |
+| Google Business Profile | Not configured | user | not attempted | no | no | Authorise; Google must approve GBP API access (quota 0 until then). Not live-verified. |
+| Keyword Planner | Blocked by dependency | derived | via Google Ads | no | no | Needs Google Ads connected + manager + discovered client + Basic/Standard access. Not live-verified. |
+| Groq | Connected | user | **Yes** | **Yes** (JSON-mode completion on primary and challenger model) | Yes (AI drafting) | none |
+| Claude | Not configured | user | no key | no | independence + fallback proven by tests (stand-in transport) | Add an Anthropic API key + model. Not live-verified. |
+| Google Places API (New) | Not configured | user | no key | no | no | Add a key; enable Places API (New) + billing. Not live-verified. |
+| PageSpeed Insights | Connected | user | **Yes** | **Yes** | Yes (website audit) | none (keyless quota can be exhausted) |
+| Website crawler | Connection failed here | none | n/a | **No in this sandbox** (no local DNS: proxy-only network) | SSRF guard proven | Environment limitation; SSRF refusal and redirect/rebinding tests pass; re-run where DNS works. |
+| SMTP | Not configured | user (Super Admin) | no host | no | proven with a stand-in SMTP server in tests (TLS modes, login, test email, alerts) | Enter host/credentials on the card. Not live-verified. |
+| Google sign-in | Not configured | **deployment** | verified only by signing in | n/a | n/a | Set `GOOGLE_CLIENT_ID` + `AUTH_PROVIDER=google` at deployment. |
+| PostgreSQL / Supabase | Connected | **deployment** | **Yes** | **Yes** (query, temp-table write/read-back, schema = head, pool) — local PostgreSQL here; Supabase schema verified through the Supabase API at revision 0007 | Yes | The app was not run against Supabase from this environment (its URL is a deployment secret). |
+| Redis / Celery | Connected | **deployment** | **Yes** | **Yes** (PING, queue length) | Worker heartbeat: **no worker is running in this sandbox** (reported as a warning, not hidden) | Start worker + beat (`docker compose up -d worker beat`). |
+
+Tests: backend suite green (1 skipped: live Groq contract test), frontend 32 passed, `tsc`/build/ruff clean, migrations 0007 up/down/up verified (and applied to Supabase),
+browser smoke passed, live suite 8 passed / 6 not configured / 5 blocked / 0 failed. Defects found and fixed along the way: `alerts.delivery_status` overflow (the
+in-app notifier would have crashed when SMTP is not configured), missing-Claude breaking the whole dual-AI plan, silent decrypt failure, default-manager validation.

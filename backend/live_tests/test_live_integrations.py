@@ -99,3 +99,17 @@ def test_live_manager_candidates_and_customer_client_hierarchy(integration):
     assert tree["accounts"] and tree["accounts"][0]["level"] == 0
     for a in tree["accounts"]:
         assert a["status"] in ("ENABLED", "CANCELED", "SUSPENDED", "CLOSED", "UNKNOWN") and a["customer_id"].isdigit()
+
+
+# ------------------------------------------------------------------ the dashboard never overstates what the real tests proved
+def test_dashboard_labels_match_what_was_really_verified(db_available):
+    from app.db.session import session_scope
+    from app.services import integrations_service as svc
+    with session_scope() as db:
+        for p in svc.PROVIDERS:
+            c = svc.serialize(db, p)
+            if c["display"]["label"] == "Connected":
+                assert c["last_test_ok"] is True and not c["blocked_by"] and not c["missing"], f"{p} is shown Connected without proof"
+            if c["blocked_by"] and not c["missing"] and c["status"] != "DISABLED":
+                assert c["display"]["label"] == "Blocked by dependency", p
+            assert not any(s in str(c) for s in ("gsk_", "sk-ant-", "ya29.", "1//0")), f"{p} leaks a secret-looking value"

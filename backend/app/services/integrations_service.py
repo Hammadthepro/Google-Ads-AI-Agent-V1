@@ -623,6 +623,11 @@ def _test_google_ads(vals: dict, http: httpx.Client, steps: Steps, row: Integrat
             steps.fail("Client accounts: the selected manager is a manager", f"{mcc} is a regular client account, not a manager (MCC) account",
                        hint="Choose a manager account on this card (or clear the default manager ID). Only manager accounts can list client accounts.", sub="hierarchy")
             return disc
+        if mcc and mcc not in known and ids:
+            steps.fail("Client accounts: the selected manager is reachable", f"{mcc} is not among the {len(ids)} account(s) this Google user can access directly",
+                       hint="A manager you log in through must be directly accessible. Choose one of the managers listed above, or authorise with a Google user that has access to it.",
+                       sub="hierarchy")
+            return disc
         if not mcc:
             steps.skip("Client accounts: read the hierarchy", "No manager account has been chosen yet — choose one on this card to discover its client accounts", sub="hierarchy")
         else:

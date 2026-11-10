@@ -88,3 +88,11 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 * The app on this machine uses local PostgreSQL; Supabase has the matching schema (0006) but the Supabase connection URL is a production secret that is not available
   here, so the app was not run against Supabase from this environment.
 * Team assignments (user-to-account restrictions) are intentionally not implemented; `mcc_service.accessible_accounts` is the single hook for them.
+
+## Integration management (2026-11-10)
+* "Missing: client_id while the field looks filled" could not be reproduced in the backend (environment + database merge is correct); the field can show an unsaved draft.
+  The page now labels drafts as unsaved and every field with its source. If it still appears on a deployment, check that the backend container points at the same database
+  where the value was saved and that `TOKEN_ENCRYPTION_KEY` has not changed (the card reports undecryptable credentials).
+* Not live-verified here (no credentials/approval): GA4, Business Profile, Keyword Planner, Claude, Places, SMTP. Their request code is exercised with stand-in transports only.
+* Google documentation could not be opened directly from this sandbox; access-level and API-approval statements come from search summaries of developers.google.com and
+  should be re-checked on the live pages.

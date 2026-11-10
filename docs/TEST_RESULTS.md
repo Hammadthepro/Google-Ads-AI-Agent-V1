@@ -1,3 +1,15 @@
+# Test results — integration management build (2026-11-10)
+
+| Check | Result |
+|---|---|
+| Backend suite | all passed, 1 skipped — adds test_integration_architecture (provenance/precedence, dependencies, GA4/GBP/Claude discovery, SMTP, system checks, isolation, permissions, no-leak, audit) |
+| Frontend (`vitest`, `tsc`, build) | 32 passed |
+| Migrations | head 0007 (up/down/up verified; Supabase applied) |
+| Browser E2E | passed |
+| Live suite | 8 PASSED, 6 NOT CONFIGURED, 5 BLOCKED, 0 FAILED |
+
+Previous build:
+
 # Test results — MCC multi-client build (2026-11-10)
 
 | Check | Result |

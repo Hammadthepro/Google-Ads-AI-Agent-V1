@@ -105,6 +105,14 @@ def test_default_manager_that_is_a_client_account_is_rejected_with_a_clear_reaso
         assert hier["status"] == "FAILED" and "not a manager" in hier["detail"] and "Choose a manager" in hier["hint"]
 
 
+def test_default_manager_that_this_google_user_cannot_reach_is_reported_before_any_request_fails_obscurely():
+    with session_scope() as db:
+        _save_ads(db, login_customer_id="999-888-7777")
+        res = svc.test_connection(db, "google_ads", http=_client(_google_handler()))
+        hier = res["subtests"]["hierarchy"]
+        assert hier["status"] == "FAILED" and "not among the 3 account(s)" in hier["detail"] and "directly accessible" in hier["hint"]
+
+
 # --------------------------------------------------------------------------- dependencies
 def test_ga4_and_gbp_are_blocked_until_the_shared_oauth_client_and_their_own_authorisation_exist():
     sup = Api(SUPER)

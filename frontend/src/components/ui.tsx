@@ -109,7 +109,7 @@ export function Button({ children, onClick, variant = "secondary", disabled, typ
   );
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <label className="block text-sm">
       <span className="mb-1 block font-medium text-slate-700">{label}</span>

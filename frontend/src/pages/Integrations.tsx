@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/hooks";
-import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Spinner, Stat, Textarea } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, Stat, Textarea } from "../components/ui";
 
 const MODES: { value: string; label: string; text: string }[] = [
   { value: "read_only", label: "Real account — read-only", text: "Real Google Ads data is read. No campaign write is possible in this mode. This is the default." },
@@ -12,8 +12,11 @@ const MODES: { value: string; label: string; text: string }[] = [
 ];
 
 const LABEL_TONE: Record<string, string> = {
-  Connected: "green", "Connection failed": "red", "Not tested": "amber", "Not configured": "slate", Disabled: "slate", Configured: "blue",
+  Connected: "green", "Connection failed": "red", "Credentials present": "blue", "Configuration saved": "blue", "Not configured": "slate", Disabled: "slate",
+  Configured: "blue", "Blocked by dependency": "amber", "Requires approval": "amber", Testing: "violet",
 };
+const SOURCE_TONE: Record<string, string> = { saved: "green", environment: "blue", default: "slate", missing: "red" };
+const SOURCE_LABEL: Record<string, string> = { saved: "saved here", environment: "from deployment (.env)", default: "default", missing: "missing" };
 const SUB_TONE: Record<string, string> = { PASSED: "green", FAILED: "red", SKIPPED: "slate", NOT_TESTED: "amber" };
 const SUB_LABEL: Record<string, string> = { PASSED: "Passed", FAILED: "Failed", SKIPPED: "Skipped", NOT_TESTED: "Not tested" };
 const NOT_CHAT = /whisper|orpheus|prompt-guard|safeguard|tts|guard|embed/i;
@@ -26,6 +29,7 @@ export function StatusPills({ item }: { item: any }) {
       <Badge tone={d.config === "Configured" ? "green" : "slate"} title="Are all required settings present (from .env or saved here)?">{d.config}</Badge>
       {d.testable && d.label !== "Not configured" && <Badge tone={LABEL_TONE[d.label]} title="Connection status from the last REAL request">{d.label}</Badge>}
       {!d.testable && <Badge tone="slate" title="No automatic test exists">Verified by signing in</Badge>}
+      {item.deployment_managed && <Badge tone="violet" title="Set by whoever deploys the application; cannot be edited on this page">Deployment-managed</Badge>}
     </span>
   );
 }
@@ -158,9 +162,54 @@ function ManagerPicker({ canManage }: { canManage: boolean }) {
   );
 }
 
+const DEPLOY_HELP: Record<string, string[]> = {
+  google_login: ["Create an OAuth 2.0 Web client in Google Cloud (APIs & Services > Credentials) and add this app's origin under “Authorised JavaScript origins”.",
+                 "Set GOOGLE_CLIENT_ID=<that client ID> and AUTH_PROVIDER=google in the deployment environment (.env), then restart the backend.",
+                 "This is the sign-in client only. It is not the Google Ads OAuth client and needs no client secret.", "Verified by signing in: no connection test can prove it."],
+  database: ["Set DATABASE_URL in the deployment environment (for Supabase use the Session Pooler URL with ?sslmode=require).",
+             "The URL and password are never shown. Test Connection checks the database this process is really connected to."],
+  redis: ["Set REDIS_URL in the deployment environment. Start the worker and beat services so scheduled and background jobs run.",
+          "The URL is never shown. Test Connection checks the broker queue and whether a worker answers."],
+};
+
+function DependencyList({ item }: { item: any }) {
+  if (!item.dependencies?.length) return null;
+  return (
+    <div className="mt-3" aria-label="Dependencies">
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Depends on</div>
+      <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 text-sm">
+        {item.dependencies.map((d: any) => (
+          <li key={d.key} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
+            <div><span className={d.ok ? "text-emerald-700" : "text-rose-700"}>{d.ok ? "✓" : "✗"}</span> <span className="font-medium">{d.label}</span>
+              <div className="text-xs text-slate-500">{d.detail}</div></div>
+            {!d.ok && d.action && <a className="text-xs text-brand-700 underline" href={`#card-${d.action}`}>Go to {d.action.replace(/_/g, " ")}</a>}
+          </li>))}
+      </ul>
+    </div>
+  );
+}
+
+/** Live, read-only discovery of the choices a user must pick (GA4 properties, Business Profile accounts/locations, Claude models). */
+function useOptions(provider: string, enabled: boolean) {
+  return useQuery({ queryKey: ["integration-options", provider], enabled, retry: false, staleTime: 60_000, queryFn: () => api.get(`/integrations/${provider}/options`) });
+}
+
+function SmtpTestEmail() {
+  const [to, setTo] = useState("");
+  const send = useAction(() => api.post("/integrations/smtp/test-email", { to }), []);
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2" aria-label="Send a test email">
+      <div className="w-64"><Field label="Send a test email to" hint="Sends ONE real message; nothing is sent unless you press the button."><Input type="email" value={to} placeholder="you@example.com" onChange={(e) => setTo(e.target.value)} /></Field></div>
+      <Button disabled={!to || send.isPending} onClick={() => send.mutate({})}>{send.isPending ? "Sending…" : "Send test email"}</Button>
+      {send.data && (send.data.sent ? <span className="text-sm text-emerald-700">Sent to {send.data.to}</span> : <span className="text-sm text-rose-700">Not sent: {send.data.error}</span>)}
+      <ErrorBox error={send.error} />
+    </div>
+  );
+}
+
 function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: boolean; resultOf?: any }) {
   const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
-  const [open, setOpen] = useState(["google_ads", "groq", "pagespeed"].includes(item.provider));
+  const [open, setOpen] = useState(true); // every integration shows its fields, status, dependencies and instructions by default
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<"" | "disconnect" | "enable" | "disable">("");
@@ -176,24 +225,55 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
   const testable = item.display.testable;
   const chatModels = ((item.discovered?.models as string[]) ?? []).filter((m) => !NOT_CHAT.test(m));
   const d = item.display;
+  const pickable = ["ga4", "gbp", "claude"].includes(item.provider) && !item.missing.filter((m: string) => m !== "property_id").length;
+  const [discover, setDiscover] = useState(false);
+  const opts = useOptions(item.provider, discover && pickable);
+  const choices: Record<string, { value: string; label: string }[]> = {
+    property_id: (opts.data?.properties ?? []).map((p: any) => ({ value: p.property, label: `${p.name || p.property} (${p.property}) — ${p.account}` })),
+    account_name: (opts.data?.accounts ?? []).map((a: any) => ({ value: a.name, label: `${a.account || a.name} (${a.name})` })),
+    location_name: (opts.data?.locations ?? []).map((l: any) => ({ value: l.name, label: `${l.title || l.name} (${l.name})` })),
+    model: item.provider === "claude" ? (opts.data?.models ?? item.info?.models ?? []).map((m: string) => ({ value: m, label: m })) : [],
+    security: item.provider === "smtp" ? [{ value: "starttls", label: "STARTTLS (port 587)" }, { value: "ssl", label: "SSL/TLS (port 465)" }, { value: "none", label: "None (not recommended)" }] : [],
+  };
+  const unsaved = Object.entries(settings).some(([k, v]) => v !== (item.settings[k]?.value ?? "")) || Object.values(secrets).some(Boolean);
   return (
     <Card title={<span id={`card-${item.provider}`} className="flex flex-wrap items-center gap-2">{item.label}<StatusPills item={item} />{item.enabled && <Badge tone="green">Enabled in app</Badge>}</span>}
       actions={<Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide details" : "Details"}</Button>}>
       <p className="text-sm text-slate-600">{item.description}</p>
       {item.last_error && d.label === "Connection failed" && <div className="mt-3"><Notice tone="red"><b>Last error:</b> {item.last_error}</Notice></div>}
+      {item.credentials_unreadable && <div className="mt-3"><Notice tone="red"><b>Saved credentials cannot be decrypted.</b> TOKEN_ENCRYPTION_KEY has changed since they were saved, so they are treated as missing. Re-enter them (or restore the previous key).</Notice></div>}
+      {open && item.deployment_managed && (
+        <div className="mt-3"><Notice tone="blue"><b>Deployment-managed.</b> This is infrastructure configuration set by whoever deploys the app; it is not editable here and its values are never shown.
+          <ul className="mt-1 list-disc pl-5">{(DEPLOY_HELP[item.provider] ?? []).map((t) => <li key={t}>{t}</li>)}</ul></Notice></div>)}
+      {open && <DependencyList item={item} />}
+      {open && item.provider === "gbp" && <div className="mt-3"><Notice tone="amber">Google must approve <b>Business Profile API access</b> for your Cloud project (quota 0 until approved). Enable the two Business Profile APIs, then <a className="underline" href="https://developers.google.com/my-business/content/prereqs#request-access" target="_blank" rel="noreferrer">request access</a>. This card stays “Requires approval” until accounts and locations can be listed. It is a different service from Places.</Notice></div>}
+      {open && item.provider === "ga4" && <div className="mt-3"><Notice tone="blue">Needs the <b>Google Analytics Admin API</b> and the <b>Analytics Data API</b> enabled in your Cloud project, the analytics.readonly scope (use “Connect with Google” here) and Viewer access to the property. GA4 data is never mixed into Ads conversion counts.</Notice></div>}
+      {open && item.provider === "places" && <div className="mt-3"><Notice tone="blue">Enable <b>Places API (New)</b> and billing in the key's Google Cloud project, and restrict the key to that API.</Notice></div>}
+      {open && item.provider === "claude" && item.info?.usage && <p className="mt-3 text-xs text-slate-500">Last {item.info.usage.window_days} days: {item.info.usage.runs} runs, {item.info.usage.tokens_in.toLocaleString()} tokens in / {item.info.usage.tokens_out.toLocaleString()} out. {item.info.usage.cost_note} {item.info.independent}</p>}
+      {open && item.provider === "crawler" && <ul className="mt-3 list-disc pl-5 text-xs text-slate-500">{(item.info?.guarantees ?? []).map((g: string) => <li key={g}>{g}</li>)}</ul>}
       {open && <ProviderFacts item={item} />}
       {open && <SubtestRows item={item} busy={test.isPending} canManage={canManage} run={(t) => test.mutate(t)} />}
       {open && item.provider === "google_ads" && !item.missing.length && <ManagerPicker canManage={canManage} />}
       {open && hasFields && (
         <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
           <div className="grid gap-3 md:grid-cols-2">
-            {Object.entries(item.settings).map(([k, f]: any) => (
-              <Field key={k} label={f.label}>
-                <Input list={item.provider === "groq" && (k === "model" || k === "challenger_model") ? "groq-models" : undefined} value={settings[k] ?? f.value ?? ""} disabled={!canManage} autoComplete="off" onChange={(e) => setSettings({ ...settings, [k]: e.target.value })} />
-              </Field>
-            ))}
+            {Object.entries(item.settings).map(([k, f]: any) => {
+              const val = settings[k] ?? f.value ?? "";
+              const changed = settings[k] !== undefined && settings[k] !== (f.value ?? "");
+              const options = choices[k] ?? [];
+              return (
+              <Field key={k} label={`${f.label}${f.required ? " *" : ""}`}
+                hint={<span className="inline-flex flex-wrap items-center gap-1"><Badge tone={SOURCE_TONE[f.source] ?? "slate"}>{SOURCE_LABEL[f.source] ?? f.source}</Badge>
+                  {changed && <Badge tone="amber">unsaved change</Badge>}{f.source === "missing" && f.required && <span className="text-rose-700">required</span>}</span>}>
+                {options.length > 0 ? (
+                  <Select aria-label={f.label} value={val} disabled={!canManage} onChange={(e) => setSettings({ ...settings, [k]: e.target.value })}
+                    options={[{ value: "", label: "Choose…" }, ...(options.some((o) => o.value === val) || !val ? options : [{ value: val, label: `${val} (current)` }, ...options])]} />
+                ) : (
+                  <Input list={item.provider === "groq" && (k === "model" || k === "challenger_model") ? "groq-models" : undefined} value={val} disabled={!canManage} autoComplete="off" onChange={(e) => setSettings({ ...settings, [k]: e.target.value })} />
+                )}
+              </Field>); })}
             {Object.entries(item.secrets).map(([k, f]: any) => (
-              <Field key={k} label={f.label} hint={f.saved ? `Configured (${f.source}) · ••••••••${f.fingerprint ? ` · fingerprint ${f.fingerprint}…` : ""} — leave blank to keep` : "Write-only: never shown after saving"}>
+              <Field key={k} label={`${f.label}${f.required ? " *" : ""}`} hint={f.saved ? `${f.source === "environment" ? "Provided by the deployment (.env)" : "Saved here (encrypted)"} · ••••••••${f.fingerprint ? ` · fingerprint ${f.fingerprint}…` : ""} — leave blank to keep` : <span className="text-rose-700">{f.required ? "Missing — paste it, write-only: never shown after saving" : "Optional · write-only: never shown after saving"}</span>}>
                 <Input type="password" autoComplete="new-password" disabled={!canManage} value={secrets[k] ?? ""} placeholder={f.saved ? "•••••••• configured" : "Paste value"} onChange={(e) => setSecrets({ ...secrets, [k]: e.target.value })} />
               </Field>
             ))}
@@ -206,6 +286,9 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
       {canManage && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {hasFields && <Button disabled={!dirty || save.isPending} onClick={() => save.mutate({}, { onSuccess: () => { setSecrets({}); setSettings({}); } })}>{save.isPending ? "Saving…" : "Save"}</Button>}
+          {hasFields && unsaved && <><Badge tone="amber">Unsaved changes — not saved on the server yet</Badge><Button variant="ghost" onClick={() => { setSecrets({}); setSettings({}); }}>Discard</Button></>}
+          {hasFields && !unsaved && save.isSuccess && <span className="text-xs text-emerald-700">Saved. Run Test Connection to verify.</span>}
+          {pickable && <Button disabled={opts.isFetching} onClick={() => setDiscover(true)}>{opts.isFetching ? "Discovering…" : item.provider === "claude" ? "Load models" : item.provider === "ga4" ? "Discover properties" : "Discover accounts & locations"}</Button>}
           {testable && <Button variant="primary" disabled={test.isPending} onClick={() => test.mutate("all")}>{test.isPending ? "Testing…" : "Test Connection"}</Button>}
           {item.oauth && <Button disabled={oauth.isPending} title="Opens Google's consent screen" onClick={() => oauth.mutate({}, { onSuccess: (r: any) => { window.location.href = r.authorization_url; } })}>Connect with Google</Button>}
           {!item.readonly && d.label === "Connected" && !item.enabled && <Button onClick={() => setConfirm("enable")}>Enable in app</Button>}
@@ -213,7 +296,9 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
           {!item.readonly && (item.status !== "NOT_CONNECTED" || Object.values(item.secrets).some((s: any) => s.saved && s.source === "saved")) && <Button variant="ghost" onClick={() => setConfirm("disconnect")}>Disconnect</Button>}
         </div>
       )}
-      <div className="mt-2"><ErrorBox error={err} /></div>
+      <div className="mt-2"><ErrorBox error={err || opts.error} /></div>
+      {opts.data && !opts.data.ok && opts.data.error && <div className="mt-2"><Notice tone="amber"><b>{opts.data.error.step}:</b> {opts.data.error.detail} {opts.data.error.hint}</Notice></div>}
+      {open && item.provider === "smtp" && canManage && <SmtpTestEmail />}
       {open && <StepList steps={steps} />}
       {open && item.last_test_at && <p className="mt-2 text-xs text-slate-400">Last test {dt(item.last_test_at)} — every step is a real request; nothing is marked Connected unless all required steps pass.</p>}
       <ConfirmDialog open={confirm === "enable"} title={`Enable ${item.label}?`} confirmLabel="Enable" body={item.provider === "groq" ? "The application will use Groq for AI drafting and critique. Google Ads is not touched." : "Enabling lets the app use this integration. It does not by itself allow any Google Ads write."}
@@ -298,9 +383,6 @@ export default function Integrations() {
   const canManage = can("integrations.manage");
   const googleOk = !!items.find((i) => i.provider === "google_ads")?.last_test_ok;
   const results: Record<string, any> = Object.fromEntries((testAll.data?.results ?? []).map((r: any) => [r.provider, r]));
-  const order = ["google_ads", "groq", "pagespeed"];
-  const first = order.map((p) => items.find((i) => i.provider === p)).filter(Boolean);
-  const rest = items.filter((i) => !order.includes(i.provider));
   return (
     <div className="space-y-6">
       <PageHeader title="API & Account Integrations" subtitle="Credentials come from .env or are saved here (encrypted, write-only). Connected appears only after a real request succeeds."
@@ -308,24 +390,21 @@ export default function Integrations() {
       {params.get("oauth") === "connected" && <Notice tone="green">Google authorization saved for: {params.get("providers")}. Now run Test Connection.</Notice>}
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-label="Integration health">
-        {["Connected", "Connection failed", "Not tested", "Not configured", "Disabled"].map((s) => <Stat key={s} label={s} value={counts[s] ?? 0} />)}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="Integration health">
+        {["Connected", "Connection failed", "Credentials present", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0) + (s === "Credentials present" ? (counts["Configuration saved"] ?? 0) : 0)} />)}
       </div>
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
         ? <Notice tone="blue">Google OAuth redirect URI to register in your Google Cloud OAuth client: <code>{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Key integrations</h2>
-        <div className="grid gap-4 xl:grid-cols-2">{first.map((i: any) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
-      </section>
-      {["Google", "AI", "Website research", "System"].map((g) => {
-        const list = rest.filter((i) => i.group === g);
+      {[["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]].map(([g, title]) => {
+        const list = items.filter((i) => i.group === g);
         if (!list.length) return null;
         return (
-          <section key={g} className="space-y-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{g === "Google" ? "Other Google" : g === "AI" ? "Other AI" : g}</h2>
+          <section key={g} className="space-y-4" aria-label={title}>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
+            {g === "System" && <p className="text-xs text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
             <div className="grid gap-4 xl:grid-cols-2">{list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
           </section>);
       })}

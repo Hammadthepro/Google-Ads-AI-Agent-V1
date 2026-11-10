@@ -70,6 +70,22 @@ for (const label of ["Google Ads API", "Google Analytics 4", "Google Business Pr
 if (!(await page.getByText("Real campaign writes possible right now").isVisible())) errors.push("write status missing");
 if (await page.getByText("Mock mode").count()) errors.push("mock mode option still offered");
 if (/gsk_|sk-ant-|ya29\.|1\/\/0/.test(await page.content())) errors.push("secret-looking value in DOM");
+// every integration shows its status, required fields and (where relevant) dependencies; infrastructure is marked deployment-managed
+for (const label of ["Google Analytics 4", "Google Business Profile", "Keyword Planner", "Claude (Anthropic)", "Google Places API", "Website crawler",
+                     "Email alerts (SMTP)", "Google sign-in (app login)", "Database (PostgreSQL / Supabase)", "Redis (queue & rate limits)"]) {
+  if (!(await page.getByText(label).first().isVisible())) errors.push(`integration card missing: ${label}`);
+}
+for (const section of ["Google", "Other AI", "Website research", "System"]) {
+  if (!(await page.locator("h2", { hasText: new RegExp(`^${section}$`) }).count())) errors.push(`category missing: ${section}`);
+}
+if ((await page.getByText("Deployment-managed").count()) < 3) errors.push("deployment-managed marking missing");
+if (!(await page.getByLabel("Dependencies").count())) errors.push("dependency panel missing");
+if (!(await page.getByText(/SMTP host/).count())) errors.push("SMTP form fields missing");
+// typing in a field flags an UNSAVED change until Save is pressed
+const cid = page.getByLabel(/OAuth client ID/).first();
+await cid.fill("typed-but-not-saved.apps.googleusercontent.com");
+if (!(await page.getByText(/Unsaved changes — not saved on the server yet/).count())) errors.push("unsaved-change indicator missing");
+await page.getByRole("button", { name: "Discard" }).first().click();
 if (shots) await page.screenshot({ path: `${shots}/integrations.png`, fullPage: true });
 
 // 6. create a client through the form, then watch its real audit

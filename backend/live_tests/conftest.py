@@ -58,7 +58,8 @@ def step_status(res: dict, name_part: str) -> str | None:
 def blocker(res: dict) -> str | None:
     """A failed step whose cause is outside the app (API access level, quota) rather than a bug."""
     text = " ".join(f"{s['detail']} {s.get('hint', '')}" for s in res["steps"] if s["status"] == "FAILED")
-    for marker, why in (("CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "the Google Cloud project has Test access (test accounts only) and the configured customer is not a test account"),
+    for marker, why in (("enabled manager", "this Google user reaches no ENABLED manager (MCC) account"),
+                        ("CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "the Google Cloud project has Test access (test accounts only) and the configured customer is not a test account"),
                         ("No client account has been discovered yet", "no client account has been discovered (no enabled manager/MCC is reachable, so there is nothing to discover)"),
                         ("rate limit", "the provider rate limit is exhausted on this plan"),
                         ("DNS resolution failed", "this machine cannot resolve DNS itself (proxy-only network); the SSRF-guarded crawler needs normal DNS")):
