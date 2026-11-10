@@ -83,3 +83,10 @@ Money stored as integer **micros** (as Google Ads does) plus `currency_code`. No
 
 ## Mock-world tables (simulated external services, isolated)
 `mock_gads_customers`, `mock_gads_campaigns`, `mock_gads_budgets`, `mock_gads_ad_groups`, `mock_gads_criteria`, `mock_gads_ads`, `mock_gads_assets`, `mock_gads_conversion_actions`, `mock_gads_metrics_daily`, `mock_gads_search_terms`, `mock_gads_change_events`, `mock_gads_experiments`, `mock_places`, `mock_pagespeed`, `mock_failure_injections`, `mock_clock`.
+
+
+## Migration 0006 — workspaces and MCC accounts
+* `workspaces(id, name, slug UNIQUE, google_ads_manager_customer_id, google_ads_manager_name, accounts_discovered_at, discovery_status, discovery_message)` — one default workspace today.
+* `user_account_selections(id, user_id→users, workspace_id→workspaces, customer_id, UNIQUE(user_id, workspace_id))` — the account a user is working in.
+* `google_ads_accounts` + `workspace_id→workspaces`, `status`, `level`, `is_test_account`, `is_hidden`, `discovery_state` (ACTIVE/NOT_SEEN), `discovery_error`, `last_discovered_at`; existing `login_customer_id` is the manager an account is reached through and `parent_customer_id` its direct parent.
+* Customer IDs are stored as 10 digits (API format). RLS is enabled on both new tables. Additive only; nothing is dropped or rewritten.

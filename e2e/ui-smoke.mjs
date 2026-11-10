@@ -105,9 +105,18 @@ if (shots) await page.screenshot({ path: `${shots}/integrations.png`, fullPage: 
   if (/\$\d/.test(cells)) errors.push(`client row shows money without data: ${cells}`);
 }
 
-// 7. Google-Ads-dependent pages explain what is missing instead of failing or faking
+// 7. account selector: honest state with the real (Test-access) Google connection — no fabricated accounts
 await page.goto(`${BASE}/accounts`);
 await page.waitForLoadState("networkidle");
+await page.getByText("Client accounts", { exact: true }).first().waitFor();
+await page.getByLabel("Search accounts").fill("zzz-no-such-account");
+await page.getByText(/No accounts match|No client accounts yet/).first().waitFor();
+const acctText = await page.locator("body").innerText();
+if (!/No manager \(MCC\) account is selected yet|never refreshed|No client accounts yet|Google Ads integration is not configured/.test(acctText)) errors.push("account selector shows neither an empty state nor a manager prompt");
+if (/MOCK|SIMULATED/i.test(acctText)) errors.push("simulation wording on accounts page");
+await page.goto(`${BASE}/integrations`);
+await page.waitForLoadState("networkidle");
+if (await page.getByText(/GOOGLE_ADS_CUSTOMER_ID|Client \(test\) account customer ID/).count()) errors.push("retired client-ID field still shown");
 if (shots) await page.screenshot({ path: `${shots}/accounts.png`, fullPage: true });
 
 await browser.close();

@@ -1,3 +1,15 @@
+# Test results — MCC multi-client build (2026-11-10)
+
+| Check | Result |
+|---|---|
+| Backend suite | all passed, 1 skipped (live Groq contract test needs a key) — includes test_mcc_accounts (14), test_celery_redis (6) |
+| Frontend (`vitest`, `tsc`, `vite build`) | 23 passed; types and build OK |
+| Migrations | head 0006; downgrade 0006→0005→upgrade verified; Supabase applied 0004–0006 (55 tables, RLS on, 1 default workspace) |
+| Browser E2E (`e2e/ui-smoke.mjs`) | passed |
+| Live suite | 7 PASSED, 6 NOT CONFIGURED, 5 BLOCKED (no ENABLED manager reachable; Google Cloud project is Test-access only) |
+
+Previous build:
+
 # Test results — real-integration-only build (2026-11-10)
 
 | Check | Result |

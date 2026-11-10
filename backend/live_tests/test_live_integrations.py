@@ -78,3 +78,24 @@ def test_provider_connection(integration, provider, target):
     if why and not res["ok"]:
         blocked(why)
     assert res["ok"], [s for s in res["steps"] if s["status"] == "FAILED"]
+
+
+# ------------------------------------------------------------------ MCC flow (read-only): managers, hierarchy
+def test_live_manager_candidates_and_customer_client_hierarchy(integration):
+    from app.adapters import registry
+    res = integration("google_ads")
+    if step_status(res, "OAuth") != "PASSED":
+        pytest.fail(f"OAuth failed: {[s for s in res['steps'] if s['status'] == 'FAILED']}")
+    ads = registry.get("google_ads")
+    cands = ads.list_manager_candidates()
+    assert cands, "this Google user reaches no accounts"
+    for c in cands:  # every account is described or carries the exact Google error code — never silently dropped
+        assert c["customer_id"].isdigit() and len(c["customer_id"]) == 10 and (c["status"] != "UNKNOWN" or c["error"])
+    usable = [c for c in cands if c["is_manager"] and c["status"] == "ENABLED"]
+    if not usable:
+        blocked("no ENABLED manager (MCC) account is reachable by this Google user: " +
+                ", ".join(f"{c['customer_id']}={'manager ' if c['is_manager'] else ''}{c['status']}{'/' + c['error'] if c['error'] else ''}" for c in cands))
+    tree = ads.list_customer_clients(usable[0]["customer_id"])
+    assert tree["accounts"] and tree["accounts"][0]["level"] == 0
+    for a in tree["accounts"]:
+        assert a["status"] in ("ENABLED", "CANCELED", "SUSPENDED", "CLOSED", "UNKNOWN") and a["customer_id"].isdigit()

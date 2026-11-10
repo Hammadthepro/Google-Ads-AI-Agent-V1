@@ -78,3 +78,13 @@ Duplicate simulated search terms; Decimal aggregates; validation of status-only 
 * Lead Generation Agent, Outreach Agent, a separate Market Research Agent and a GA4 analytics view are not implemented (nothing was faked).
 * Legacy `mock_gads_*` tables remain in the schema (no destructive migration); nothing reads them.
 * PageSpeed without an API key can hit the keyless quota (live test reports BLOCKED).
+
+## MCC flow (2026-11-10)
+* **Live hierarchy discovery is unverified against a real tree**: the only manager this Google user reaches (`9952730299`) is a CLOSED test manager with no
+  clients, so the walk returns just itself. Real `customer_client` discovery with clients needs an ENABLED manager (a test manager + test clients is enough
+  for a Test-access project). The adapter logic is covered by unit tests with a stand-in Google client (multi-batch, sub-managers, suspended/closed/canceled, unreadable branches).
+* `TEST_MODE` no longer exists (it only controlled the simulated clock and mock controls, removed earlier). The four safety defaults that remain real settings are
+  unchanged: `GOOGLE_ADS_WRITES_ENABLED=false`, `AUTO_NEGATIVES_MODE=shadow`, `EMERGENCY_BRAKE_WRITE_MODE=simulate`, operating mode read-only.
+* The app on this machine uses local PostgreSQL; Supabase has the matching schema (0006) but the Supabase connection URL is a production secret that is not available
+  here, so the app was not run against Supabase from this environment.
+* Team assignments (user-to-account restrictions) are intentionally not implemented; `mcc_service.accessible_accounts` is the single hook for them.
