@@ -14,7 +14,7 @@ Generated from `backend/app/core/env_audit.py` by `python -m app.cli docs-env` (
 ## Google sign-in is not Google Ads OAuth
 | | App login (Google sign-in) | Google Ads / GA4 / Business Profile |
 |---|---|---|
-| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CUSTOMER_ID` |
+| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional) |
 | Flow | Google Identity Services returns an ID token; the backend verifies signature, issuer, audience, expiry, verified email and domain. **Only the client ID is needed** — no secret, no redirect URI. | Authorization-code flow with PKCE; needs client ID + secret + redirect URI and yields a refresh token. |
 | Grants | Access to this app only. Never grants Google Ads access. | Access to Google Ads data (read-only unless writes are separately enabled). |
 | Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; API access for the Cloud project |
@@ -27,7 +27,7 @@ Google **sunset developer tokens on 2026-09-09** ([official guide](https://devel
 - The Google API does not expose the access level, so the dashboard shows what the real responses prove (API enabled; test-only / production account readable) and links to the Overview page.
 
 ## Google Ads IDs
-`GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header; a manager account is no longer required unless you manage several accounts through it. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account (the one the connection test must read). Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).
+Client accounts are **not configured in `.env`**. Connect Google Ads on the Integrations page, choose your manager (MCC) there, and the app discovers every client account below it (`customer_client`) and stores them in the database. `GOOGLE_ADS_LOGIN_CUSTOMER_ID` is only an optional pre-selection of the manager. `GOOGLE_ADS_CUSTOMER_ID` was removed. Dashes are accepted and removed; IDs are stored as 10 digits.
 
 ## Groq
 Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on the Integrations page (recommended, then run Test Connection). `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.
@@ -93,8 +93,7 @@ Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on t
 | `GOOGLE_ADS_CLIENT_SECRET` 🔒 | when: real Google Ads | — | OAuth client secret for the Google Ads client above. | integrations_service.py |
 | `GOOGLE_ADS_REDIRECT_URI` | optional | — | OAuth redirect URI registered for the Ads client. Blank = <app origin>/api/v1/integrations/google/callback. | integrations_service.py (oauth_redirect_uri) |
 | `GOOGLE_ADS_REFRESH_TOKEN` 🔒 | when: real Google Ads | — | Refresh token for the Google user that can access the accounts (or use Connect with Google on the Integrations page). | integrations_service.py |
-| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | optional | — | Manager (MCC) account ID, 10 digits. Sent as the login-customer-id header when the accounts sit under a manager. | integrations_service.py, adapters/google_ads/real.py |
-| `GOOGLE_ADS_CUSTOMER_ID` | optional | — | Default CLIENT account ID, 10 digits, used for the connection test. Not the manager ID. | integrations_service.py |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | optional | — | OPTIONAL default manager (MCC) ID, 10 digits. The manager is normally chosen on the Integrations page and stored in the database; this is only a pre-selection for new deployments. | integrations_service.py, adapters/google_ads/real.py |
 
 ### Website research
 
@@ -154,6 +153,7 @@ Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on t
 | `AI_PROVIDER` | Removed: Groq and Claude are used as soon as they are configured on the Integrations page. |
 | `GROQ_ENABLED` | Removed: configure Groq on the Integrations page (or GROQ_API_KEY / GROQ_MODEL). |
 | `MOCK_SEED` | Removed with the simulated world. |
+| `GOOGLE_ADS_CUSTOMER_ID` | Removed: client accounts are discovered from your manager (MCC) and chosen in the application. Remove it from .env. |
 | `TEST_MODE` | Removed with the simulated clock and mock controls. |
 
 ### Read outside the backend

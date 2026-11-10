@@ -110,9 +110,41 @@ class Competitor(IdMixin, Base):
     maps_url: Mapped[str] = mapped_column(String(500), default="")
 
 
-# ---------------------------------------------------------------- google ads mirror
+# ---------------------------------------------------------------- workspaces (teams) and Google Ads accounts
+class Workspace(TimestampMixin, Base):
+    """A team. Owns a set of Google Ads accounts and the manager (MCC) they are discovered through. Single-tenant today
+    (one default workspace); user-to-account restrictions will hang off this table later."""
+
+    __tablename__ = "workspaces"
+    name: Mapped[str] = mapped_column(String(120))
+    slug: Mapped[str] = mapped_column(String(60), unique=True)
+    google_ads_manager_customer_id: Mapped[str] = mapped_column(String(20), default="")  # the selected MCC (digits only)
+    google_ads_manager_name: Mapped[str] = mapped_column(String(200), default="")
+    accounts_discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    discovery_status: Mapped[str] = mapped_column(String(20), default="NEVER_RUN")  # NEVER_RUN / OK / PARTIAL / FAILED
+    discovery_message: Mapped[str] = mapped_column(String(500), default="")
+
+
+class UserAccountSelection(TimestampMixin, Base):
+    """The Google Ads account a user is currently working in, per workspace (switching never touches .env)."""
+
+    __tablename__ = "user_account_selections"
+    __table_args__ = (UniqueConstraint("user_id", "workspace_id"),)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    customer_id: Mapped[str] = mapped_column(String(20))  # Google Ads API format: 10 digits, no dashes
+
+
 class GoogleAdsAccount(TimestampMixin, Base):
     __tablename__ = "google_ads_accounts"
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="UNKNOWN")  # ENABLED / CANCELED / SUSPENDED / CLOSED / UNKNOWN
+    level: Mapped[int] = mapped_column(Integer, default=0)  # depth below the selected manager (0 = the manager itself)
+    is_test_account: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
+    discovery_state: Mapped[str] = mapped_column(String(12), default="ACTIVE")  # ACTIVE / NOT_SEEN (absent from the last discovery; kept)
+    discovery_error: Mapped[str] = mapped_column(String(64), default="")  # Google error code if this branch could not be read
+    last_discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     client_id: Mapped[str | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
     customer_id: Mapped[str] = mapped_column(String(20), unique=True)
     login_customer_id: Mapped[str] = mapped_column(String(20), default="")

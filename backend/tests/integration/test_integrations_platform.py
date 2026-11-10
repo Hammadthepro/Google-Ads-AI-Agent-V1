@@ -20,7 +20,14 @@ SECRET = "client-secret-xyz"  # fake
 
 @pytest.fixture(autouse=True)
 def _reset_integrations():
+    from app.services import mcc_service
+    with session_scope() as db:  # the seeded fake world selected a manager; these tests start with none chosen, then restore it
+        ws = mcc_service.default_workspace(db)
+        saved_manager, ws.google_ads_manager_customer_id = ws.google_ads_manager_customer_id, ""
+    svc.invalidate()
     yield
+    with session_scope() as db:
+        mcc_service.default_workspace(db).google_ads_manager_customer_id = saved_manager
     with session_scope() as db:
         db.query(IntegrationConfig).delete()
         from app.services import settings_service
@@ -31,7 +38,7 @@ def _reset_integrations():
 SENT_HEADERS: list[dict] = []
 
 
-def _google_handler(*, token_status=200, ads_status=200, manager=False, client_error=None, test_account=False, mcc_is_manager=True):
+def _google_handler(*, token_status=200, ads_status=200, manager=False, client_error=None, test_account=False, mcc_is_manager=True, mcc_status="ENABLED"):
     """Fake Google endpoints. `client_error` = an authorizationError code returned for the client account query."""
     def handler(req: httpx.Request) -> httpx.Response:
         u = str(req.url)
@@ -54,9 +61,17 @@ def _google_handler(*, token_status=200, ads_status=200, manager=False, client_e
             if client_error and cust == "1112223334":
                 return httpx.Response(403, json={"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "The caller does not have permission",
                                                            "details": [{"errors": [{"errorCode": {"authorizationError": client_error}}]}]}})
+            if "FROM customer_client" in q:
+                if cust != "5556667778":
+                    return httpx.Response(403, json={"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "no",
+                                                               "details": [{"errors": [{"errorCode": {"authorizationError": "USER_PERMISSION_DENIED"}}]}]}})
+                return httpx.Response(200, json={"results": [{"customerClient": {"id": "5556667778", "level": "0", "manager": True, "status": mcc_status}},
+                                                              {"customerClient": {"id": "1112223334", "level": "1", "manager": False, "status": "ENABLED"}},
+                                                              {"customerClient": {"id": "9998887776", "level": "1", "manager": False, "status": "CLOSED"}}]})
             if "FROM customer" in q:
                 is_mgr = (cust == "5556667778" and mcc_is_manager) or manager
                 return httpx.Response(200, json={"results": [{"customer": {"id": cust, "descriptiveName": "Manager Co" if is_mgr else "Acme", "manager": is_mgr,
+                                                                           "status": mcc_status if cust == "5556667778" else "ENABLED",
                                                                            "testAccount": test_account, "currencyCode": "USD", "timeZone": "America/Chicago"}}]})
             return httpx.Response(200, json={"results": [{"campaign": {"id": "1"}}]})
         if "accountSummaries" in u:
@@ -72,7 +87,7 @@ def _client(handler):
 
 
 def _save_ads(db, **extra):
-    svc.save(db, "google_ads", settings={"client_id": "609437209123-abc.apps.googleusercontent.com", "customer_id": "111-222-3334", **extra},
+    svc.save(db, "google_ads", settings={"client_id": "609437209123-abc.apps.googleusercontent.com", **extra},
              secrets={"client_secret": SECRET, "refresh_token": "1//0refresh-abc-def-ghi"}, user_id=None)
 
 
@@ -81,7 +96,7 @@ def test_secrets_are_encrypted_and_masked():
         _save_ads(db)
         row = db.query(IntegrationConfig).filter_by(provider="google_ads").one()
         assert SECRET not in row.secrets_ciphertext and row.secrets_ciphertext
-        assert row.settings["customer_id"] == "1112223334"
+        assert "customer_id" not in row.settings  # retired: client accounts are discovered from the manager
     sup = Api(SUPER)
     body = sup.get("/integrations").text
     assert SECRET not in body and "1//0refresh" not in body
@@ -100,66 +115,76 @@ def test_blank_secret_keeps_existing_and_unknown_fields_rejected():
     assert sup.c.put("/api/v1/integrations/google_ads", json={"secrets": {"developer_token": "x"}}, headers=sup._h()).status_code in (400, 422)  # retired
     bad = sup.c.put("/api/v1/integrations/google_ads", json={"settings": {"nope": "x"}}, headers=sup._h())
     assert bad.status_code in (400, 422)
-    bad = sup.c.put("/api/v1/integrations/google_ads", json={"settings": {"customer_id": "12"}}, headers=sup._h())
+    bad = sup.c.put("/api/v1/integrations/google_ads", json={"settings": {"login_customer_id": "12"}}, headers=sup._h())
     assert bad.status_code in (400, 422)
+    old = sup.c.put("/api/v1/integrations/google_ads", json={"settings": {"customer_id": "1112223334"}}, headers=sup._h())
+    assert old.status_code in (400, 422)  # GOOGLE_ADS_CUSTOMER_ID / customer_id no longer exists
 
 
-def test_google_ads_connects_only_after_the_client_account_is_read_and_sends_no_developer_token():
+def test_google_ads_connects_after_an_enabled_manager_is_found_and_sends_no_developer_token():
     SENT_HEADERS.clear()
     with session_scope() as db:
-        _save_ads(db, login_customer_id="555-666-7778")
+        _save_ads(db)  # no manager and no client account configured anywhere
         res = svc.test_connection(db, "google_ads", http=_client(_google_handler()))
-        assert res["ok"] and res["connected"] and res["status"] == "CONNECTED"
-        assert {k: v["status"] for k, v in res["subtests"].items()} == {"auth": "PASSED", "cloud_access": "PASSED", "manager": "PASSED", "client": "PASSED"}
-        names = [s["name"] for s in res["steps"]]
-        assert any(n.startswith("Manager account") for n in names) and any(n.startswith("Client account: read campaigns") for n in names)
-        row = db.query(IntegrationConfig).filter_by(provider="google_ads").one()
-        assert row.connected_account == "Acme" and row.account_id == "1112223334" and row.last_test_ok is True
+        assert res["ok"] and res["connected"] and res["status"] == "CONNECTED", [x for x in res["steps"] if x["status"] == "FAILED"]
+        st = {k: v["status"] for k, v in res["subtests"].items()}
+        assert st == {"auth": "PASSED", "cloud_access": "PASSED", "manager": "PASSED", "hierarchy": "SKIPPED"}
         assert "ya29.fake" not in json.dumps(res)
         s = svc.serialize(db, "google_ads")
         assert s["display"]["label"] == "Connected" and s["info"]["cloud_project_number"] == "609437209123"
-        assert s["info"]["api_access"]["api_enabled"] is True and s["info"]["api_access"]["level"] == "production"
+        assert [m["customer_id"] for m in s["info"]["managers"]] == ["5556667778"]
     assert SENT_HEADERS and not any("developer-token" in h for h in SENT_HEADERS)  # sunset 2026-09-09: never sent
-    assert any(h.get("login-customer-id") == "5556667778" for h in SENT_HEADERS)  # the manager ID travels as login-customer-id
 
 
-def test_google_ads_manager_and_client_can_be_tested_separately():
+def test_hierarchy_step_uses_the_selected_manager_as_login_customer_id():
+    SENT_HEADERS.clear()
+    from app.services import mcc_service
     with session_scope() as db:
-        _save_ads(db, login_customer_id="555-666-7778")
-        r = svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="manager")
-        assert {k: v["status"] for k, v in r["subtests"].items()}["manager"] == "PASSED" and "client" not in r["subtests"]
-        assert r["connected"] is False  # the client account has not been read yet → NOT connected
-        s = svc.serialize(db, "google_ads")
-        assert s["display"]["label"] == "Not tested" and {x["key"]: x["status"] for x in s["subtests"]}["client"] == "NOT_TESTED"
-        r = svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="client")
-        assert r["connected"] is True and svc.serialize(db, "google_ads")["display"]["label"] == "Connected"
-        with pytest.raises(Exception):
-            svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="everything")
-
-
-def test_google_ads_without_a_client_account_is_never_connected():
+        _save_ads(db)
+        mcc_service.default_workspace(db).google_ads_manager_customer_id = "5556667778"
+    svc.invalidate()
     with session_scope() as db:
-        svc.save(db, "google_ads", settings={"client_id": "609437209123-abc.apps.googleusercontent.com"},
-                 secrets={"client_secret": SECRET, "refresh_token": "1//0r"}, user_id=None)
         res = svc.test_connection(db, "google_ads", http=_client(_google_handler()))
-        assert res["connected"] is False and res["subtests"]["client"]["status"] == "SKIPPED"
-        assert svc.serialize(db, "google_ads")["display"]["label"] == "Not tested"
+        assert res["connected"] and res["subtests"]["hierarchy"]["status"] == "PASSED"
+        assert "1 account" in res["subtests"]["hierarchy"]["detail"] or "2 account" in res["subtests"]["hierarchy"]["detail"]
+        assert svc.serialize(db, "google_ads")["info"]["hierarchy"]["manager"] == "5556667778"
+        mcc_service.default_workspace(db).google_ads_manager_customer_id = ""
+    assert any(h.get("login-customer-id") == "5556667778" for h in SENT_HEADERS)
 
 
-def test_google_ads_reports_exactly_what_google_access_is_missing():
+def test_manager_and_hierarchy_can_be_tested_separately():
+    with session_scope() as db:
+        _save_ads(db)
+        svc.test_connection(db, "google_ads", http=_client(_google_handler()))
+        r = svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="manager")
+        assert {k: v["status"] for k, v in r["subtests"].items()}["manager"] == "PASSED" and r["connected"] is True
+        r = svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="hierarchy")
+        assert r["subtests"]["hierarchy"]["status"] == "SKIPPED"
+        with pytest.raises(Exception):
+            svc.test_connection(db, "google_ads", http=_client(_google_handler()), target="client")  # the single-client test is gone
+
+
+def test_no_enabled_manager_means_not_connected_with_a_clear_reason():
+    for kw in ({"mcc_is_manager": False}, {"mcc_status": "CLOSED"}):
+        with session_scope() as db:
+            _save_ads(db)
+            res = svc.test_connection(db, "google_ads", http=_client(_google_handler(**kw)))
+            assert not res["connected"] and res["subtests"]["manager"]["status"] == "FAILED"
+            assert "enabled manager" in res["subtests"]["manager"]["detail"] and "ENABLED manager" in res["subtests"]["manager"]["hint"]
+            assert svc.serialize(db, "google_ads")["display"]["label"] == "Connection failed"
+
+
+def test_a_test_only_project_is_reported_per_account_without_blocking_manager_discovery():
     with session_scope() as db:
         _save_ads(db)
         res = svc.test_connection(db, "google_ads", http=_client(_google_handler(client_error="CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION")))
-        assert not res["connected"] and res["subtests"]["client"]["status"] == "FAILED" and res["subtests"]["cloud_access"]["status"] == "PASSED"
-        hint = res["subtests"]["client"]["hint"]
-        assert "Test access" in hint and "609437209123" in hint and "console.cloud.google.com/google/ads-apis/overview" in hint
-        s = svc.serialize(db, "google_ads")
-        assert s["display"]["label"] == "Connection failed" and s["info"]["api_access"]["level"] == "test"
+        assert res["connected"]  # an enabled manager exists; one non-test client account is simply not readable by a Test-access project
+        checked = {c["customer_id"]: c for c in svc.serialize(db, "google_ads")["settings"] and db.query(IntegrationConfig).filter_by(provider="google_ads").one().discovered["accounts_checked"]}
+        assert checked["1112223334"]["error"] == "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"
+        assert svc.serialize(db, "google_ads")["info"]["api_access"]["level"] == "test"
         res = svc.test_connection(db, "google_ads", http=_client(_google_handler(ads_status=403)))
         assert res["subtests"]["cloud_access"]["status"] == "FAILED" and "Enable it" in res["subtests"]["cloud_access"]["hint"]
         assert svc.serialize(db, "google_ads")["info"]["api_access"]["api_enabled"] is False
-        res = svc.test_connection(db, "google_ads", http=_client(_google_handler(manager=True)))
-        assert any("manager account" in x["detail"] for x in res["steps"] if x["status"] == "FAILED")  # client ID that is really an MCC
 
 
 def test_google_ads_failure_stops_at_failed_step_and_is_redacted():
@@ -334,12 +359,12 @@ def test_saving_credentials_refuses_the_public_development_key(monkeypatch):
 
 def test_env_customer_ids_are_normalised_for_real_requests(monkeypatch):
     from app.core.config import reset_settings_cache
-    monkeypatch.setenv("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890")
+    monkeypatch.setenv("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890")  # retired: must be ignored
     monkeypatch.setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "987-654-3210")
     reset_settings_cache()
     try:
         vals = svc.effective("google_ads", None)
-        assert vals["customer_id"] == "1234567890" and vals["login_customer_id"] == "9876543210"
+        assert "customer_id" not in vals and vals["login_customer_id"] == "9876543210"
     finally:
         monkeypatch.undo()
         reset_settings_cache()

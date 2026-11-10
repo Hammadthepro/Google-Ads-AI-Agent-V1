@@ -34,18 +34,22 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
     def _customer(self, customer_id: str) -> str:
         """Keyword ideas do not depend on one client's data, so a client without a linked account uses the connection's
         configured client account. With neither, fail clearly BEFORE calling Google (an empty ID is a guaranteed API error)."""
-        from app.services import integrations_service
-        cid = (customer_id or integrations_service.resolve("google_ads").get("customer_id") or "").replace("-", "").strip()
+        from app.db.session import session_scope
+        from app.services import mcc_service
+        cid = (customer_id or "").replace("-", "").strip()
+        if not cid:
+            with session_scope() as db:
+                cid = mcc_service.any_client_account(db)
         if not cid.isdigit():
-            raise InvalidInput("Keyword Planner needs a Google Ads client account. Link one to this client, or set the client customer ID "
-                               "on the Google Ads card of the Integrations page.", adapter=self.name)
+            raise InvalidInput("Keyword Planner needs a Google Ads client account. Discover your accounts first (Integrations > Google Ads "
+                               "> choose a manager > refresh accounts).", adapter=self.name)
         return cid
 
     def generate_ideas(self, customer_id, seeds, *, page_url="", location_ids=None, language="en", city=""):
         cid = self._customer(customer_id)
 
         def run():
-            client = self.ads.client()
+            client = self.ads.client(None if self.ads._factory else self.ads._login_for(cid))
             svc = client.get_service("KeywordPlanIdeaService")
             req = client.get_type("GenerateKeywordIdeasRequest")
             req.customer_id = cid
@@ -73,7 +77,7 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
     def suggest_geo_targets(self, zip_codes, country="US"):
         """GeoTargetConstantService.SuggestGeoTargetConstants — ZIP codes -> Google location IDs (postal codes preferred)."""
         def run():
-            client = self.ads.client()
+            client = self.ads.client(None)
             svc = client.get_service("GeoTargetConstantService")
             req = client.get_type("SuggestGeoTargetConstantsRequest")
             req.locale = "en"

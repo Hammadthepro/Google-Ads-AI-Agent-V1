@@ -34,30 +34,8 @@ def serialize_account(a: GoogleAdsAccount) -> dict:
             "currency_code": a.currency_code, "time_zone": a.time_zone, "is_manager": a.is_manager,
             "parent_customer_id": a.parent_customer_id, "permission_status": a.permission_status,
             "writes_allowed": a.writes_allowed, "auto_tagging_enabled": a.auto_tagging_enabled,
-            "integration_mode": a.integration_mode, "last_synced_at": a.last_synced_at.isoformat() if a.last_synced_at else None}
-
-
-def discover(db: Session, user: User) -> list[GoogleAdsAccount]:
-    auth_service.require(user, "clients.edit")
-    ads = registry.get("google_ads")
-    found = []
-    for c in ads.list_accessible_customers():
-        row = db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.customer_id == c["customer_id"]))
-        if not row:
-            row = GoogleAdsAccount(customer_id=c["customer_id"])
-            db.add(row)
-        row.descriptive_name = c.get("descriptive_name") or row.descriptive_name
-        row.is_manager = bool(c.get("is_manager"))
-        row.parent_customer_id = c.get("manager_customer_id") or ""
-        row.currency_code = c.get("currency_code") or row.currency_code
-        row.time_zone = c.get("time_zone") or row.time_zone
-        row.auto_tagging_enabled = c.get("auto_tagging_enabled")
-        row.integration_mode = adapter_mode()
-        row.permission_status = "OK"
-        found.append(row)
-    db.flush()
-    activity.log(db, "ads_accounts.discovered", actor=user, details={"count": len(found)}, integration_mode=adapter_mode())
-    return found
+            "integration_mode": a.integration_mode, "status": a.status, "level": a.level, "is_test_account": a.is_test_account,
+            "discovery_state": a.discovery_state, "customer_id_display": f"{a.customer_id[:3]}-{a.customer_id[3:6]}-{a.customer_id[6:]}", "last_synced_at": a.last_synced_at.isoformat() if a.last_synced_at else None}
 
 
 def link(db: Session, user: User, account_id: str, client_id: str | None) -> GoogleAdsAccount:

@@ -36,8 +36,7 @@ NOTES = {
                    "# belong to the Google Cloud project that owns the OAuth client below; see the Google Ads API Overview page in Cloud Console.\n"
                    "# Test access calls TEST accounts only; a non-test account needs a higher level. Keyword Planner needs Basic or Standard.\n"
                    "# OAuth client = where you authorise Ads (different from the sign-in client above).\n"
-                   "# GOOGLE_ADS_LOGIN_CUSTOMER_ID = your MANAGER (MCC) account, only if you use one; GOOGLE_ADS_CUSTOMER_ID = a CLIENT account.\n"
-                   "# 10 digits, dashes allowed. Do not put the manager ID in both."),
+                   "# GOOGLE_ADS_LOGIN_CUSTOMER_ID is optional: the manager (MCC) is chosen on the Integrations page and client accounts are discovered from it."),
     "Website research": "# Optional. PageSpeed works without a key at a low quota.",
     "AI (Groq)": ("# Groq needs GROQ_API_KEY and GROQ_MODEL (exact Groq model ID, https://console.groq.com/docs/models).\n"
                   "# Which models you can use depends on your Groq plan (e.g. the Llama models are Enterprise-only for some accounts).\n"
@@ -86,7 +85,7 @@ def render_docs() -> str:
          "4. Credentials entered on the **Integrations** page are stored encrypted in the database and win over these variables. The page refuses to save credentials until `TOKEN_ENCRYPTION_KEY` (or a random 32+ character `APP_SECRET_KEY`) is set.", "",
          "## Google sign-in is not Google Ads OAuth",
          "| | App login (Google sign-in) | Google Ads / GA4 / Business Profile |", "|---|---|---|",
-         "| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_CUSTOMER_ID` |",
+         "| Variables | `AUTH_PROVIDER=google`, `GOOGLE_CLIENT_ID`, `BOOTSTRAP_ADMIN_EMAIL`, `ALLOWED_LOGIN_DOMAINS` | `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_ADS_REDIRECT_URI`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID` (optional) |",
          "| Flow | Google Identity Services returns an ID token; the backend verifies signature, issuer, audience, expiry, verified email and domain. **Only the client ID is needed** — no secret, no redirect URI. | Authorization-code flow with PKCE; needs client ID + secret + redirect URI and yields a refresh token. |",
          "| Grants | Access to this app only. Never grants Google Ads access. | Access to Google Ads data (read-only unless writes are separately enabled). |",
          "| Google Cloud setup | OAuth *Web* client, **Authorised JavaScript origins** = your app origin | OAuth client, **Authorised redirect URI** = `<app origin>/api/v1/integrations/google/callback`; Google Ads API enabled; API access for the Cloud project |",
@@ -98,7 +97,7 @@ def render_docs() -> str:
          "- The Google Ads API must be enabled in that project; the connection test says so if it is not.",
          "- The Google API does not expose the access level, so the dashboard shows what the real responses prove (API enabled; test-only / production account readable) and links to the Overview page.", "",
          "## Google Ads IDs",
-         "`GOOGLE_ADS_LOGIN_CUSTOMER_ID` is the **manager (MCC)** account, sent as the `login-customer-id` header; a manager account is no longer required unless you manage several accounts through it. `GOOGLE_ADS_CUSTOMER_ID` is a **client** account (the one the connection test must read). Dashes are accepted and removed. Putting the manager ID in both makes the app query the manager itself, which has no campaigns (the audit warns).", "",
+         "Client accounts are **not configured in `.env`**. Connect Google Ads on the Integrations page, choose your manager (MCC) there, and the app discovers every client account below it (`customer_client`) and stores them in the database. `GOOGLE_ADS_LOGIN_CUSTOMER_ID` is only an optional pre-selection of the manager. `GOOGLE_ADS_CUSTOMER_ID` was removed. Dashes are accepted and removed; IDs are stored as 10 digits.", "",
          "## Groq",
          "Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on the Integrations page (recommended, then run Test Connection). `GROQ_MODEL` drafts; `GROQ_CHALLENGER_MODEL` critiques (blank = same model). "
          "Model names are not hard-coded and **which models you can use depends on your Groq plan**: the Integrations page lists what your key can access and sends a real JSON-mode request to the primary and the challenger model. Use a different model family for the challenger so the critique is independent. See https://console.groq.com/docs/models.", "",

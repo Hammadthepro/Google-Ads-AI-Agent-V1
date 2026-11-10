@@ -27,7 +27,7 @@ def env_files() -> tuple[str, ...]:
     return (str(REPO_ROOT / ".env"), ".env")
 
 
-_ID_FIELDS = ("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "GOOGLE_ADS_CUSTOMER_ID")
+_ID_FIELDS = ("GOOGLE_ADS_LOGIN_CUSTOMER_ID",)
 
 
 class Settings(BaseSettings):
@@ -70,7 +70,6 @@ class Settings(BaseSettings):
     GOOGLE_ADS_REDIRECT_URI: str = ""
     GOOGLE_ADS_REFRESH_TOKEN: str = ""
     GOOGLE_ADS_LOGIN_CUSTOMER_ID: str = ""
-    GOOGLE_ADS_CUSTOMER_ID: str = ""
 
     GOOGLE_PLACES_API_KEY: str = ""
     PAGESPEED_API_KEY: str = ""

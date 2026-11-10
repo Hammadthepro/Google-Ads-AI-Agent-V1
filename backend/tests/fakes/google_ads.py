@@ -68,6 +68,55 @@ class MockGoogleAdsAdapter(GoogleAdsAdapter):
                 raise PermissionDenied(f"No access to customer {customer_id}", adapter=self.name)
             return self._customer_dict(c)
 
+    # hierarchy discovery (test knobs: status_overrides {customer_id: status}, inaccessible {customer_id: error code})
+    status_overrides: dict
+    inaccessible: dict
+
+    def _knobs(self):
+        if not hasattr(self, "status_overrides") or "status_overrides" not in self.__dict__:
+            self.status_overrides, self.inaccessible = {}, {}
+
+    def list_manager_candidates(self) -> list[dict]:
+        self._fail("list_manager_candidates")
+        self._knobs()
+        out = []
+        with session_scope() as db:
+            for c in db.scalars(select(MockCustomer).where(MockCustomer.accessible.is_(True)).order_by(MockCustomer.customer_id)):
+                err = self.inaccessible.get(c.customer_id, "")
+                out.append({"customer_id": c.customer_id, "descriptive_name": "" if err else c.descriptive_name,
+                            "is_manager": None if err else c.is_manager, "status": "UNKNOWN" if err else self.status_overrides.get(c.customer_id, "ENABLED"),
+                            "test_account": True, "currency_code": c.currency_code, "time_zone": c.time_zone, "error": err})
+        return out
+
+    def list_customer_clients(self, manager_customer_id: str) -> dict:
+        self._fail("list_customer_clients", manager_customer_id)
+        self._knobs()
+        with session_scope() as db:
+            rows = {c.customer_id: c for c in db.scalars(select(MockCustomer))}
+        accounts, errors, queue, seen = {}, [], [(manager_customer_id, "", 0)], set()
+        while queue:
+            mgr, parent, lvl = queue.pop(0)
+            if mgr in seen:
+                continue
+            seen.add(mgr)
+            if mgr in self.inaccessible:
+                errors.append({"customer_id": mgr, "code": self.inaccessible[mgr]})
+                continue
+            me = rows.get(mgr)
+            if me and mgr not in accounts:
+                accounts[mgr] = self._cc(me, lvl, parent)
+            for c in sorted((r for r in rows.values() if r.manager_customer_id == mgr), key=lambda r: r.customer_id):
+                accounts.setdefault(c.customer_id, self._cc(c, lvl + 1, mgr))
+                st = self.status_overrides.get(c.customer_id, "ENABLED")
+                if c.is_manager and st not in ("CLOSED", "CANCELED"):
+                    queue.append((c.customer_id, mgr, lvl + 1))
+        return {"accounts": list(accounts.values()), "errors": errors}
+
+    def _cc(self, c: MockCustomer, level: int, parent: str) -> dict:
+        return {"customer_id": c.customer_id, "descriptive_name": c.descriptive_name, "status": self.status_overrides.get(c.customer_id, "ENABLED"),
+                "is_manager": c.is_manager, "level": level, "parent_customer_id": parent, "currency_code": c.currency_code,
+                "time_zone": c.time_zone, "test_account": True, "hidden": False, "error": ""}
+
     def get_account_hierarchy(self, manager_customer_id: str) -> list[dict]:
         self._fail("get_account_hierarchy", manager_customer_id)
         with session_scope() as db:

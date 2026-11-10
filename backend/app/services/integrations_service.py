@@ -37,15 +37,14 @@ PROVIDERS: dict[str, dict] = {
     "google_ads": {
         "label": "Google Ads API", "group": "Google",
         "description": "Account discovery, reporting and Keyword Planner. Campaign writes stay disabled unless explicitly authorised twice.",
-        "settings": {"client_id": "OAuth client ID", "login_customer_id": "Manager (MCC) customer ID",
-                     "customer_id": "Client (test) account customer ID"},
+        "settings": {"client_id": "OAuth client ID", "login_customer_id": "Default manager (MCC) ID — optional; choose the manager in the connection flow"},
         "secrets": {"client_secret": "OAuth client secret", "refresh_token": "Refresh token"},
         # No developer token: Google sunset developer tokens on 2026-09-09; API access levels now belong to the Cloud project
         # that owns the OAuth client.
         "required": ["client_id", "client_secret", "refresh_token"],
-        "subtests": [("auth", "OAuth authentication"), ("cloud_access", "Google Cloud API access"), ("manager", "Manager account"),
-                     ("client", "Client account")],
-        "required_subtests": ["auth", "cloud_access", "client"], "targets": {"manager": "Test manager account", "client": "Test client account"},
+        "subtests": [("auth", "OAuth authentication"), ("cloud_access", "Google Cloud API access"), ("manager", "Manager accounts"),
+                     ("hierarchy", "Client accounts")],
+        "required_subtests": ["auth", "cloud_access", "manager"], "targets": {"manager": "Test manager accounts", "hierarchy": "Test client discovery"},
         "oauth": True, "scopes": GOOGLE_SCOPES["google_ads"],
         "docs": "https://developers.google.com/google-ads/api/docs/api-policy/developer-token",
     },
@@ -163,7 +162,8 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
         if k not in spec["settings"]:
             raise ValidationFailed(f"Unknown setting '{k}' for {provider}")
         cur[k] = (v or "").strip() if isinstance(v, str) else v
-    for k in ("customer_id", "login_customer_id"):
+    cur.pop("customer_id", None)  # retired: the client account is chosen in the application (workspace account selector)
+    for k in ("login_customer_id",):
         if cur.get(k):
             digits = cur[k].replace("-", "")
             if not digits.isdigit() or len(digits) != 10:
@@ -236,7 +236,6 @@ def disconnect(db: Session, provider: str, user_id: str | None) -> IntegrationCo
 # --------------------------------------------------------------------------------------------- resolution
 _ENV = {
     "google_ads": {"client_id": "GOOGLE_ADS_CLIENT_ID", "login_customer_id": "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
-                   "customer_id": "GOOGLE_ADS_CUSTOMER_ID",
                    "client_secret": "GOOGLE_ADS_CLIENT_SECRET", "refresh_token": "GOOGLE_ADS_REFRESH_TOKEN"},
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
     "places": {"api_key": "GOOGLE_PLACES_API_KEY"},
@@ -260,7 +259,8 @@ def effective(provider: str, row: IntegrationConfig | None, env_fallback: bool =
     if row:
         out.update({k: v for k, v in (row.settings or {}).items() if v not in (None, "")})
         out.update({k: v for k, v in _secrets(row).items() if v})
-    for k in ("customer_id", "login_customer_id"):  # 123-456-7890 and 1234567890 are the same Google Ads ID
+    out.pop("customer_id", None)
+    for k in ("login_customer_id",):  # 123-456-7890 and 1234567890 are the same Google Ads ID
         if isinstance(out.get(k), str):
             out[k] = out[k].replace("-", "").strip()
     return out
@@ -515,75 +515,87 @@ def _test_google_ads(vals: dict, http: httpx.Client, steps: Steps, row: Integrat
     access = {"api_enabled": True, "level": "unknown", "basis": "The API accepted the request. Google does not expose the access level through the API; "
               f"see {ADS_CONSOLE}" + (f"?project={project}" if project else "")}
     disc["cloud_access"] = access
-    mcc, cust = vals.get("login_customer_id", ""), vals.get("customer_id", "")
-    query = "SELECT customer.id, customer.descriptive_name, customer.manager, customer.test_account, customer.currency_code, customer.time_zone FROM customer LIMIT 1"
-    if target in ("all", "manager"):
-        if not mcc:
-            steps.skip("Manager account", "No manager (MCC) customer ID configured — optional if the client account is directly accessible", sub="manager")
-        else:
+    query = ("SELECT customer.id, customer.descriptive_name, customer.manager, customer.test_account, customer.status, "
+             "customer.currency_code, customer.time_zone FROM customer LIMIT 1")
+    described = []
+    if target in ("all", "manager", "hierarchy"):
+        # Describe every directly accessible account WITHOUT a login-customer-id: that is how a user reaches their own accounts.
+        for cid in ids[:50]:
+            row_ = {"customer_id": cid, "name": "", "manager": None, "status": "UNKNOWN", "test_account": False, "error": ""}
             try:
-                r = _ads_search(http, base, headers, mcc, query, login=mcc)
+                r = _ads_search(http, base, headers, cid, query, login="")
             except httpx.HTTPError as exc:
-                steps.fail("Manager account: read account information", f"Request failed: {type(exc).__name__}", sub="manager")
+                row_["error"] = type(exc).__name__
+            else:
+                if r.status_code == 200:
+                    c = (r.json().get("results") or [{}])[0].get("customer", {})
+                    row_.update({"name": c.get("descriptiveName", ""), "manager": bool(c.get("manager")), "status": c.get("status", "UNKNOWN"),
+                                 "test_account": bool(c.get("testAccount"))})
+                else:
+                    row_["error"] = _ads_error_code(r)
+                    if row_["error"] == "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION":
+                        access["level"] = "test"
+                        access["basis"] = ("Google answered CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION for a non-test account: this project is approved "
+                                           "for test accounts only.")
+            described.append(row_)
+        disc["accounts_checked"] = described
+        managers = [d for d in described if d["manager"]]
+        usable = [d for d in managers if d["status"] == "ENABLED"]
+        disc["managers"] = managers
+    if target in ("all", "manager"):
+        if not ids:
+            steps.fail("Manager accounts: find a manager (MCC)", "This Google user has no directly accessible Google Ads accounts",
+                       hint="Authorise with a Google user that has access to your manager (MCC) account.", sub="manager")
+        elif not usable:
+            why = "; ".join(f"{d['customer_id']}: " + (f"{'manager, ' if d['manager'] else ''}{d['status'].lower()}" if not d["error"] else d["error"]) for d in described[:6])
+            steps.fail("Manager accounts: find an enabled manager (MCC)", f"None of the {len(ids)} accessible account(s) is an enabled manager account ({why})",
+                       hint="Authorise with a Google user who has access to an ENABLED manager (MCC) account. Closed, canceled or suspended managers cannot be used.",
+                       sub="manager")
+        else:
+            steps.ok("Manager accounts: find an enabled manager (MCC)", f"{len(usable)} enabled manager account(s): " + ", ".join(f"{d['name'] or d['customer_id']} ({d['customer_id']})" for d in usable[:5]),
+                     sub="manager", managers=[d["customer_id"] for d in usable])
+    if target in ("all", "hierarchy"):
+        mcc = _selected_manager(vals)
+        if not mcc:
+            steps.skip("Client accounts: read the hierarchy", "No manager account has been chosen yet — choose one on this card to discover its client accounts", sub="hierarchy")
+        else:
+            q = "SELECT customer_client.id, customer_client.status, customer_client.manager, customer_client.level FROM customer_client WHERE customer_client.level <= 1"
+            try:
+                r = _ads_search(http, base, headers, mcc, q, login=mcc)
+            except httpx.HTTPError as exc:
+                steps.fail("Client accounts: read the hierarchy", f"Request failed: {type(exc).__name__}", sub="hierarchy")
             else:
                 if r.status_code != 200:
                     hint, kind = _ads_hint(r, project)
-                    steps.fail("Manager account: read account information", _http_error(r), hint=hint, sub="manager")
-                    if kind == "test_only":
-                        access["level"] = "test"
+                    steps.fail("Client accounts: read the hierarchy (customer_client)", _http_error(r), hint=hint, sub="hierarchy")
                 else:
-                    c = (r.json().get("results") or [{}])[0].get("customer", {})
-                    disc["manager"] = {"id": c.get("id", mcc), "name": c.get("descriptiveName", ""), "manager": bool(c.get("manager"))}
-                    if not c.get("manager"):
-                        steps.fail("Manager account: is a manager account", f"{mcc} is a regular account, not a manager (MCC).",
-                                   hint="Put the MANAGER account ID in GOOGLE_ADS_LOGIN_CUSTOMER_ID and a client account under it in GOOGLE_ADS_CUSTOMER_ID.", sub="manager")
-                    else:
-                        steps.ok("Manager account: read account information", f"{c.get('descriptiveName') or mcc} (manager account)", sub="manager", **disc["manager"])
-    if target in ("all", "client"):
-        if not cust:
-            steps.skip("Client account", "No client customer ID configured (GOOGLE_ADS_CUSTOMER_ID) — the app cannot be called Connected until a client account is read", sub="client")
-        elif not mcc and cust not in ids:
-            steps.fail("Client account: accessible", f"Account {cust} is not directly accessible to this Google user and no manager ID is set",
-                       hint="Set GOOGLE_ADS_LOGIN_CUSTOMER_ID to the manager account that links it, or authorise with a user who has access.", sub="client")
-        else:
-            try:
-                r = _ads_search(http, base, headers, cust, query, login=mcc)
-            except httpx.HTTPError as exc:
-                steps.fail("Client account: read account information", f"Request failed: {type(exc).__name__}", sub="client")
-                return disc
-            if r.status_code != 200:
-                hint, kind = _ads_hint(r, project)
-                steps.fail("Client account: read account information", _http_error(r), hint=hint, sub="client")
-                if kind == "test_only":
-                    access["level"] = "test"
-                    access["basis"] = "Google answered CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION: this project is approved for test accounts only, and the account queried is not a test account."
-                return disc
-            c = (r.json().get("results") or [{}])[0].get("customer", {})
-            disc["client"] = {"id": c.get("id", cust), "name": c.get("descriptiveName", ""), "manager": bool(c.get("manager")),
-                              "test_account": bool(c.get("testAccount")), "currency": c.get("currencyCode", ""), "time_zone": c.get("timeZone", "")}
-            disc["customer"] = disc["client"]
-            if c.get("manager"):
-                steps.fail("Client account: is a client account", f"{cust} is a manager account. Managers hold no campaigns.",
-                           hint="Set GOOGLE_ADS_CUSTOMER_ID to a client account under the manager.", sub="client")
-                return disc
-            steps.ok("Client account: read account information", f"{c.get('descriptiveName') or cust}" + (" (Google Ads TEST account)" if c.get("testAccount") else ""),
-                     sub="client", **disc["client"])
-            if c.get("testAccount"):
-                access["level"] = "test-or-higher"
-                access["basis"] = "The client is a Google Ads test account, which any project can call. Production access is not proven by this test."
-            else:
-                access["level"] = "production"
-                access["basis"] = "A production account was read successfully, so this project has Explorer, Basic or Standard access (Google does not say which via the API)."
-            try:
-                r = _ads_search(http, base, headers, cust, "SELECT campaign.id, campaign.name, campaign.status FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 5", login=mcc)
-            except httpx.HTTPError as exc:
-                steps.fail("Client account: read campaigns", f"Request failed: {type(exc).__name__}", sub="client")
-            else:
-                if r.status_code != 200:
-                    steps.fail("Client account: read campaigns", _http_error(r), hint=_ads_hint(r, project)[0], sub="client")
-                else:
-                    steps.ok("Client account: read campaigns", f"{len(r.json().get('results', []))} campaign(s) readable (first page, read-only)", sub="client")
+                    kids = [x["customerClient"] for x in r.json().get("results", []) if x.get("customerClient", {}).get("id") != mcc]
+                    disc["hierarchy_preview"] = {"manager": mcc, "direct_children": len(kids)}
+                    steps.ok("Client accounts: read the hierarchy (customer_client)", f"{len(kids)} account(s) directly under manager {mcc} (the full tree is read when you refresh accounts)",
+                             sub="hierarchy", direct_children=len(kids))
     return disc
+
+
+def _selected_manager(vals: dict) -> str:
+    """The workspace's chosen manager (database), else the optional deployment default (GOOGLE_ADS_LOGIN_CUSTOMER_ID)."""
+    try:
+        from app.models import Workspace
+        with session_scope() as db:
+            m = db.scalar(select(Workspace.google_ads_manager_customer_id).where(Workspace.slug == "default"))
+    except Exception:  # noqa: BLE001 - the connection test must still run if the workspace table is unavailable
+        m = ""
+    return (m or vals.get("login_customer_id") or "").replace("-", "")
+
+
+def _ads_error_code(r: httpx.Response) -> str:
+    try:
+        for d in r.json().get("error", {}).get("details", []):
+            for e in d.get("errors", []):
+                for v in (e.get("errorCode") or {}).values():
+                    return str(v)
+    except Exception:  # noqa: BLE001
+        pass
+    return f"HTTP_{r.status_code}"
 
 
 def _test_ga4(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
@@ -728,17 +740,23 @@ def _test_groq(vals: dict, http: httpx.Client, steps: Steps, row, target: str = 
 def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
     """Real, read-only Keyword Planner request using the Google Ads authorisation and the client account."""
     need = [k for k in ("client_id", "client_secret", "refresh_token") if not vals.get(k)]
-    if need or not vals.get("customer_id"):
-        steps.fail("Google Ads configured", "Needs the Google Ads OAuth credentials and a client customer ID (GOOGLE_ADS_CUSTOMER_ID)" + (f"; missing {', '.join(need)}" if need else ""),
-                   hint="Configure Google Ads above first.")
+    if need:
+        steps.fail("Google Ads configured", f"Needs the Google Ads OAuth credentials; missing {', '.join(need)}", hint="Configure Google Ads above first.")
+        return {}
+    from app.services import mcc_service
+    with session_scope() as db_:
+        customer = mcc_service.any_client_account(db_)
+        login = mcc_service.default_workspace(db_).google_ads_manager_customer_id
+    if not customer:
+        steps.fail("Client account available", "No client account has been discovered yet", hint="Choose a manager account and refresh accounts first (Google Ads card).")
         return {}
     token = refresh_access_token(vals, http, steps, "OAuth authentication")
     if not token:
         return {}
     project = _cloud_project_number(vals.get("client_id", ""))
-    headers = {"Authorization": f"Bearer {token}", **({"login-customer-id": vals["login_customer_id"]} if vals.get("login_customer_id") else {})}
+    headers = {"Authorization": f"Bearer {token}", **({"login-customer-id": login} if login else {})}
     try:
-        r = http.post(f"https://googleads.googleapis.com/{ADS_API_VERSION}/customers/{vals['customer_id']}:generateKeywordIdeas", headers=headers, timeout=45, json={
+        r = http.post(f"https://googleads.googleapis.com/{ADS_API_VERSION}/customers/{customer}:generateKeywordIdeas", headers=headers, timeout=45, json={
             "keywordSeed": {"keywords": ["plumber"]}, "language": "languageConstants/1000", "geoTargetConstants": ["geoTargetConstants/2840"], "pageSize": 5})
     except httpx.HTTPError as exc:
         steps.fail("Generate keyword ideas", f"Request failed: {type(exc).__name__}")
@@ -1116,7 +1134,7 @@ def serialize(db: Session, provider: str) -> dict:
     status = row.status if row else "NOT_CONNECTED"
     if provider == "keyword_planner":
         ads_vals = effective("google_ads", _row(db, "google_ads"))
-        miss = [k for k in ("client_id", "client_secret", "refresh_token", "customer_id") if not ads_vals.get(k)]
+        miss = [k for k in ("client_id", "client_secret", "refresh_token") if not ads_vals.get(k)]
     elif miss and status in ("NOT_CONNECTED", "SYNCHRONIZATION_REQUIRED") and (row or env_vals):
         status = "CONFIGURATION_REQUIRED" if (row and (row.settings or row.secret_fingerprints)) else status
     elif not row and any(env_vals.get(k) for k in spec["required"]) and not miss:
@@ -1134,8 +1152,8 @@ def serialize(db: Session, provider: str) -> dict:
         info = {"cloud_project_number": num or None, "console_url": f"{ADS_CONSOLE}?project={num}" if num else ADS_CONSOLE,
                 "developer_token": "Not required (sunset 2026-09-09): access is granted to the Google Cloud project that owns the OAuth client",
                 "api_access": disc.get("cloud_access") or {"api_enabled": None, "level": "not tested", "basis": "Run Test Connection"},
-                "manager_id_set": bool(vals.get("login_customer_id")), "client_id_set": bool(vals.get("customer_id")),
-                "manager": disc.get("manager"), "client": disc.get("client")}
+                "manager_id_set": bool(_selected_manager(vals)), "managers": disc.get("managers"),
+                "hierarchy": disc.get("hierarchy_preview")}
     if provider == "groq":
         info = {"primary_model": vals.get("model") or "", "challenger_model": vals.get("challenger_model") or "",
                 "challenger_falls_back": not vals.get("challenger_model"), "rate_limits": (row.discovered or {}).get("rate_limits") if row else None,

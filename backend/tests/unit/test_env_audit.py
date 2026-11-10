@@ -65,13 +65,14 @@ def test_every_setting_is_actually_used():
 
 
 def test_settings_cleanup_and_normalisation(monkeypatch):
-    for k in ("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "GOOGLE_ADS_CUSTOMER_ID", "BOOTSTRAP_ADMIN_EMAIL", "GROQ_MODEL"):
+    for k in ("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "BOOTSTRAP_ADMIN_EMAIL", "GROQ_MODEL"):
         monkeypatch.delenv(k, raising=False)
-    s = Settings(_env_file=None, GOOGLE_ADS_LOGIN_CUSTOMER_ID=" 123-456-7890 ", GOOGLE_ADS_CUSTOMER_ID="987 654 3210",
+    s = Settings(_env_file=None, GOOGLE_ADS_LOGIN_CUSTOMER_ID=" 123-456-7890 ",
                  BOOTSTRAP_ADMIN_EMAIL=" Admin@Example.COM ", GROQ_MODEL='"llama-3.3-70b-versatile"')
-    assert s.GOOGLE_ADS_LOGIN_CUSTOMER_ID == "1234567890" and s.GOOGLE_ADS_CUSTOMER_ID == "9876543210"
+    assert s.GOOGLE_ADS_LOGIN_CUSTOMER_ID == "1234567890"
     assert s.BOOTSTRAP_ADMIN_EMAIL == "admin@example.com" and s.GROQ_MODEL == "llama-3.3-70b-versatile"
-    assert Settings(_env_file=None, GOOGLE_ADS_CUSTOMER_ID="12-ab").GOOGLE_ADS_CUSTOMER_ID == "12-ab"  # invalid stays visible to check-env
+    assert Settings(_env_file=None, GOOGLE_ADS_LOGIN_CUSTOMER_ID="12-ab").GOOGLE_ADS_LOGIN_CUSTOMER_ID == "12-ab"  # invalid stays visible to check-env
+    assert "GOOGLE_ADS_CUSTOMER_ID" not in Settings.model_fields
     with pytest.raises(ValueError, match="GOOGLE_CLIENT_ID"):
         Settings(_env_file=None, AUTH_PROVIDER="google", GOOGLE_CLIENT_ID="")
     assert Settings(_env_file=None, AUTH_PROVIDER="google", GOOGLE_CLIENT_ID="x.apps.googleusercontent.com").AUTH_PROVIDER == "google"
@@ -110,10 +111,10 @@ def test_rules_google_signin_vs_ads_oauth():
 
 
 def test_rules_google_ads_ids():
-    ok = {"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "123-456-7890", "GOOGLE_ADS_CUSTOMER_ID": "987-654-3210"}
+    ok = {"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "123-456-7890"}
     assert not [p for p in run(ok)["problems"] if p["level"] in ("error", "warn") and "CUSTOMER_ID" in p["var"]]
-    dup = run({"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "1234567890", "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890"})
-    assert lv(dup, "GOOGLE_ADS_CUSTOMER_ID", "warn") and "manager" in lv(dup, "GOOGLE_ADS_CUSTOMER_ID", "warn")[0]["message"]
+    old = run({"GOOGLE_ADS_CUSTOMER_ID": "123-456-7890"})  # retired: flagged for removal, never obeyed
+    assert lv(old, "GOOGLE_ADS_CUSTOMER_ID", "warn") and "discovered from your manager" in lv(old, "GOOGLE_ADS_CUSTOMER_ID", "warn")[0]["message"]
     assert lv(run({"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "12345"}), "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "error")
     partly = run({"GOOGLE_ADS_CLIENT_ID": "a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s"})
     assert lv(partly, "GOOGLE_ADS_REFRESH_TOKEN", "warn") and not lv(partly, "GOOGLE_ADS_DEVELOPER_TOKEN", "warn")  # no developer token needed
@@ -191,8 +192,7 @@ def test_developer_token_is_retired_not_required():
     """Google sunset developer tokens on 2026-09-09: never required, never validated, only flagged for removal."""
     assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in BY_NAME and "GOOGLE_ADS_DEVELOPER_TOKEN" in RETIRED
     assert "GOOGLE_ADS_DEVELOPER_TOKEN" not in Settings.model_fields
-    complete = {"GOOGLE_ADS_CLIENT_ID": "1-a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s", "GOOGLE_ADS_REFRESH_TOKEN": "r",
-                "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890"}
+    complete = {"GOOGLE_ADS_CLIENT_ID": "1-a.apps.googleusercontent.com", "GOOGLE_ADS_CLIENT_SECRET": "s", "GOOGLE_ADS_REFRESH_TOKEN": "r"}
     r = run(complete)
     assert r["counts"]["error"] == 0 and not [p for p in r["problems"] if p["var"].startswith("GOOGLE_ADS_") and p["level"] in ("warn", "error")]  # complete without a token
     r = run({**complete, "GOOGLE_ADS_DEVELOPER_TOKEN": "abc"})

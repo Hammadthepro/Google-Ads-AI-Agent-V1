@@ -54,6 +54,18 @@ class GoogleAdsAdapter(ABC):
     @abstractmethod
     def get_account_hierarchy(self, manager_customer_id: str) -> list[dict]: ...
 
+    def list_manager_candidates(self) -> list[dict]:
+        """Every account this Google user can reach directly, described (so the user can pick the MCC). Read-only.
+        [{customer_id, descriptive_name, is_manager, status, test_account, currency_code, time_zone, error}]; `error` is the Google
+        error code when an account could not be described (e.g. CUSTOMER_NOT_ENABLED)."""
+        raise NotImplementedError
+
+    def list_customer_clients(self, manager_customer_id: str) -> dict:
+        """The whole hierarchy below a manager via the `customer_client` resource (all levels, sub-managers followed).
+        {"accounts": [{customer_id, descriptive_name, status, is_manager, level, parent_customer_id, currency_code, time_zone,
+        test_account, hidden}], "errors": [{customer_id, code}]} — a branch that cannot be read is reported, never invented."""
+        raise NotImplementedError
+
     # ---- structure
     @abstractmethod
     def list_resources(self, customer_id: str, resource_type: str, parent: str | None = None,

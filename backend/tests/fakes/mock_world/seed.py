@@ -193,7 +193,7 @@ def _mock_world(db) -> None:
 
 
 def seed(run_workflows: bool = True) -> dict:
-    from app.services import (accounts_service, emergency, monitoring, optimization, reporting, tasks_service, tracking_gate)
+    from app.services import (accounts_service, emergency, mcc_service, monitoring, optimization, reporting, tasks_service, tracking_gate)
     with session_scope() as db:
         if db.scalar(select(MockCustomer.id)):
             return {"seeded": False, "reason": "already seeded"}
@@ -211,7 +211,8 @@ def seed(run_workflows: bool = True) -> dict:
         su = db.scalar(select(User).where(User.email == "superadmin@napollo.example"))
         admin = db.scalar(select(User).where(User.email == "admin@napollo.example"))
         backup = db.scalar(select(User).where(User.email == "backup.admin@napollo.example"))
-        accounts_service.discover(db, su)
+        mcc_service.default_workspace(db).google_ads_manager_customer_id = MCC
+        mcc_service.discover(db, su)
         db.flush()
         for spec in CLIENTS:
             c = Client(name=spec["name"], owner_user_id=admin.id, backup_owner_user_id=backup.id, owner_contact=admin.email,

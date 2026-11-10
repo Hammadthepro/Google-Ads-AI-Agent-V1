@@ -94,9 +94,12 @@ def list_accounts(user: User = Depends(require("clients.view")), db: Session = D
 
 @router.post("/ads-accounts/discover", tags=["google ads"])
 def discover(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = accounts_service.discover(db, user)
+    from app.services import mcc_service
+    mcc_service.discover(db, user)  # customer_client hierarchy of the selected manager (not just ListAccessibleCustomers)
     db.commit()
-    return [accounts_service.serialize_account(a) for a in rows]
+    ids = auth_service.accessible_client_ids(db, user)
+    rows = db.scalars(select(GoogleAdsAccount).order_by(GoogleAdsAccount.customer_id))
+    return [accounts_service.serialize_account(a) for a in rows if ids is None or a.client_id in ids or a.client_id is None]
 
 
 class LinkIn(BaseModel):

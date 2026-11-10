@@ -58,8 +58,7 @@ REGISTRY: list[dict] = [
     _v("GOOGLE_ADS_CLIENT_SECRET", "Google Ads", "conditional", "OAuth client secret for the Google Ads client above.", "integrations_service.py", secret=True, when="real Google Ads"),
     _v("GOOGLE_ADS_REDIRECT_URI", "Google Ads", "optional", "OAuth redirect URI registered for the Ads client. Blank = <app origin>/api/v1/integrations/google/callback.", "integrations_service.py (oauth_redirect_uri)"),
     _v("GOOGLE_ADS_REFRESH_TOKEN", "Google Ads", "conditional", "Refresh token for the Google user that can access the accounts (or use Connect with Google on the Integrations page).", "integrations_service.py", secret=True, when="real Google Ads"),
-    _v("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Google Ads", "optional", "Manager (MCC) account ID, 10 digits. Sent as the login-customer-id header when the accounts sit under a manager.", "integrations_service.py, adapters/google_ads/real.py"),
-    _v("GOOGLE_ADS_CUSTOMER_ID", "Google Ads", "optional", "Default CLIENT account ID, 10 digits, used for the connection test. Not the manager ID.", "integrations_service.py"),
+    _v("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Google Ads", "optional", "OPTIONAL default manager (MCC) ID, 10 digits. The manager is normally chosen on the Integrations page and stored in the database; this is only a pre-selection for new deployments.", "integrations_service.py, adapters/google_ads/real.py"),
     _v("GOOGLE_PLACES_API_KEY", "Website research", "optional", "Places API (New) key for competitor and Business Profile research.", "integrations_service.py", secret=True),
     _v("PAGESPEED_API_KEY", "Website research", "optional", "PageSpeed Insights key (works without one at a low quota).", "integrations_service.py", secret=True),
     # ---- AI
@@ -95,6 +94,7 @@ RETIRED = {
     "AI_PROVIDER": "Removed: Groq and Claude are used as soon as they are configured on the Integrations page.",
     "GROQ_ENABLED": "Removed: configure Groq on the Integrations page (or GROQ_API_KEY / GROQ_MODEL).",
     "MOCK_SEED": "Removed with the simulated world.",
+    "GOOGLE_ADS_CUSTOMER_ID": "Removed: client accounts are discovered from your manager (MCC) and chosen in the application. Remove it from .env.",
     "TEST_MODE": "Removed with the simulated clock and mock controls.",
 }
 # Read by the frontend dev server / Docker tooling, not by the backend.
@@ -281,14 +281,9 @@ def audit(values: dict[str, str], *, files: list[str] | None = None, duplicates:
                 add("warn", k, "Google Ads credentials are partly set; this one is missing, so the connection test will stop at 'Credentials present'.", "Provide it, or enter all four on the Integrations page instead.")
     if ads_cid and not ads_cid.endswith(".apps.googleusercontent.com"):
         add("error", "GOOGLE_ADS_CLIENT_ID", "A Google OAuth client ID ends with .apps.googleusercontent.com.", "Copy the client ID from Google Cloud → Credentials.")
-    mcc, cust = _digits(g("GOOGLE_ADS_LOGIN_CUSTOMER_ID")), _digits(g("GOOGLE_ADS_CUSTOMER_ID"))
-    for k, val in (("GOOGLE_ADS_LOGIN_CUSTOMER_ID", mcc), ("GOOGLE_ADS_CUSTOMER_ID", cust)):
-        if g(k) and not (val.isdigit() and len(val) == 10):
-            add("error", k, "A Google Ads customer ID is exactly 10 digits (dashes allowed: 123-456-7890).", "Copy it from the Google Ads account switcher.")
-    if mcc and cust and mcc == cust and mcc.isdigit():
-        add("warn", "GOOGLE_ADS_CUSTOMER_ID", "Same ID as GOOGLE_ADS_LOGIN_CUSTOMER_ID: that is the manager account, which holds no campaigns, so campaigns could not be read.", "Set GOOGLE_ADS_CUSTOMER_ID to a client account under the manager (or leave it blank and discover accounts).")
-    if cust and not mcc:
-        add("info", "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Blank. Needed only if this client account is accessed through a manager (MCC); leave blank for a directly accessible account.", "")
+    mcc = _digits(g("GOOGLE_ADS_LOGIN_CUSTOMER_ID"))
+    if g("GOOGLE_ADS_LOGIN_CUSTOMER_ID") and not (mcc.isdigit() and len(mcc) == 10):
+        add("error", "GOOGLE_ADS_LOGIN_CUSTOMER_ID", "A Google Ads customer ID is exactly 10 digits (dashes allowed: 123-456-7890).", "Copy it from the Google Ads account switcher, or leave it blank and choose the manager on the Integrations page.")
     # -- groq
     groq_in_use = bool(g("GROQ_API_KEY") or g("GROQ_MODEL"))
     if groq_in_use:

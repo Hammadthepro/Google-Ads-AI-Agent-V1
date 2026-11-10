@@ -10,6 +10,7 @@ independently of the application's WriteGuard.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date
 from typing import Any, Callable
@@ -66,6 +67,22 @@ _GAQL = {
 }
 
 
+_CODE_RE = re.compile(r"(?:authorization_error|authorizationError|request_error|requestError|query_error|queryError|quota_error|quotaError)"
+                      r"\W{1,6}([A-Z][A-Z_]{3,})")
+_KNOWN_CODES = ("CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "USER_PERMISSION_DENIED", "CUSTOMER_NOT_ENABLED", "CUSTOMER_NOT_FOUND",
+                "OAUTH_TOKEN_INVALID", "OAUTH_TOKEN_EXPIRED", "OAUTH_TOKEN_REVOKED", "INVALID_CUSTOMER_ID", "NOT_ADS_USER", "RESOURCE_EXHAUSTED",
+                "RATE_EXCEEDED", "invalid_grant")
+
+
+def error_code(text: str) -> str:
+    """The Google Ads error code inside a failure message (safe to show/store: it is an enum name, not data)."""
+    for k in _KNOWN_CODES:
+        if k in text:
+            return k
+    m = _CODE_RE.search(text)
+    return m.group(1) if m else ""
+
+
 def real_writes_permitted() -> tuple[bool, str]:
     s = get_settings()
     if not s.GOOGLE_ADS_WRITES_ENABLED:
@@ -82,16 +99,36 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
     is_real = True
 
     def __init__(self, client_factory: Callable[[], Any] | None = None, refresh_token: str | None = None):
-        self._client = None
+        self._clients: dict[str, Any] = {}  # one Google client per login-customer-id (accounts can sit under different managers)
         self._factory = client_factory
         self._refresh_token = refresh_token
         self._sleep = time.sleep  # replaced in tests so backoff does not slow them down
 
     # ------------------------------------------------------------------ client
-    def client(self):
-        if self._client is None:
+    def _login_for(self, customer_id: str) -> str:
+        """The manager (login-customer-id) through which this account is reached: stored by account discovery, else the optional
+        deployment default. Empty = the Google user has direct access."""
+        from sqlalchemy import select
+
+        from app.db.session import session_scope
+        from app.models import GoogleAdsAccount
+        cid = customer_id.replace("-", "")
+        with session_scope() as db:
+            login = db.scalar(select(GoogleAdsAccount.login_customer_id).where(GoogleAdsAccount.customer_id == cid))
+        if login:
+            return login
+        from app.services import integrations_service
+        return (integrations_service.resolve("google_ads").get("login_customer_id") or "").replace("-", "")
+
+    def client(self, login: str | None = None):
+        """Google client for a login-customer-id (None = the optional default)."""
+        if login is None:
+            from app.services import integrations_service
+            login = (integrations_service.resolve("google_ads").get("login_customer_id") or "").replace("-", "") if not self._factory else ""
+        key = login or ""
+        if key not in self._clients:
             if self._factory:
-                self._client = self._factory()
+                self._clients[key] = self._factory()
             else:
                 from google.ads.googleads.client import GoogleAdsClient  # imported only here
                 from app.services import integrations_service
@@ -104,10 +141,10 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
                 # No developer token: Google sunset them on 2026-09-09. API access levels now belong to the Google Cloud project
                 # that owns this OAuth client (https://developers.google.com/google-ads/api/docs/api-policy/developer-token).
                 cfg = {"client_id": v["client_id"], "client_secret": v["client_secret"], "refresh_token": token, "use_proto_plus": False}
-                if v.get("login_customer_id"):
-                    cfg["login_customer_id"] = v["login_customer_id"].replace("-", "")
-                self._client = GoogleAdsClient.load_from_dict(cfg)
-        return self._client
+                if key:
+                    cfg["login_customer_id"] = key
+                self._clients[key] = GoogleAdsClient.load_from_dict(cfg)
+        return self._clients[key]
 
     def _wrap(self, fn: Callable):
         try:
@@ -132,6 +169,11 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
                 delay *= 2
 
     def _map_error(self, exc: Exception) -> AdapterError:
+        err = self._map_error_inner(exc)
+        err.details.setdefault("code", error_code(str(exc)))
+        return err
+
+    def _map_error_inner(self, exc: Exception) -> AdapterError:
         """Vendor errors become adapter errors with a SAFE message; the raw text goes to the backend log only."""
         text = str(exc)
         name = type(exc).__name__
@@ -161,9 +203,12 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
         except Exception:  # noqa: BLE001 - reporting must never mask the original error
             log.exception("could not record google_ads runtime failure")
 
-    def _search(self, customer_id: str, query: str) -> list[Any]:
+    def _search(self, customer_id: str, query: str, login: str | None = None) -> list[Any]:
+        if login is None and not self._factory:
+            login = self._login_for(customer_id)
+
         def run():
-            svc = self.client().get_service("GoogleAdsService")
+            svc = self.client(login).get_service("GoogleAdsService")
             rows = []
             for batch in svc.search_stream(customer_id=customer_id.replace("-", ""), query=query):
                 rows.extend(batch.results)
@@ -198,6 +243,82 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
                  "is_manager": r.customer_client.manager, "manager_customer_id": manager_customer_id,
                  "currency_code": r.customer_client.currency_code, "time_zone": r.customer_client.time_zone}
                 for r in rows if str(r.customer_client.id) != manager_customer_id.replace("-", "")]
+
+    # ------------------------------------------------------------------ manager discovery (read-only)
+    @staticmethod
+    def _plain(msg: Any) -> dict:
+        """A protobuf message (or a plain object in unit tests) as {field: value} with enums as names and int64 as ints."""
+        if hasattr(msg, "DESCRIPTOR"):
+            from google.protobuf.json_format import MessageToDict
+            return MessageToDict(msg, preserving_proto_field_name=True)
+        return {k: getattr(msg, k) for k in dir(msg) if not k.startswith("_") and not callable(getattr(msg, k))}
+
+    def list_manager_candidates(self) -> list[dict]:
+        names = self.list_accessible_customers()
+        out = []
+        for n in names:
+            cid = n["customer_id"]
+            row = {"customer_id": cid, "descriptive_name": "", "is_manager": None, "status": "UNKNOWN", "test_account": False,
+                   "currency_code": "", "time_zone": "", "error": ""}
+            try:  # no login-customer-id: the user is accessing the account directly
+                rows = self._search(cid, "SELECT customer.id, customer.descriptive_name, customer.manager, customer.test_account, "
+                                         "customer.status, customer.currency_code, customer.time_zone FROM customer", login="")
+            except AdapterError as exc:
+                row["error"] = exc.details.get("code") or exc.kind
+                out.append(row)
+                continue
+            c = self._plain(rows[0].customer) if rows else {}
+            row.update({"descriptive_name": c.get("descriptive_name", ""), "is_manager": bool(c.get("manager")),
+                        "status": c.get("status", "UNKNOWN"), "test_account": bool(c.get("test_account")),
+                        "currency_code": c.get("currency_code", ""), "time_zone": c.get("time_zone", "")})
+            out.append(row)
+        return out
+
+    _CLIENTS_Q = ("SELECT customer_client.id, customer_client.descriptive_name, customer_client.status, customer_client.manager, "
+                  "customer_client.level, customer_client.currency_code, customer_client.time_zone, customer_client.test_account, "
+                  "customer_client.hidden FROM customer_client WHERE customer_client.level <= 1")
+    _SKIP_DESCENT = {"CLOSED", "CANCELED"}
+    MAX_MANAGERS = 500  # safety bound on the sub-manager walk
+
+    def list_customer_clients(self, manager_customer_id: str) -> dict:
+        """Walk the hierarchy below `manager_customer_id` one manager at a time (level <= 1 per manager) so every account's PARENT
+        is known. `search_stream` delivers all result batches, which is how pagination is covered. A sub-manager that cannot be
+        read is reported in `errors` and its subtree is left out — never guessed."""
+        root = manager_customer_id.replace("-", "")
+        accounts: dict[str, dict] = {}
+        errors: list[dict] = []
+        queue, seen = [(root, "", 0)], set()
+        while queue and len(seen) < self.MAX_MANAGERS:
+            mgr, parent_of_mgr, lvl = queue.pop(0)
+            if mgr in seen:
+                continue
+            seen.add(mgr)
+            try:
+                rows = self._search(mgr, self._CLIENTS_Q, login=root)
+            except AuthError:
+                raise  # invalid/expired credentials affect every branch: stop instead of reporting a hundred identical branch errors
+            except AdapterError as exc:
+                errors.append({"customer_id": mgr, "code": exc.details.get("code") or exc.kind})
+                if mgr in accounts:
+                    accounts[mgr]["error"] = exc.details.get("code") or exc.kind
+                continue
+            for r in rows:
+                c = self._plain(r.customer_client)
+                cid = str(c.get("id", ""))
+                if not cid:
+                    continue
+                item = {"customer_id": cid, "descriptive_name": c.get("descriptive_name", ""), "status": c.get("status", "UNKNOWN"),
+                        "is_manager": bool(c.get("manager")), "currency_code": c.get("currency_code", ""), "time_zone": c.get("time_zone", ""),
+                        "test_account": bool(c.get("test_account")), "hidden": bool(c.get("hidden")), "error": ""}
+                if cid == mgr:  # level 0 row = the manager itself
+                    item.update({"level": lvl, "parent_customer_id": parent_of_mgr})
+                    accounts[cid] = {**accounts.get(cid, {}), **item}
+                    continue
+                item.update({"level": lvl + 1, "parent_customer_id": mgr})
+                accounts.setdefault(cid, item)
+                if item["is_manager"] and item["status"] not in self._SKIP_DESCENT and cid not in seen:
+                    queue.append((cid, mgr, lvl + 1))
+        return {"accounts": list(accounts.values()), "errors": errors}
 
     # ------------------------------------------------------------------ structure
     def list_resources(self, customer_id: str, resource_type: str, parent: str | None = None,
@@ -305,7 +426,7 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
     def build_operations(self, customer_id: str, operations: list[dict]) -> list[Any]:
         """Translate application operation dicts into GoogleAdsService MutateOperation protos."""
         from google.protobuf.json_format import ParseDict
-        client = self.client()
+        client = self.client(None if self._factory else self._login_for(customer_id))
         cid = customer_id.replace("-", "")
         temp_map: dict[str, str] = {}
         for op in operations:
@@ -357,7 +478,7 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
                 raise WritesDisabled(f"Real Google Ads write blocked inside adapter: {why}", adapter=self.name)
 
         def run():
-            client = self.client()
+            client = self.client(None if self._factory else self._login_for(customer_id))
             svc = client.get_service("GoogleAdsService")
             request = client.get_type("MutateGoogleAdsRequest")
             request.customer_id = customer_id.replace("-", "")

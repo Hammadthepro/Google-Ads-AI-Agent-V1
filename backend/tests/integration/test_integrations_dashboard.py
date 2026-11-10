@@ -146,7 +146,7 @@ def test_test_endpoint_accepts_targets_and_stores_results_for_the_dashboard(monk
     sup = Api(SUPER)
     r = sup.post("/integrations/google_ads/test?target=nonsense")
     assert r.status_code in (400, 422)
-    r = sup.post("/integrations/google_ads/test?target=client").json()  # nothing configured: honest failure, not success
+    r = sup.post("/integrations/google_ads/test?target=manager").json()  # nothing configured: honest failure, not success
     assert r["connected"] is False and r["integration"]["display"]["label"] == "Not configured"
     assert Api(ANALYST).post("/integrations/google_ads/test").status_code == 403
     assert Api(ANALYST).get("/integrations").status_code == 200
