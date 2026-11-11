@@ -19,15 +19,15 @@ CLAIMS = ["Licensed and insured"]
 
 def _payload():
     return {"business_name": "Acme Plumbing", "website": "https://x.example", "city": "Austin", "phone": "", "radius_miles": 20,
-            "verified_claims": CLAIMS, "brand_rules": [], "excluded_services": [], "tracking_state": "AMBER", "playbook_rules": [],
+            "verified_claims": CLAIMS, "brand_rules": [], "excluded_services": [], "measurement": {"conversion_bidding_supported": None, "reason": "", "issues": []}, "playbook_rules": [],
             "services": SERVICES, "monthly_budget": 1500, "feasibility": {}, "keyword_table": TABLE, "note": ""}
 
 
 def _run(scope="CAMPAIGN"):
     with session_scope() as db:
         res = competition.run(db, scope=scope, payload=_payload(), challenge_ctx={"verified_claims": CLAIMS, "excluded_services": [],
-                              "tracking_state": "AMBER", "feasibility": {}}, table=TABLE, verified_claims=CLAIMS,
-                              tracking_state="AMBER", override=False, task_id=None)
+                              "measurement": {"conversion_bidding_supported": None, "reason": "", "issues": []}, "feasibility": {}}, table=TABLE, verified_claims=CLAIMS,
+                              conversion_bidding=None, task_id=None)
         runs = db.query(AIRun).order_by(AIRun.created_at).all()
         return res, [(r.purpose, r.provider, r.prompt_template_id, r.prompt_version, r.input_hash) for r in runs[-6:]]
 
@@ -93,6 +93,6 @@ def test_ad_group_scope():
     with session_scope() as db:
         p = {**_payload(), "service": SERVICES[0]}
         res = competition.run(db, scope="AD_GROUP", payload=p, challenge_ctx={"verified_claims": CLAIMS, "excluded_services": [],
-                              "tracking_state": "AMBER", "feasibility": {}}, table=TABLE, verified_claims=CLAIMS,
-                              tracking_state="AMBER", override=False, task_id=None)
+                              "measurement": {"conversion_bidding_supported": None, "reason": "", "issues": []}, "feasibility": {}}, table=TABLE, verified_claims=CLAIMS,
+                              conversion_bidding=None, task_id=None)
     assert res["draft"]["service"] == "Drain Cleaning" and res["draft"]["ads"]

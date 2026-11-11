@@ -15,7 +15,7 @@ from app.core.errors import NotFound, ValidationFailed
 from app.db.session import SessionLocal
 from app.models import Ad, AdGroup, Business, Campaign, CampaignPlan, Client, GoogleAdsAccount, Keyword, Task, User
 from app.services import (accounts_service, activity, ai_service, approvals, audits, auth_service, clients_service, feasibility,
-                          intake, planner, tracking_gate, validation)
+                          intake, measurement, planner, validation)
 
 TASK_TYPES = {
     "BUILD_CAMPAIGN": {"needs": "business", "fields": ["services", "monthly_budget", "weekly_target", "radius_miles", "zip_codes"]},
@@ -29,7 +29,6 @@ TASK_TYPES = {
     "CHANGE_LOCATIONS": {"needs": "campaign", "fields": ["radius_miles", "zip_codes"]},
     "AUDIT_ONLY": {"needs": "business", "fields": []},
 }
-GATED = {"BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_KEYWORDS"}
 
 
 def create(db: Session, actor: User, data: dict) -> Task:
@@ -158,18 +157,18 @@ class Runner:
         counts = accounts_service.sync_account(self.db, self.account)
         return f"Account {self.account.customer_id} read ({registry.get('google_ads').source}): {counts['campaigns']} campaigns"
 
-    def s_tracking(self):
-        r = tracking_gate.evaluate(self.db, self.business, self.actor)
-        self.ctx["tracking"] = r
-        state, eff = tracking_gate.normalize(r.state), tracking_gate.normalize(r.effective_state)
-        todo = "; ".join(o["what"] for o in tracking_gate.outstanding(r)[:4])
-        msg = f"Tracking {state}" + (" (override active → treated as YELLOW)" if r.override_active else "")
-        if eff == "RED" and self.task.task_type in GATED:  # only CONFIRMED broken tracking stops preparation
-            raise Stop("BLOCKED_TRACKING", msg + " (confirmed by evidence). Fix list: " + "; ".join(f["fix"] for f in r.fix_list[:4]))
-        if eff in ("UNKNOWN", "YELLOW"):  # a warning, never a stop: preparation continues, deployment will need verified tracking
-            self.ctx["tracking_warning"] = todo
-            return msg + f" — preparation continues. Still to verify before deployment: {todo}"
-        return msg
+    def s_measurement(self):
+        """What is configured and recorded, as findings. It never stops a task: each later step uses only the specific fact it depends on."""
+        r = measurement.audit(self.db, self.business, self.actor)
+        self.ctx["measurement"] = r
+        issues = [f for f in r.findings if f["result"] == "issue"]
+        na = [f for f in r.findings if f["result"] == "not_assessable"]
+        parts = [f"{len(r.findings)} checks"]
+        if issues:
+            parts.append(f"{len(issues)} issue(s): " + "; ".join(f"{f['inspected']} — {f['actual']}" for f in issues[:3]))
+        if na:
+            parts.append(f"{len(na)} could not be assessed ({na[0]['actual']})")
+        return ". ".join(parts)
 
     def s_audits(self):
         focus = (self.task.fields or {}).get("service") or (self.ad_group.service if self.ad_group else None)
@@ -315,25 +314,28 @@ class Runner:
                                     "stale_modules": rep["stale_modules"], "account_linked": rep["account_linked"]}
         return f"{rep['decision_label']} (ran {len(out['ran'])}, reused {len(out['reused'])} module(s))"
 
-    def _tracking_state(self) -> tuple[str, bool]:
-        r = self.ctx.get("tracking") or tracking_gate.current_result(self.db, self.business)
-        return (tracking_gate.normalize(r.effective_state) if r else "UNKNOWN"), bool(r and r.override_active)
+    def _measurement_ctx(self) -> dict:
+        """The measurement facts a draft depends on: whether conversion-based bidding has anything to optimise toward, and the open issues."""
+        r = self.ctx.get("measurement") or measurement.current(self.db, self.business)
+        ok, why = measurement.supports_conversion_bidding(r.facts if r else None)
+        return {"conversion_bidding_supported": ok, "reason": why,
+                "issues": [f"{f['inspected']}: {f['actual']}" for f in (r.findings if r else []) if f["result"] == "issue"][:8]}
 
     def s_draft(self):
-        state, override = self._tracking_state()
+        mctx = self._measurement_ctx()
         tt = self.task.task_type
         kw = self.ctx.get("keywords", {}).get("keywords", [])
         if tt == "BUILD_CAMPAIGN":
             plan = planner.draft(self.db, self.task, self.business, scope="CAMPAIGN", services=self._services_for_task(),
-                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), tracking_state=state, override=override)
+                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx)
         elif tt == "ADD_AD_GROUP":
             plan = planner.draft(self.db, self.task, self.business, scope="AD_GROUP", services=self._services_for_task(),
-                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), tracking_state=state, override=override,
+                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx,
                                  extra={"existing_ad_groups": self._existing_keywords()})
         else:  # ADD_AD / EDIT_AD
             current = {"headlines": self.ad.headlines, "descriptions": self.ad.descriptions} if (self.ad and tt == "EDIT_AD") else None
             plan = planner.draft(self.db, self.task, self.business, scope="AD", services=self._services_for_task(), keyword_table=kw,
-                                 feasibility=None, tracking_state=state, override=override,
+                                 feasibility=None, measurement_ctx=mctx,
                                  extra={"current_ad": current, "change_request": (self.task.fields or {}).get("change_request", "")})
         self.task.plan_id = plan.id
         self.ctx["plan"] = plan
@@ -345,8 +347,7 @@ class Runner:
         return f"{run.prompt_template_id}@{run.prompt_version}, model {run.model}" if run else "?"
 
     def s_challenge(self):
-        state, _ = self._tracking_state()
-        ch = planner.challenge(self.db, self.ctx["plan"], self.business, self.ctx.get("feasibility"), state)
+        ch = planner.challenge(self.db, self.ctx["plan"], self.business, self.ctx.get("feasibility"), self._measurement_ctx())
         return f"Challenger verdict {ch['verdict']} with {len(ch['objections'])} objection(s)"
 
     def s_human(self):
@@ -471,7 +472,7 @@ class Runner:
         v = self.ctx["validation"]
         plan = self.ctx.get("plan")
         f = self.ctx.get("feasibility") or {}
-        tr = tracking_gate.current_result(self.db, self.business)
+        mctx = self._measurement_ctx()
         from app.models import FixTrackerItem
         open_fixes = [x.issue for x in self.db.scalars(select(FixTrackerItem).where(
             FixTrackerItem.business_id == self.business.id, FixTrackerItem.status != "RESOLVED"))]
@@ -491,7 +492,7 @@ class Runner:
         try:
             ex, _ = ai_service.generate(self.db, "EXPLAIN", {"headline": self.ctx["title"],
                                                              "facts": {**self.ctx["payload"].get("summary", {}),
-                                                                       "tracking": tracking_gate.normalize(tr.effective_state) if tr else "UNKNOWN",
+                                                                       "measurement_issues": mctx["issues"], "conversion_bidding": mctx["reason"],
                                                                        "feasibility": f.get("status")}}, task_id=self.task.id)
             explanation = ex.summary + (" — " + " | ".join(ex.highlights) if ex.highlights else "")
         except ai_service.AIOutputInvalid:
@@ -502,7 +503,7 @@ class Runner:
             account_id=self.account.id if self.account else None, task_id=self.task.id, current_state=self.ctx["current"],
             proposed_state=self.ctx["proposed"], reason=self.task.note or f"Requested via task {self.task.task_type}",
             expected_effect=expected, risks=risks, validation=v, ai_explanation=explanation,
-            context={"tracking": tracking_gate.serialize_for(self.db, self.business.id), "feasibility": f, "open_client_fixes": open_fixes[:20],
+            context={"measurement": measurement.serialize_for(self.db, self.business), "feasibility": f, "open_client_fixes": open_fixes[:20],
                      "research_summary": {k: (self.ctx.get("audits") or {}).get(k, {}).get("source") for k in ("website", "gbp", "competitor")},
                      "audit_ids": (self.ctx.get("audits") or {}).get("audit_ids"),
                      "keyword_summary": {"clusters": {k: len(v_) for k, v_ in (self.ctx.get("keywords") or {}).get("clusters", {}).items()},
@@ -529,18 +530,18 @@ class Runner:
         self.task.steps = []
         self.db.commit()
         flows = {
-            "BUILD_CAMPAIGN": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
-            "ADD_AD_GROUP": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
+            "BUILD_CAMPAIGN": ["load", "measurement", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
+            "ADD_AD_GROUP": ["load", "measurement", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
             "ADD_AD": ["load", "audits", "draft", "challenge", "validate", "approval"],
-            "ADD_KEYWORDS": ["load", "tracking", "keywords", "overlap", "validate", "approval"],
+            "ADD_KEYWORDS": ["load", "measurement", "keywords", "overlap", "validate", "approval"],
             "EDIT_AD": ["load", "draft", "challenge", "validate", "approval"],
             "PAUSE_AD": ["load", "validate", "approval"],
             "CHANGE_BUDGET": ["load", "validate", "approval"],
             "CHANGE_TARGET": ["load", "feasibility", "validate", "approval"],
             "CHANGE_LOCATIONS": ["load", "validate", "approval"],
-            "AUDIT_ONLY": ["load", "tracking", "account_audit"],
+            "AUDIT_ONLY": ["load", "measurement", "account_audit"],
         }
-        names = {"load": "Load account", "tracking": "Conversion tracking gate", "audits": "Audits (website, GBP, competitors)",
+        names = {"load": "Load account", "measurement": "Conversion measurement audit", "audits": "Audits (website, GBP, competitors)",
                  "intelligence": "Intelligence record", "keywords": "Keyword research", "overlap": "Overlap check", "feasibility": "Feasibility",
                  "draft": "AI draft", "challenge": "AI challenger", "human": "Human plan comparison",
                  "validate": "Validation", "approval": "Approval request", "account_audit": "Read-only account audit (90 days)"}

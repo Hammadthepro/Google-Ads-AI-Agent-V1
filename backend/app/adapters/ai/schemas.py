@@ -91,7 +91,7 @@ class AdFix(Strict):
 
 class Objection(Strict):
     category: Literal["UNSUPPORTED_CLAIM", "WEAK_INTENT", "IRRELEVANT_KEYWORD", "KEYWORD_OVERLAP", "BUDGET",
-                      "LANDING_PAGE", "AD_MESSAGING", "POLICY", "MISSING_EXCLUSION", "TRACKING", "OTHER"]
+                      "LANDING_PAGE", "AD_MESSAGING", "POLICY", "MISSING_EXCLUSION", "MEASUREMENT", "OTHER"]
     severity: Literal["LOW", "MEDIUM", "HIGH"]
     target: str = ""
     message: str
@@ -116,7 +116,7 @@ class HumanPlanResolution(Strict):
     summary: str = ""
 
 
-DIAGNOSIS_KEYS = Literal["TRACKING", "BUDGET_LIMITED", "RANK_LIMITED", "LOW_CTR", "LOW_CVR", "CALLS_MISSED",
+DIAGNOSIS_KEYS = Literal["MEASUREMENT", "BUDGET_LIMITED", "RANK_LIMITED", "LOW_CTR", "LOW_CVR", "CALLS_MISSED",
                          "HIGH_CPC", "OPEN_CLIENT_FIXES"]
 
 

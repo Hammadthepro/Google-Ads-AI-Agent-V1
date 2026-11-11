@@ -15,8 +15,7 @@ from app.adapters import registry
 from app.adapters.base import AdapterError
 from app.core import clock
 from app.core.config import get_settings
-from app.models import Ad, AdGroup, Business, Campaign, Client, EmergencyEvent, GoogleAdsAccount, JobRun, PerformanceSnapshot, \
-    TrackingGateResult
+from app.models import Ad, AdGroup, Campaign, Client, EmergencyEvent, GoogleAdsAccount, JobRun, PerformanceSnapshot
 from app.services import activity, crawler_service, settings_service
 
 
@@ -32,7 +31,7 @@ def _record(db, client: Client, account, campaign_id, rule, severity, observed, 
     mode = "INTERNAL" if not google_action else ("REAL" if (s.EMERGENCY_BRAKE_WRITE_MODE == "real" and
                                                             settings_service.get_value("real_emergency_writes_authorized", False, db))
                                                  else "SIMULATED")
-    if action in ("FREEZE_AUTOMATION",) or rule in ("tracking_outage", "conversion_anomaly", "spend_spike"):
+    if action in ("FREEZE_AUTOMATION",) or rule in ("conversion_anomaly", "spend_spike"):
         client.automation_frozen = True
     if action == "FLAG_CLIENT":
         client.flagged, client.flag_reason = True, message
@@ -118,14 +117,7 @@ def hourly_check(db: Session) -> list[dict]:
                     events.append(_record(db, client, account, c.id, "conversion_anomaly", "HIGH",
                                           {"recent_daily_conversions": round(r_avg, 2), "prior_daily_conversions": round(p_avg, 2)},
                                           {"drop_pct": drop_pct}, "FREEZE_AUTOMATION",
-                                          f"{c.name}: conversions fell {100 * (1 - r_avg / p_avg):.0f}% while clicks held — possible tracking outage"))
-        # 4. tracking outage (gate went RED after working: GREEN/YELLOW; UNKNOWN is never an outage)
-        for b in db.scalars(select(Business).where(Business.client_id == client.id)):
-            last2 = list(db.scalars(select(TrackingGateResult).where(TrackingGateResult.business_id == b.id)
-                                    .order_by(TrackingGateResult.evaluated_at.desc()).limit(2)))
-            if len(last2) == 2 and last2[0].state == "RED" and last2[1].state in ("GREEN", "YELLOW", "AMBER") and not _already(db, "tracking_outage", b.id):
-                events.append(_record(db, client, account, b.id, "tracking_outage", "HIGH", {"from": last2[1].state, "to": "RED"}, {},
-                                      "FREEZE_AUTOMATION", f"Tracking for {b.name} changed {last2[1].state} → RED; automatic changes frozen"))
+                                          f"{c.name}: conversions fell {100 * (1 - r_avg / p_avg):.0f}% while clicks held — conversions may have stopped being recorded"))
         # 5. failed background jobs
         failed = db.scalar(select(JobRun).where(JobRun.client_id == client.id, JobRun.status == "FAILED",
                                                 JobRun.created_at >= now - timedelta(hours=24)))

@@ -25,7 +25,7 @@ def pipeline():
 
 # ------------------------------------------------------------------------------------------------ the specification as data
 def test_ten_modules_in_pipeline_order_each_with_its_specified_checks():
-    assert intel.MODULE_KEYS == ["business_intelligence", "website", "competitors", "search_intent", "keywords", "geography", "finance", "tracking",
+    assert intel.MODULE_KEYS == ["business_intelligence", "website", "competitors", "search_intent", "keywords", "geography", "finance", "measurement",
                                  "account_policy", "strategy"]
     assert [m["number"] for m in intel.MODULES.values()] == list(range(1, 11))
     assert intel.spec_check_count() >= 200
@@ -36,7 +36,7 @@ def test_ten_modules_in_pipeline_order_each_with_its_specified_checks():
             "keywords": {"src_keyword_planner", "metric_bid_high", "negative_keywords", "keyword_planner_independence", "forecasts"},
             "geography": {"radius_targeting", "location_option", "excluded_locations"},
             "finance": {"three_scenarios", "affordability", "budget_recommendation", "target_cac", "sensitivity"},
-            "tracking": {"offline_conversions", "duplicate_conversions", "measurement_readiness", "consent_privacy"},
+            "measurement": {"offline_conversions", "duplicate_conversions", "measurement_readiness", "consent_privacy"},
             "account_policy": {"billing", "policy_status", "search_terms", "experiments", "change_history"},
             "strategy": {"campaign_structure", "bidding_strategy", "readiness_decision", "launch_requirements"}}
     for m, keys in spot.items():
@@ -147,15 +147,15 @@ def test_editing_an_input_makes_only_the_affected_modules_stale(pipeline):
     api, cid, bid, _ = pipeline
     before = api.get(f"/clients/{cid}/intelligence").json()
     base_stale = set(before["stale_modules"])
-    with session_scope() as db:  # a competitor changes: competitors and everything built on it; not business intelligence, website or tracking
+    with session_scope() as db:  # a competitor changes: competitors and everything built on it; not business intelligence, website or measurement
         from app.models import Competitor
         db.add(Competitor(business_id=bid, name="New Rival", website_url="https://newrival.example/"))
     after = set(api.get(f"/clients/{cid}/intelligence").json()["stale_modules"])
     new = after - base_stale
     assert {"competitors", "search_intent", "keywords", "geography", "finance", "strategy"} <= after
-    assert new and not ({"business_intelligence", "website", "tracking", "account_policy"} & new)
+    assert new and not ({"business_intelligence", "website", "measurement", "account_policy"} & new)
     out = api.post(f"/clients/{cid}/intelligence/refresh", {}).json()
-    assert "competitors" in out["ran"] and "business_intelligence" in out["reused"] and "website" in out["reused"] and "tracking" in out["reused"]
+    assert "competitors" in out["ran"] and "business_intelligence" in out["reused"] and "website" in out["reused"] and "measurement" in out["reused"]
     hist = api.get(f"/clients/{cid}/intelligence/competitors/history").json()
     assert [h["version"] for h in hist] == [2, 1] and hist[0]["is_current"] and not hist[1]["is_current"]  # history kept, old version no longer current
 

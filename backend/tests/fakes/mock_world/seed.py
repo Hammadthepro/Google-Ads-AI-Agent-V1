@@ -193,7 +193,7 @@ def _mock_world(db) -> None:
 
 
 def seed(run_workflows: bool = True) -> dict:
-    from app.services import (accounts_service, emergency, mcc_service, monitoring, optimization, reporting, tasks_service, tracking_gate)
+    from app.services import (accounts_service, emergency, mcc_service, monitoring, optimization, reporting, tasks_service, measurement)
     with session_scope() as db:
         if db.scalar(select(MockCustomer.id)):
             return {"seeded": False, "reason": "already seeded"}
@@ -254,7 +254,7 @@ def seed(run_workflows: bool = True) -> dict:
                                       "verified_claims": ["Licensed & Insured", "Same-Day Service"], "excluded_services": ["Septic Tank Pumping"],
                                       "services": [{"name": "Drain Cleaning", "landing_page": f"https://{PLUMB}/drain-cleaning"},
                                                    {"name": "Water Heater Repair", "landing_page": f"https://{PLUMB}/water-heater-repair"}],
-                                      "keyword_table": [], "tracking_state": "GREEN", "monthly_budget": 1500},
+                                      "keyword_table": [], "measurement": {"conversion_bidding_supported": True, "reason": "", "issues": []}, "monthly_budget": 1500},
                               expectations={"no_broad_match": True, "max_headline_length": 30, "min_ad_groups": 2,
                                             "must_not_contain": ["septic", "cheapest"], "must_include_negatives": ["jobs", "diy"],
                                             "only_verified_claims": True, "verified_claims": ["Licensed & Insured", "Same-Day Service"]}))
@@ -262,7 +262,7 @@ def seed(run_workflows: bool = True) -> dict:
                               inputs={"business_name": "Brightsmile Dental", "website": f"https://{DENT}/", "city": "Phoenix",
                                       "verified_claims": ["Board-certified dentists"], "excluded_services": ["Pediatric Dentistry"],
                                       "services": [{"name": "Dental Implants", "landing_page": f"https://{DENT}/dental-implants"}],
-                                      "keyword_table": [], "tracking_state": "AMBER", "monthly_budget": 2000},
+                                      "keyword_table": [], "measurement": {"conversion_bidding_supported": None, "reason": "", "issues": []}, "monthly_budget": 2000},
                               expectations={"no_broad_match": True, "max_headline_length": 30, "must_not_contain": ["pediatric"],
                                             "must_include_negatives": ["jobs"]}))
         for acct in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id.is_not(None))):
@@ -271,12 +271,12 @@ def seed(run_workflows: bool = True) -> dict:
         return {"seeded": True}
     with session_scope() as db:
         for b in db.scalars(select(Business)):
-            tracking_gate.evaluate(db, b)
+            measurement.audit(db, b)
     with session_scope() as db:
         monitoring.run_daily_all(db)
     with session_scope() as db:
         for b in db.scalars(select(Business)):
-            tracking_gate.evaluate(db, b)  # second pass: GREEN now based on recorded conversions
+            measurement.audit(db, b)  # second pass: recorded conversions now exist
         for c in db.scalars(select(Client)):
             optimization.run_for_client(db, c)
         emergency.hourly_check(db)

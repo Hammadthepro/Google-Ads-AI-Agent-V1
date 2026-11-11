@@ -8,7 +8,7 @@ from app.core.config import get_settings
 from app.core.errors import SafetyBlocked
 from app.core.util import payload_hash
 from app.models import Approval, Client, GoogleAdsAccount, User
-from app.services import settings_service, tracking_gate
+from app.services import settings_service, measurement
 
 POLICIES = ("APPROVAL", "AUTO_NEGATIVE", "EMERGENCY", "INTERNAL")
 
@@ -34,11 +34,6 @@ def check(db: Session, *, policy: str, client: Client | None, account: GoogleAds
                 reasons.append("Payload hash does not match the approved version (approval invalid)")
             if payload is not None and payload_hash(payload) != approval.approved_payload_hash:
                 reasons.append("Payload to execute differs from the approved payload")
-    # 1b. live deployment needs verified tracking or an explicit admin authorisation (defence in depth: validation(deployment=True) checks too)
-    if policy == "APPROVAL" and business_id and (payload or (approval.payload if approval else {}) or {}).get("kind") in ("BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_KEYWORDS", "ENABLE"):
-        a = tracking_gate.assessment(db, business_id)
-        if a["effective_state"] != "GREEN" and not (a["result"] is not None and a["result"].override_active):
-            reasons.append(f"Tracking is {a['effective_state']}: live deployment needs verified conversion tracking (GREEN) or an explicit admin authorisation")
     # 2. actor still authorised
     if actor is not None and (not actor.is_active or actor.role not in ("SUPER_ADMIN", "ADMIN")):
         reasons.append("Executing user is not an active Admin/Super Admin")
@@ -52,10 +47,11 @@ def check(db: Session, *, policy: str, client: Client | None, account: GoogleAds
             reasons.append("Auto-negatives are in SHADOW mode (proposals only)")
         if client and client.automation_frozen:
             reasons.append("Automation is frozen for this client (emergency brake)")
-        if business_id and tracking_gate.effective_state(db, business_id) != "GREEN":
-            reasons.append("Tracking is not GREEN — conversion-based automation is not allowed")
-        if business_id and (tracking_gate.latest(db, business_id) or None) and tracking_gate.latest(db, business_id).override_active:
-            reasons.append("Tracking override active — conversion-based automation is not allowed")
+        if business_id:  # a negative is judged by the ABSENCE of conversions, which only means something if conversions are being counted
+            from app.models import Business
+            ok, why = measurement.conversion_data_reliable(db, db.get(Business, business_id))
+            if not ok:
+                reasons.append(f"Automatic negatives rely on conversion data, and {why}")
     if policy == "EMERGENCY":
         if s.EMERGENCY_BRAKE_WRITE_MODE != "real" or not settings_service.get_value("real_emergency_writes_authorized", False, db):
             reasons.append("Emergency write policy not enabled (actions are simulated)")

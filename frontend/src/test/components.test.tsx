@@ -22,8 +22,8 @@ describe("DataSourceBadge", () => {
 
 describe("StatusBadge", () => {
   it("renders tracking states and humanises underscores", () => {
-    render(<><StatusBadge value="RED" /><StatusBadge value="PENDING_APPROVAL" /></>);
-    expect(screen.getByText("RED")).toBeInTheDocument();
+    render(<><StatusBadge value="FAILED" /><StatusBadge value="PENDING_APPROVAL" /></>);
+    expect(screen.getByText("FAILED")).toBeInTheDocument();
     expect(screen.getByText("PENDING APPROVAL")).toBeInTheDocument();
   });
 });

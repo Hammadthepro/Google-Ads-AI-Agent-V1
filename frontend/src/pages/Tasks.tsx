@@ -18,7 +18,7 @@ const TASKS: { value: string; label: string; needs: "business" | "campaign" | "a
   { value: "CHANGE_LOCATIONS", label: "Change locations", needs: "campaign" },
   { value: "AUDIT_ONLY", label: "Audit only", needs: "business" },
 ];
-const TERMINAL = ["AWAITING_APPROVAL", "AWAITING_BUDGET_DECISION", "COMPLETED", "FAILED", "BLOCKED_TRACKING", "VALIDATION_FAILED", "EXECUTED", "EXECUTED_PAUSED", "ENABLED", "EXECUTION_FAILED"];
+const TERMINAL = ["AWAITING_APPROVAL", "AWAITING_BUDGET_DECISION", "COMPLETED", "FAILED", "VALIDATION_FAILED", "EXECUTED", "EXECUTED_PAUSED", "ENABLED", "EXECUTION_FAILED"];
 
 export function IntakeReport({ report, clar, setClar }: { report: any; clar: Record<string, string>; setClar: (c: Record<string, string>) => void }) {
   const tone = report.status === "OK" ? "green" : report.status === "BLOCKED" ? "red" : "amber";
@@ -236,7 +236,6 @@ export function TaskDetail() {
         actions={<><StatusBadge value={t.status} /><DataSourceBadge source={t.source_type} />
           {t.approval_id && <Link to={`/approvals/${t.approval_id}`}><Button variant="primary">Open approval →</Button></Link>}
           {t.plan_id && <Link to={`/planner/${t.plan_id}`}><Button>View plan</Button></Link>}</>} />
-      {t.status === "BLOCKED_TRACKING" && <Notice tone="red"><b>Blocked by the conversion tracking gate.</b> {t.error} — fix tracking or ask an admin for an override on the business page.</Notice>}
       {t.status === "VALIDATION_FAILED" && <Notice tone="red">{t.error}</Notice>}
       {t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
       {t.status === "AWAITING_BUDGET_DECISION" && <BudgetDecision task={t} />}

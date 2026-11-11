@@ -230,7 +230,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     except IntegrationNotConfigured as exc:  # Keyword Planner rides on the Google Ads connection: say so, invent nothing
         return {"keywords": [], "clusters": {}, "negative_ideas": [], "overlaps": [], "unavailable": True, "not_configured": exc.provider,
                 "errors": [{"service": "*", "error": exc.message}], "source": SourceType.NONE,
-                "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group with GREEN tracking."}
+                "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably."}
     services = services or ctx["services"]
     names = [s["name"] for s in services]
     lp_map = website.get("landing_page_map", {}) if website else {}
@@ -293,7 +293,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     negatives = sorted({t["keyword"] for t in table if t["label"] == "IRRELEVANT"})
     overlaps = overlap_check(clusters, existing_keywords or {})
     return {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors,
-            "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group with GREEN tracking.",
+            "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably.",
             "source": SourceType.combine(kw.source)}
 
 

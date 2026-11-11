@@ -1,4 +1,4 @@
-"""Clients, businesses, Google Ads accounts, Ads OAuth, tracking gate, audits, fixes, feasibility."""
+"""Clients, businesses, Google Ads accounts, Ads OAuth, measurement audit, audits, fixes, feasibility."""
 from __future__ import annotations
 
 
@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.models import (Ad, AdGroup, Audit, Campaign, ConversionAction, FeasibilityResult, FixTrackerItem, GoogleAdsAccount,
                         Keyword, NegativeKeyword, User)
 from app.services import (accounts_service, activity, audits, auth_service, clients_service, feasibility, fixes_service,
-                          tracking_gate)
+                          measurement)
 
 router = APIRouter()
 
@@ -37,7 +37,7 @@ def get_client(client_id: str, user: User = Depends(require("clients.view")), db
     c = clients_service.get_client(db, user, client_id)
     data = clients_service.serialize_client(c)
     data["accounts"] = [accounts_service.serialize_account(a) for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == c.id))]
-    data["tracking"] = {b.id: tracking_gate.serialize_for(db, b.id) for b in c.businesses}
+    data["measurement"] = {b.id: measurement.serialize_for(db, b) for b in c.businesses}
     return data
 
 
@@ -62,7 +62,7 @@ def list_businesses(user: User = Depends(require("clients.view")), db: Session =
         for b in c.businesses:
             d = clients_service.serialize_business(b)
             d["client_name"] = c.name
-            d["tracking"] = tracking_gate.serialize_for(db, b.id)
+            d["measurement"] = measurement.serialize_for(db, b)
             out.append(d)
     return out
 
@@ -71,9 +71,7 @@ def list_businesses(user: User = Depends(require("clients.view")), db: Session =
 def get_business(business_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
     b = clients_service.get_business(db, user, business_id)
     d = clients_service.serialize_business(b)
-    d["tracking"] = tracking_gate.serialize_for(db, b.id)
-    d["override"] = (lambda o: {"by": o.admin_email, "reason": o.reason, "at": o.created_at.isoformat()} if o else None)(
-        tracking_gate.active_override(db, b.id))
+    d["measurement"] = measurement.serialize_for(db, b)
     return d
 
 
@@ -152,32 +150,19 @@ def structure(client_id: str, user: User = Depends(require("clients.view")), db:
     return {"campaigns": out, "conversion_actions": conv, "source": registry.get("google_ads").source}
 
 
-# ------------------------------------------------------------------ tracking gate
-@router.post("/businesses/{business_id}/tracking-gate/run", tags=["tracking"])
-def run_gate(business_id: str, user: User = Depends(require("audits.run")), db: Session = Depends(get_db)):
+# ------------------------------------------------------------------ conversion measurement audit (findings only; no status, no gate)
+@router.post("/businesses/{business_id}/measurement/run", tags=["measurement"])
+def run_measurement(business_id: str, user: User = Depends(require("audits.run")), db: Session = Depends(get_db)):
     b = clients_service.get_business(db, user, business_id)
-    tracking_gate.evaluate(db, b, user)
+    measurement.audit(db, b, user)
     db.commit()
-    return tracking_gate.serialize_for(db, b.id)
+    return measurement.serialize_for(db, b)
 
 
-@router.get("/businesses/{business_id}/tracking-gate", tags=["tracking"])
-def get_gate(business_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+@router.get("/businesses/{business_id}/measurement", tags=["measurement"])
+def get_measurement(business_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
     b = clients_service.get_business(db, user, business_id)
-    return tracking_gate.serialize_for(db, b.id)
-
-
-class OverrideIn(BaseModel):
-    reason: str
-
-
-@router.post("/businesses/{business_id}/tracking-gate/override", tags=["tracking"])
-def override(business_id: str, body: OverrideIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    b = clients_service.get_business(db, user, business_id)
-    ov = tracking_gate.override(db, user, b, body.reason)
-    db.commit()
-    return {"override_id": ov.id, "by": ov.admin_email, "reason": ov.reason, "at": ov.created_at.isoformat(),
-            "effective_state": "YELLOW", "note": "Override behaves like YELLOW: it is the explicit authorisation for deployment (still needs approval); no conversion-based automation."}
+    return measurement.serialize_for(db, b)
 
 
 # ------------------------------------------------------------------ audits

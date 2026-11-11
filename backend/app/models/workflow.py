@@ -1,4 +1,4 @@
-"""Tasks, tracking gate, audits, feasibility, fixes, AI runs, plans, validation, approvals, operations."""
+"""Tasks, measurement audits, audits, feasibility, fixes, AI runs, plans, validation, approvals, operations."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -31,27 +31,15 @@ class Task(TimestampMixin, Base):
     intake: Mapped[dict] = mapped_column(JSONType, default=dict)  # intake validation result + clarifications
 
 
-class TrackingGateResult(TimestampMixin, Base):
-    __tablename__ = "tracking_gate_results"
+class MeasurementAudit(TimestampMixin, Base):
+    """One conversion-measurement audit of a business: findings with evidence and the facts specific operations depend on. No status."""
+    __tablename__ = "measurement_audits"
     business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
-    google_ads_account_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    state: Mapped[str] = mapped_column(String(8))  # GREEN / YELLOW / RED / UNKNOWN (older rows say AMBER: read as YELLOW)
-    effective_state: Mapped[str] = mapped_column(String(8))  # after override
-    override_active: Mapped[bool] = mapped_column(Boolean, default=False)
-    checks: Mapped[list] = mapped_column(JSONType, default=list)
-    fix_list: Mapped[list] = mapped_column(JSONType, default=list)
+    google_ads_account_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # the account the audit read (None: no account)
+    findings: Mapped[list] = mapped_column(JSONType, default=list)
+    facts: Mapped[dict] = mapped_column(JSONType, default=dict)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     source_type: Mapped[str] = mapped_column(String(8), default="NONE")
-
-
-class TrackingOverride(TimestampMixin, Base):
-    __tablename__ = "tracking_overrides"
-    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
-    admin_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    admin_email: Mapped[str] = mapped_column(String(320))
-    reason: Mapped[str] = mapped_column(Text)
-    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    cleared_reason: Mapped[str] = mapped_column(Text, default="")
 
 
 class Audit(TimestampMixin, Base):
@@ -181,7 +169,7 @@ class Approval(TimestampMixin, Base):
     validation_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     validation_summary: Mapped[dict] = mapped_column(JSONType, default=dict)
     ai_explanation: Mapped[str] = mapped_column(Text, default="")
-    context: Mapped[dict] = mapped_column(JSONType, default=dict)  # tracking, feasibility, fixes, challenger...
+    context: Mapped[dict] = mapped_column(JSONType, default=dict)  # measurement, feasibility, fixes, challenger...
     requested_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="PENDING_APPROVAL", index=True)
     decided_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

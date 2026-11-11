@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { MeasurementPanel } from "../components/MeasurementPanel";
 import { useAuth } from "../lib/auth";
 import { useAction, useBusinesses } from "../lib/hooks";
-import { Badge, Button, Card, ConfirmDialog, DataSourceBadge, dt, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
+import { Button, Card, DataSourceBadge, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
 
 export function Businesses() {
   const { data, isLoading } = useBusinesses();
@@ -21,7 +22,7 @@ export function Businesses() {
             { key: "website_url", label: "Website" },
             { key: "services", label: "Services", render: (b) => b.services.filter((s: any) => !s.is_excluded).length },
             { key: "competitors", label: "Competitors", render: (b) => b.competitors.length },
-            { key: "tracking", label: "Tracking", render: (b) => <div className="flex gap-1"><StatusBadge value={b.tracking?.state} />{b.tracking?.override_active && <Badge tone="amber">override</Badge>}</div> },
+            { key: "measurement", label: "Measurement", render: (b) => !b.measurement?.evaluated_at ? <span className="text-slate-400">not audited</span> : b.measurement.counts.issue ? `${b.measurement.counts.issue} problem(s)` : "no problems found" },
           ]} />
         )}
       </Card>
@@ -107,53 +108,6 @@ function ProfileEditor({ b, onSaved }: { b: any; onSaved: () => void }) {
   );
 }
 
-export function TrackingPanel({ businessId }: { businessId: string }) {
-  const { can } = useAuth();
-  const q = useQuery({ queryKey: ["gate", businessId], queryFn: () => api.get(`/businesses/${businessId}/tracking-gate`) });
-  const run = useAction(() => api.post(`/businesses/${businessId}/tracking-gate/run`), [["gate", businessId], ["businesses"]]);
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const ov = useAction((r) => api.post(`/businesses/${businessId}/tracking-gate/override`, { reason: r }), [["gate", businessId], ["business", businessId]]);
-  const g = q.data;
-  return (
-    <Card title={<span className="flex items-center gap-2">Conversion tracking gate {g && <StatusBadge value={g.state} />} {g?.override_active && <Badge tone="amber">override → treated as YELLOW</Badge>}</span>}
-      actions={<div className="flex gap-2">{g && <DataSourceBadge source={g.source_type} />}
-        {can("audits.run") && <Button size="sm" onClick={() => run.mutate({})} disabled={run.isPending}>{run.isPending ? "Checking…" : "Re-check now"}</Button>}
-        {can("tracking.override") && g && g.state !== "GREEN" && !g.stale && !g.override_active && <Button size="sm" variant="danger" onClick={() => setOpen(true)}>Admin override</Button>}</div>}>
-      {q.isLoading ? <Spinner /> : !g ? <Notice>Not evaluated yet — run the check.</Notice> : (
-        <div className="space-y-4">
-          <Notice tone={g.state === "GREEN" ? "green" : g.state === "RED" ? "red" : g.state === "UNKNOWN" ? "blue" : "amber"}>
-            {g.state === "GREEN" && "Tracking is verified with recorded leads. Full workflow allowed; automatic optimisation may be considered after the enough-data gate."}
-            {g.state === "YELLOW" && "Tracking exists but its configuration or verification is incomplete. Drafting and planning are allowed; live deployment needs verified tracking (GREEN) or an explicit admin authorisation; no conversion-based automation."}
-            {g.state === "UNKNOWN" && (g.stale ? `Tracking must be assessed again: ${g.stale_reason}. ` : "Tracking cannot be assessed yet because required account access or data is unavailable. ") + "This is not a failure and does not stop research, strategy or drafting. Live deployment needs verified tracking or an explicit admin authorisation."}
-            {g.state === "RED" && (g.override_active ? "RED with an admin authorisation: behaves like YELLOW. No conversion-based automation." : "Evidence confirms tracking is broken or misconfigured. Fix the items below, or an admin can explicitly authorise deployment.")}
-            <div className="mt-1 text-xs opacity-80">Evaluated {dt(g.evaluated_at)} · re-checked daily. A detected tag proves installation, not that conversions fire.</div>
-          </Notice>
-          <Table rows={g.checks} columns={[
-            { key: "label", label: "Check" }, { key: "status", label: "Result", render: (c) => <StatusBadge value={c.status} /> },
-            { key: "critical", label: "Critical", render: (c) => c.critical ? "Yes" : "No" },
-            { key: "evidence", label: "Evidence", className: "max-w-md", render: (c) => <span className="text-xs">{c.evidence}</span> },
-          ]} />
-          {g.state !== "RED" && g.state !== "GREEN" && g.outstanding?.length > 0 && (
-            <div><div className="mb-1 text-sm font-medium">Still to verify before deployment</div>
-              <ul className="list-disc space-y-1 pl-5 text-sm">{g.outstanding.map((o: any) => <li key={o.check}>{o.what}</li>)}</ul></div>
-          )}
-          {g.state === "RED" && g.fix_list.length > 0 && (
-            <div><div className="mb-1 text-sm font-medium">Fix list</div>
-              <ul className="list-disc space-y-1 pl-5 text-sm">{g.fix_list.map((f: any) => <li key={f.check}>{f.fix} <span className="text-xs text-slate-500">— owner: {f.owner}</span></li>)}</ul></div>
-          )}
-        </div>
-      )}
-      <ErrorBox error={run.error || ov.error} />
-      <ConfirmDialog open={open} title="Override the tracking gate" tone="danger" confirmLabel="Record override"
-        body="The override is recorded with your name, the time and your reason. It is the explicit authorisation for deployment (which still needs approval) and behaves like YELLOW: no conversion-based automation runs."
-        onCancel={() => setOpen(false)} onConfirm={() => ov.mutate(reason, { onSuccess: () => setOpen(false) })}>
-        <Textarea rows={3} placeholder="Written reason (required, at least 15 characters)" value={reason} onChange={(e) => setReason(e.target.value)} />
-      </ConfirmDialog>
-    </Card>
-  );
-}
-
 export function BusinessDetail() {
   const { id } = useParams();
   const q = useQuery({ queryKey: ["business", id], queryFn: () => api.get(`/businesses/${id}`) });
@@ -171,7 +125,7 @@ export function BusinessDetail() {
         actions={can("audits.run") && <>{["ALL", "KEYWORD"].map((t) => <Button key={t} onClick={() => runAudit.mutate(t)} disabled={runAudit.isPending}>
           {runAudit.isPending ? "Running…" : t === "ALL" ? "Run website + GBP + competitor audits" : "Run keyword research"}</Button>)}</>} />
       <ErrorBox error={runAudit.error} />
-      <TrackingPanel businessId={b.id} />
+      <MeasurementPanel businessId={b.id} />
       <ProfileEditor b={b} onSaved={() => q.refetch()} />
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Client fix tracker">

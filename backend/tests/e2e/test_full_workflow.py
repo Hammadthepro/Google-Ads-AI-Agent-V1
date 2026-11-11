@@ -58,7 +58,7 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
     assert task["status"] == "AWAITING_APPROVAL", task
     budget = task["fields"]["monthly_budget"]  # the team-confirmed number, not necessarily the one first typed
     names = [s["name"] for s in task["steps"]]
-    for step in ("Conversion tracking gate", "Audits (website, GBP, competitors)", "Keyword research", "Overlap check", "Feasibility",
+    for step in ("Conversion measurement audit", "Audits (website, GBP, competitors)", "Keyword research", "Overlap check", "Feasibility",
                  "AI draft", "AI challenger", "Human plan comparison", "Validation", "Approval request"):
         assert step in names
     validation_step = next(s for s in task["steps"] if s["name"] == "Validation")
@@ -84,11 +84,7 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
     # approve the exact version reviewed
     r = admin.post(f"/approvals/{appr['id']}/approve", {"payload_hash": appr["payload_hash"]})
     assert r.status_code == 200, r.text
-    # deployment needs VERIFIED tracking: a brand-new advertiser has no recorded leads yet (YELLOW), so it is blocked until an admin explicitly authorises it
-    r = admin.post(f"/approvals/{appr['id']}/execute")
-    assert r.status_code == 423 and "needs verified conversion tracking" in r.text, r.text
-    r = admin.post(f"/businesses/{business_id}/tracking-gate/override", {"reason": "New advertiser: no leads recorded yet; launching paused and verifying with a test lead"})
-    assert r.status_code == 200 and r.json()["effective_state"] == "YELLOW", r.text
+    assert appr["context"]["measurement"]["findings"] and "state" not in appr["context"]["measurement"]  # findings, not a status
     r = admin.post(f"/approvals/{appr['id']}/execute")
     assert r.status_code == 200, r.text
     op = r.json()

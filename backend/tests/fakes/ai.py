@@ -152,12 +152,12 @@ class MockAIProvider(AIProvider):
         negatives = sorted({r["keyword"] for r in u.get("keyword_table", []) if r.get("label") == "IRRELEVANT"})
         negatives = sorted(set(negatives) | {"jobs", "diy", "free"})
         share = round(100 / max(1, len(groups)), 1)
-        tracking = u.get("tracking_state", "YELLOW")
+        m = u.get("measurement") or {}
         rules = " ".join(u.get("playbook_rules", []))
         website = u.get("website", "").rstrip("/")
         return {
             "campaign_name": f"{u.get('business_name', 'Business')} | {', '.join(s['name'] for s in services)[:60]} | Search",
-            "bidding_strategy": "MAXIMIZE_CLICKS" if tracking == "OVERRIDE_RED" else "MAXIMIZE_CONVERSIONS",
+            "bidding_strategy": "MAXIMIZE_CLICKS" if m.get("conversion_bidding_supported") is False else "MAXIMIZE_CONVERSIONS",
             "budget_allocation": [{"ad_group": g["name"], "percent": share} for g in groups],
             "ad_groups": groups,
             "campaign_negatives": negatives[:40],
@@ -255,9 +255,9 @@ class MockAIProvider(AIProvider):
         elif feas.get("status") == "PARTIALLY_FEASIBLE":
             objections.append({"category": "BUDGET", "severity": "LOW", "target": "budget",
                                "message": "Target is only reachable in the optimistic scenario.", "suggestion": "Set expectations with the client."})
-        if u.get("tracking_state") in ("AMBER", "YELLOW", "UNKNOWN", "OVERRIDE"):
-            objections.append({"category": "TRACKING", "severity": "LOW", "target": "tracking",
-                               "message": "Tracking is not verified with real leads; automated conversion-based optimisation stays off.",
+        if (u.get("measurement") or {}).get("conversion_bidding_supported") is not True:
+            objections.append({"category": "MEASUREMENT", "severity": "LOW", "target": "measurement",
+                               "message": (u.get("measurement") or {}).get("reason") or "It is not confirmed that a conversion action is recording.",
                                "suggestion": "Confirm a test lead is recorded in Google Ads."})
         if not any(o["category"] == "KEYWORD_OVERLAP" for o in objections) and groups:
             agreements.append("Ad groups are separated by service with no keyword overlap.")
@@ -279,8 +279,8 @@ class MockAIProvider(AIProvider):
     def _h_diagnose(self, u):
         m = u.get("metrics", {})
         causes = []
-        if u.get("tracking_state") not in ("GREEN",):
-            causes.append("TRACKING")
+        if u.get("measurement_issues"):
+            causes.append("MEASUREMENT")
         if (m.get("budget_lost_is") or 0) > 0.15:
             causes.append("BUDGET_LIMITED")
         if (m.get("rank_lost_is") or 0) > 0.35:

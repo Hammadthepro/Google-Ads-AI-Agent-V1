@@ -85,10 +85,12 @@ export function ApprovalDetail() {
         {a.status === "APPROVED" && can("execution.run") && <Button variant="primary" onClick={() => setDialog("execute")}>Execute approved change</Button>}
       </div>
 
-      <Section n={1} title="Tracking status">
-        {ctx.tracking ? <div className="flex flex-wrap items-center gap-2 text-sm"><StatusBadge value={ctx.tracking.state} />
-          {ctx.tracking.override_active && <Badge tone="amber">override (behaves as YELLOW)</Badge>}
-          <span className="text-slate-500">automation allowed: {ctx.tracking.automation_allowed ? "yes" : "no"}</span></div> : <span className="text-sm text-slate-500">n/a</span>}
+      <Section n={1} title="Conversion measurement">
+        {ctx.measurement?.evaluated_at ? <div className="space-y-1 text-sm">
+          <p className="text-slate-700">{ctx.measurement.conversion_bidding?.reason}</p>
+          {ctx.measurement.findings.filter((f: any) => f.result === "issue").map((f: any) => <p key={f.key} className="text-slate-600"><span className="font-medium text-slate-900">{f.inspected}:</span> {f.actual}. {f.impact}</p>)}
+          {ctx.measurement.counts.issue === 0 && <p className="text-slate-500">No measurement problems found ({ctx.measurement.counts.not_assessable} check(s) could not be read).</p>}
+        </div> : <span className="text-sm text-slate-500">Not audited for this approval.</span>}
       </Section>
       <Section n={2} title="Feasibility (estimate)">
         {ctx.feasibility?.summary ? <><KV items={[["Status", <StatusBadge value={ctx.feasibility.status} />], ["Expected leads/week", ctx.feasibility.summary.expected_weekly_conversions],

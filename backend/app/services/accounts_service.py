@@ -45,16 +45,16 @@ def link(db: Session, user: User, account_id: str, client_id: str | None) -> Goo
         raise NotFound("Account not found")
     a.client_id = client_id
     activity.log(db, "ads_account.linked", actor=user, entity="google_ads_account", entity_id=a.id, client_id=client_id)
-    reassess_tracking(db, user, client_id)
+    reaudit_measurement(db, user, client_id)
     return a
 
 
-def reassess_tracking(db: Session, user: User | None, client_id: str | None) -> list[str]:
-    """Linking (or unlinking) an account changes what tracking evidence exists, so the client's tracking is assessed again at once: a result
-    taken without the account must not keep describing the business. A failed assessment is recorded and leaves the state UNKNOWN."""
+def reaudit_measurement(db: Session, user: User | None, client_id: str | None) -> list[str]:
+    """Linking (or unlinking) an account changes what measurement evidence exists, so the client's measurement audit is run again at once: an
+    audit taken without the account must not keep describing the business. A failed audit is recorded; the outdated one is not shown as current."""
     if not client_id:
         return []
-    from app.services import tracking_gate
+    from app.services import measurement
     db.flush()  # the link itself must be visible to the assessment's account lookup
     done = []
     for b in db.scalars(select(Business).where(Business.client_id == client_id)):
@@ -62,10 +62,10 @@ def reassess_tracking(db: Session, user: User | None, client_id: str | None) -> 
             continue
         try:
             with db.begin_nested():
-                tracking_gate.evaluate(db, b, user)
+                measurement.audit(db, b, user)
             done.append(b.id)
-        except Exception as exc:  # noqa: BLE001 - the stale result already reads as UNKNOWN, so nothing wrong is left behind
-            activity.log(db, "tracking_gate.reassess_failed", actor=user, entity="business", entity_id=b.id, client_id=client_id, details={"error": type(exc).__name__})
+        except Exception as exc:  # noqa: BLE001 - the outdated audit is not treated as current, so nothing wrong is left behind
+            activity.log(db, "measurement.reaudit_failed", actor=user, entity="business", entity_id=b.id, client_id=client_id, details={"error": type(exc).__name__})
     return done
 
 

@@ -62,7 +62,9 @@ _GAQL = {
     "conversion_action": ("SELECT conversion_action.resource_name, conversion_action.id, conversion_action.name, "
                           "conversion_action.type, conversion_action.origin, conversion_action.category, "
                           "conversion_action.primary_for_goal, conversion_action.counting_type, "
-                          "conversion_action.status, conversion_action.phone_call_duration_seconds "
+                          "conversion_action.status, conversion_action.phone_call_duration_seconds, "
+                          "conversion_action.value_settings.default_value, conversion_action.value_settings.always_use_default_value, "
+                          "conversion_action.attribution_model_settings.attribution_model, conversion_action.click_through_lookback_window_days "
                           "FROM conversion_action WHERE conversion_action.status != 'REMOVED'"),
 }
 

@@ -23,13 +23,13 @@ def run_task_job(task_id: str) -> str:
     return tasks_service.run_task(task_id)
 
 
-for _name in ("daily_sync", "recheck_tracking", "hourly_brake", "optimize_all", "insights_all", "recheck_fixes", "approvals_sweep",
+for _name in ("daily_sync", "audit_measurement", "hourly_brake", "optimize_all", "insights_all", "recheck_fixes", "approvals_sweep",
               "weekly_reports", "evaluate_predictions"):
     celery.task(name=f"gaa.{_name}")(getattr(jobs, _name))
 
 celery.conf.beat_schedule = {
     "daily-sync": {"task": "gaa.daily_sync", "schedule": crontab(hour=6, minute=17)},
-    "recheck-tracking": {"task": "gaa.recheck_tracking", "schedule": crontab(hour=6, minute=47)},
+    "audit-measurement": {"task": "gaa.audit_measurement", "schedule": crontab(hour=6, minute=47)},
     "optimize": {"task": "gaa.optimize_all", "schedule": crontab(hour=7, minute=13)},
     "insights": {"task": "gaa.insights_all", "schedule": crontab(hour=7, minute=37)},
     "hourly-brake": {"task": "gaa.hourly_brake", "schedule": crontab(minute=23)},

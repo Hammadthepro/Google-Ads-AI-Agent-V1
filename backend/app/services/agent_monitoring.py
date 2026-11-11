@@ -15,7 +15,7 @@ from app.models import PerformanceSnapshot, Recommendation, WeeklyReport
 from app.services import (accounts_service, agent_service as ag, auth_service, intelligence_service as intel, monitoring, optimization,
                           performance_insights as pi, reporting, settings_service)
 
-WANT_MONITOR = ["tracking", "account_policy", "finance", "strategy"]
+WANT_MONITOR = ["measurement", "account_policy", "finance", "strategy"]
 
 
 # ------------------------------------------------------------------------------------------------ shared stages
@@ -150,7 +150,7 @@ def ans_diagnose(c: ag.Ctx) -> dict:
         {"label": "Weekly target", "value": f"{base['weekly_target']['value'] or 'not supplied'} ({base['weekly_target']['source']})"},
         {"label": "Recommended monthly budget", "value": f"{base['recommended_monthly_budget']['value'] or 'not calculated'} ({base['recommended_monthly_budget']['source']})"},
         {"label": "Maximum affordable CPC", "value": f"{base['max_affordable_cpc']['value'] or 'unknown'} ({base['max_affordable_cpc']['source']})"},
-        {"label": "Tracking gate", "value": base["tracking"]["gate"]}, {"label": "Research", "value": base["research"].get("reason", "")}]})
+        {"label": "Conversion data", "value": ("reliable: " if base["measurement"]["conversion_data_reliable"] else "not usable for decisions: ") + base["measurement"]["reason"]}, {"label": "Research", "value": base["research"].get("reason", "")}]})
     a["next_actions"] = [{"label": "What should we improve?", "say": "What should we improve?"}, {"label": "Show wasted spend and search terms", "say": "Show wasted spend and search terms"}]
     return a
 
@@ -221,7 +221,7 @@ def ans_recs(c: ag.Ctx) -> dict:
             actions.append({"label": f"Request approval: {r.title[:50]}", "say": f"Request approval for recommendation {r.id[:8]}"})
     a["headline"] = f"{len(recs)} recommendation(s) for {c.client.name}; {len(actions)} can be sent for approval."
     a["sections"].append({"type": "table", "title": "Recommendations", "columns": ["id", "type", "what", "estimated impact", "state", "how it is applied"], "rows": rows,
-                          "note": "Impact figures are estimates from this account's measured CPC and conversion rate. Held items need more data or verified tracking. Nothing is applied without an approval."})
+                          "note": "Impact figures are estimates from this account's measured CPC and conversion rate. Held items say exactly which data they are waiting for. Nothing is applied without an approval."})
     a["next_actions"] = actions[:5]
     return a
 
@@ -256,7 +256,7 @@ def ans_request(c: ag.Ctx) -> dict:
     a = {"headline": f"Request approval for: {r.title}", "sections": [{"type": "numbers", "title": "What would be requested", "items": [
         {"label": "Recommendation", "value": r.title}, {"label": "Estimated impact", "value": _impact_text(ev.get("impact_estimate"))},
         {"label": "Enough-data check", "value": r.enough_data.get("decision", "") + (f" — {r.hold_reason}" if r.hold_reason else "")}]}],
-         "blockers": ([{"what": f"On hold: {r.hold_reason}", "needs": "More data or verified tracking"}] if gated else []), "warnings": [], "next_actions": [], "ran": [], "reused": [], "stale_modules": []}
+         "blockers": ([{"what": f"On hold: {r.hold_reason}", "needs": "The data named in the hold reason"}] if gated else []), "warnings": [], "next_actions": [], "ran": [], "reused": [], "stale_modules": []}
     if not gated and ev.get("executable", r.category in ("BUDGET", "PROMOTE_TERM", "PAUSE_KEYWORD", "NEGATIVE_KEYWORD")):
         a["confirmation"] = {"action": "request_rec_approval", "permission": "approvals.submit", "recommendation_id": r.id,
                              "describes": ("This creates an approval card for a person to review and decide. It does not change Google Ads, and campaign writes are disabled by "

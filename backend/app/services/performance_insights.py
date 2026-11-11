@@ -1,14 +1,14 @@
 """Performance monitoring and optimisation analysis bound to the intelligence record.
 
 Reads only: synced Google Ads data (PerformanceSnapshot, SearchTermRow, Campaign/Ad/Keyword rows) and the intelligence record (targets, budget
-recommendation, tracking readiness, selected and rejected keywords, landing-page findings). It writes only Recommendation rows (the existing
+recommendation, measurement findings, selected and rejected keywords, landing-page findings). It writes only Recommendation rows (the existing
 store), and a recommendation never executes: executable kinds go through the approval pipeline, the rest are advice.
 
 Rules
 * No data -> no analysis: a missing window is "unavailable", never zero; nothing is extrapolated from a single day.
 * One metric alone is not a diagnosis: every anomaly lists what corroborates it, and a diagnosis is a labelled hypothesis with its evidence.
 * Impact numbers are estimates computed from the account's own measured CPC / conversion rate, shown with a low-expected-high range.
-* Conversion-based advice is held while tracking is not GREEN (the existing enough-data gate).
+* Advice judged by conversion counts is held until conversions are recorded and counted once (the enough-data check says exactly why).
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.core import clock
 from app.core.util import normalize_term
 from app.models import (Ad, AdGroup, Audit, Business, Campaign, ChangeEvent, Client, GoogleAdsAccount, Keyword, NegativeKeyword, PerformanceSnapshot,
                         Recommendation, SearchTermRow)
-from app.services import finance, intelligence_service as intel, monitoring, optimization, settings_service, tracking_gate
+from app.services import finance, intelligence_service as intel, monitoring, optimization, measurement, settings_service
 from app.services.keyword_labels import label_keyword
 
 
@@ -62,7 +62,6 @@ def baselines(db: Session, client: Client, biz: Business) -> dict:
     rep = intel.report(db, biz, client)
     mods = {m["module"]: m for m in rep["modules"]}
     fin = {f["category"]: f for f in mods["finance"]["findings"]}
-    track = next((f for f in mods["tracking"]["findings"] if f["category"] == "measurement_readiness"), None)
     ictx = intel.Ctx(db, biz, client)
     aff = (fin.get("affordability") or {}).get("value") or {}
     budget = (fin.get("budget_recommendation") or {}).get("value") or {}
@@ -72,12 +71,17 @@ def baselines(db: Session, client: Client, biz: Business) -> dict:
         "recommended_monthly_budget": {"value": budget.get("monthly"), "source": "financial feasibility (estimate)" if budget.get("monthly") else "not calculated"},
         "max_affordable_cpc": {"value": aff.get("max_affordable_cpc"), "source": "client economics" if aff.get("max_affordable_cpc") else "needs target CAC, lead-to-customer and conversion rates"},
         "planning_cpc": {"value": aff.get("estimated_cpc"), "source": "Keyword Planner / history (estimate)" if aff.get("estimated_cpc") else "not available"},
-        "tracking": {"verified": bool(track and (track["value"] or {}).get("verified")),
-                     "gate": (tracking_gate.normalize(ictx.tracking.effective_state) if ictx.tracking else "UNKNOWN"), "source": "tracking gate"},
+        "measurement": _measurement_baseline(db, biz, ictx.measurement),
         "readiness": rep["decision_label"], "stale_modules": rep["stale_modules"], "research": rep["research"],
         "selected_keywords": sorted({normalize_term(r["keyword"]) for r in ictx.kw_rows if r.get("selected")}),
         "research_negatives": sorted(neg), "excluded_services": sorted(normalize_term(s) for s in _excluded(biz)),
     }
+
+
+def _measurement_baseline(db: Session, biz: Business, ma) -> dict:
+    ok, why = measurement.conversion_data_reliable(db, biz)
+    return {"audited": ma is not None, "conversion_data_reliable": ok, "reason": why,
+            "issues": [f"{f['inspected']}: {f['actual']}" for f in (ma.findings if ma else []) if f["result"] == "issue"], "source": "measurement audit"}
 
 
 def _excluded(biz: Business) -> list[str]:
@@ -137,9 +141,9 @@ def anomalies(db: Session, c: Campaign, base: dict) -> dict:
     if (cur["budget_lost_is"] or 0) > float(_g(db, "monitoring.budget_limited_is", 0.2)):
         flag("BUDGET_LIMITED", "impression share lost to budget", cur["budget_lost_is"], ref["budget_lost_is"], None, "medium",
              f"Losing {cur['budget_lost_is']:.0%} of impressions to budget")
-    gate = base["tracking"]["gate"]
+    m_issues = base["measurement"]["issues"]
     if cur["clicks"] >= min_clicks and cur["conversions"] == 0 and ref["conversions"] > 0:
-        flag("TRACKING_SUSPECT", "conversions", 0, conv_b, -1.0, "high", f"{cur['clicks']} clicks and zero conversions after a period with conversions" + (f" (tracking gate is {gate})" if gate != "GREEN" else ""))
+        flag("CONVERSIONS_STOPPED", "conversions", 0, conv_b, -1.0, "high", f"{cur['clicks']} clicks and zero conversions after a period with conversions")
     # --- corroboration and hypotheses: never from one metric alone
     kinds = {f["kind"] for f in flags}
     for f in flags:
@@ -148,12 +152,13 @@ def anomalies(db: Session, c: Campaign, base: dict) -> dict:
         if not f["corroborated_by"]:
             f["note"] = "Single metric: treat as a signal to watch, not a diagnosis."
     stable_traffic = (_pct(cur["ctr"], ref["ctr"]) or 0) > -0.15 and (_pct(cur["cpc"], ref["cpc"]) or 0) < 0.15
-    if kinds & {"CONVERSION_DROP", "TRACKING_SUSPECT"}:
+    if kinds & {"CONVERSION_DROP", "CONVERSIONS_STOPPED"}:
         if stable_traffic:
             ev = ["CTR and CPC are stable, so the same kind of traffic arrived", "conversions fell afterwards"]
             hyp = [("POST_CLICK", "Something after the click changed: landing page, form, phone handling or conversion tracking", ev)]
-            if gate in ("YELLOW", "RED") or "TRACKING_SUSPECT" in kinds:  # UNKNOWN is missing evidence, not a reason to blame tracking
-                hyp.append(("TRACKING", f"Conversion tracking may have stopped recording (tracking gate: {gate})", ev + [f"tracking gate is {gate}"]))
+            if m_issues or "CONVERSIONS_STOPPED" in kinds:
+                hyp.append(("MEASUREMENT", "Conversions may have stopped being recorded rather than stopped happening",
+                            ev + ([f"the measurement audit found: {m_issues[0]}"] if m_issues else ["clicks continued while recorded conversions went to zero"])))
         else:
             hyp = [("TRAFFIC_QUALITY", "The traffic changed: ad relevance, competition or search-term mix",
                     [f"CTR change {_pct(cur['ctr'], ref['ctr'])}", f"CPC change {_pct(cur['cpc'], ref['cpc'])}"])]
@@ -338,9 +343,8 @@ def analyse(db: Session, client: Client, biz: Business | None = None) -> dict:
                                  "shortfall": shortfall(db, c, client), "ads_and_pages": ad_landing_analysis(db, c, biz),
                                  "last_30_days": window(db, c, end - timedelta(days=29), end)})
     out["search_terms"] = search_term_analysis(db, client, biz, base)
-    if base["tracking"]["gate"] != "GREEN":
-        out["warnings"].append(f"Conversion tracking is {base['tracking']['gate']}" + (" (not assessed or not assessable)" if base["tracking"]["gate"] == "UNKNOWN" else "")
-                               + ": conversion-based conclusions and recommendations are held.")
+    if not base["measurement"]["conversion_data_reliable"]:
+        out["warnings"].append(f"Recommendations judged by conversion counts are held: {base['measurement']['reason']}.")
     if base["research"].get("exists") and not base["research"]["up_to_date"]:
         out["warnings"].append("The research that sets these baselines predates the client's latest information.")
     return out
@@ -377,8 +381,8 @@ def recommend(db: Session, client: Client, analysis: dict) -> list[Recommendatio
             add("CONVERSION_SHORTFALL", f"{c.name} produced {sf['actual']:g} conversions last week against a target of {sf['target']:g}",
                 {"shortfall": sf, "diagnosis": an.get("diagnosis", []), "anomalies": [f["kind"] for f in an.get("flags", [])]}, None, f"shortfall:{c.id}:{wk}")
         for f in an.get("flags", []):
-            if f["kind"] == "TRACKING_SUSPECT":
-                add("TRACKING_CHECK", f"{c.name}: conversions stopped while clicks continue — verify conversion tracking and lead handling", {"flag": f, "diagnosis": an["diagnosis"]},
+            if f["kind"] == "CONVERSIONS_STOPPED":
+                add("MEASUREMENT_CHECK", f"{c.name}: conversions stopped while clicks continue — verify that leads are still arriving and being recorded", {"flag": f, "diagnosis": an["diagnosis"]},
                     None, f"trackchk:{c.id}:{wk}", conv=False)
         mx = analysis["baselines"]["max_affordable_cpc"]["value"]
         if mx and w30 and w30["cpc"] and w30["cpc"] > mx:
@@ -453,5 +457,3 @@ def run_all(db: Session) -> dict:
             out[client.name] = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
     return out
 
-
-_ = tracking_gate  # imported for baselines' gate state via intelligence Ctx

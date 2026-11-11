@@ -82,15 +82,15 @@ describe("Agent workspace", () => {
 
 describe("Agent workspace: monitoring answers", () => {
   it("renders tables, lists and numbers from a monitoring result, including unavailable values and estimate notes", async () => {
-    const r = { headline: "Diagnosis for Acme: 1 of 2 campaign(s) show a problem.", blockers: [], warnings: ["Conversion tracking is RED: conversion-based conclusions are held."],
+    const r = { headline: "Diagnosis for Acme: 1 of 2 campaign(s) show a problem.", blockers: [], warnings: ["Recommendations judged by conversion counts are held: conversions stopped being recorded."],
       sections: [
         { type: "table", title: "Plumbing: last 7 days vs the 28 days before", columns: ["metric", "last 7 days", "previous 28 days", "change"], rows: [["Conversions", "0", "5", "-100%"], ["Cost per lead", "unavailable", "$60.00", "unavailable"]], note: "'unavailable' means no data, not zero." },
         { type: "list", title: "Plumbing", items: ["Tracking Suspect [high, confidence medium]: 120 clicks and zero conversions", "Likely cause (hypothesis, confidence medium): conversion tracking may have stopped. Evidence: CTR stable"] },
-        { type: "numbers", title: "What it was judged against", items: [{ label: "Tracking gate", value: "RED" }, { label: "Weekly target", value: "8 (client intake)" }] }],
+        { type: "numbers", title: "What it was judged against", items: [{ label: "Conversion data", value: "not usable for decisions: conversions stopped being recorded" }, { label: "Weekly target", value: "8 (client intake)" }] }],
       next_actions: [{ label: "What should we improve?", say: "What should we improve?" }] };
     setup(base({ messages: [{ id: "m1", role: "agent", kind: "result", content: r.headline, data: r, run_id: "r1", created_at: "2026-11-11T10:00:00Z" }], runs: { r1: { id: "r1", status: "COMPLETED", plan: [], intent_label: "Diagnose", resumable: false } } }));
     expect(await screen.findByText(/1 of 2 campaign\(s\) show a problem/)).toBeInTheDocument();
-    expect(screen.getByText("Conversion tracking is RED: conversion-based conclusions are held.")).toBeInTheDocument();
+    expect(screen.getByText("Recommendations judged by conversion counts are held: conversions stopped being recorded.")).toBeInTheDocument();
     expect(screen.getAllByText("unavailable").length).toBe(2);
     expect(screen.getByText(/'unavailable' means no data, not zero/)).toBeInTheDocument();
     expect(screen.getByText(/Likely cause \(hypothesis, confidence medium\)/)).toBeInTheDocument();

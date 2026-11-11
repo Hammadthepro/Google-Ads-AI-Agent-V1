@@ -1,6 +1,6 @@
 """Enough-data gate (12), safe negative keywords (13a) and approval-based big changes (13b).
 
-Only safe negatives may ever be automatic, and only in ACTIVE mode with GREEN tracking; V1 starts in SHADOW
+Only safe negatives may ever be automatic, and only in ACTIVE mode with reliable conversion data; V1 starts in SHADOW
 (proposals only). Everything else becomes an approval card. Deletes are never proposed."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from app.core.errors import NotFound, SafetyBlocked, ValidationFailed
 from app.core.util import normalize_term
 from app.models import (AdGroup, Business, Campaign, Client, GoogleAdsAccount, Keyword, NegativeKeyword, PerformanceSnapshot,
                         Recommendation, SearchTermRow, User)
-from app.services import activity, approvals, execution, settings_service, tracking_gate, validation
+from app.services import activity, approvals, execution, settings_service, measurement, validation
 
 PATTERNS = ["jobs", "job", "diy", "free", "salary", "course", "training", "how to"]
 
@@ -46,8 +46,6 @@ def enough_data(db: Session, campaign: Campaign, *, item_changed_at=None, needs_
     launched_days = _days(campaign.launched_at)
     changed = item_changed_at or campaign.last_changed_at
     business = db.get(Business, campaign.business_id) if campaign.business_id else None
-    state = tracking_gate.effective_state(db, business.id) if business else "UNKNOWN"
-    gate = tracking_gate.current_result(db, business) if business else None
     checks = [
         {"key": "volume", "label": f"≥{min_clicks} clicks or spend ≥ {mult}× target CPL (30 days)",
          "passed": clicks >= min_clicks or (cpl is not None and cost >= mult * cpl),
@@ -60,8 +58,8 @@ def enough_data(db: Session, campaign: Campaign, *, item_changed_at=None, needs_
          "passed": changed is None or _days(changed) >= since_change, "value": f"{_days(changed)} days" if changed else "no recorded change"},
     ]
     if needs_conversions:
-        checks.append({"key": "tracking", "label": "Tracking GREEN (no override)",
-                       "passed": state == "GREEN" and not (gate and gate.override_active), "value": state})
+        ok, why = measurement.conversion_data_reliable(db, business)  # this recommendation is judged by conversion counts
+        checks.append({"key": "conversion_data", "label": "Conversions are recorded and counted once", "passed": ok, "value": why})
     go = all(c["passed"] for c in checks)
     return {"decision": "GO" if go else "HOLD", "checks": checks,
             "hold_reason": "; ".join(f"{c['label']} — {c['value']}" for c in checks if not c["passed"])}
@@ -328,7 +326,7 @@ def create_approval_for(db: Session, actor: User, rec_id: str):
                          business_id=b.id if b else None, account_id=account.id, current_state={}, proposed_state=payload["summary"],
                          reason="Optimization recommendation", expected_effect="See evidence", risks=[], validation=v,
                          context={"recommendation_id": r.id, "evidence": r.evidence, "enough_data": r.enough_data,
-                                  "tracking": tracking_gate.serialize_for(db, b.id) if b else None})
+                                  "measurement": measurement.serialize_for(db, b) if b else None})
     r.approval_id, r.status = a.id, "PROPOSED"
     return a
 

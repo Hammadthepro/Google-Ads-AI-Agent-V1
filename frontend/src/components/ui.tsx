@@ -48,11 +48,11 @@ export function Badge({ tone = "slate", children, title }: { tone?: keyof typeof
 }
 
 const STATUS_TONE: Record<string, string> = {
-  GREEN: "green", YELLOW: "amber", AMBER: "amber", RED: "red", ENABLED: "green", PAUSED: "slate", APPROVED: "blue", EXECUTED: "green",
+  ENABLED: "green", PAUSED: "slate", APPROVED: "blue", EXECUTED: "green",
   PENDING_APPROVAL: "amber", REJECTED: "red", CHANGES_REQUESTED: "amber", INVALIDATED: "slate", EXPIRED: "slate",
   VALIDATION_FAILED: "red", EXECUTION_FAILED: "red", EXECUTION_BLOCKED: "red", SUCCEEDED: "green", FAILED: "red", UNKNOWN: "amber",
   NOT_APPLIED: "slate", RECONCILE_CONFLICT: "red", COMPLETED: "green", RUNNING: "blue", QUEUED: "slate",
-  AWAITING_APPROVAL: "amber", BLOCKED_TRACKING: "red", EXECUTED_PAUSED: "blue", OPEN: "amber", RESOLVED: "green",
+  AWAITING_APPROVAL: "amber", EXECUTED_PAUSED: "blue", OPEN: "amber", RESOLVED: "green",
   IN_PROGRESS: "blue", HELD: "slate", SHADOW: "violet", PROPOSED: "blue", APPLIED: "green", GO: "green", HOLD: "slate",
   FEASIBLE: "green", PARTIALLY_FEASIBLE: "amber", UNREALISTIC: "red", CONNECTED: "green", ERROR: "red", NOT_CONFIGURED: "slate", AUTH_FAILED: "red", RATE_LIMITED: "amber",
   AWAITING_WINNER: "amber", HIGH: "red", MEDIUM: "amber", LOW: "slate", CRITICAL: "red", SIMULATED: "violet", INTERNAL: "blue",

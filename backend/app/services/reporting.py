@@ -11,10 +11,10 @@ from app.core import clock
 from app.core.errors import IntegrationNotConfigured
 from app.models import (Approval, Business, Campaign, Client, EmergencyEvent, Experiment, FixTrackerItem, PerformanceSnapshot,
                         Recommendation, SourceType, WeeklyReport)
-from app.services import ai_service, monitoring, settings_service, tracking_gate
+from app.services import ai_service, measurement, monitoring, settings_service
 
-ORDER = ["TRACKING", "BUDGET_LIMITED", "RANK_LIMITED", "LOW_CTR", "LOW_CVR", "CALLS_MISSED", "HIGH_CPC", "OPEN_CLIENT_FIXES"]
-ACTIONS = {"TRACKING": "Fix conversion tracking before optimising (see tracking fix list)",
+ORDER = ["MEASUREMENT", "BUDGET_LIMITED", "RANK_LIMITED", "LOW_CTR", "LOW_CVR", "CALLS_MISSED", "HIGH_CPC", "OPEN_CLIENT_FIXES"]
+ACTIONS = {"MEASUREMENT": "Resolve the conversion measurement issues found by the audit before judging performance",
            "BUDGET_LIMITED": "Raise budget or narrow targeting — impression share is lost to budget",
            "RANK_LIMITED": "Improve ad relevance, landing pages or bids — impression share is lost to ad rank",
            "LOW_CTR": "Test new ad angles / replace weak headlines",
@@ -22,7 +22,7 @@ ACTIONS = {"TRACKING": "Fix conversion tracking before optimising (see tracking 
            "CALLS_MISSED": "Answer or route missed calls; review call handling hours",
            "HIGH_CPC": "Review match types and bids; add negatives to cut expensive irrelevant clicks",
            "OPEN_CLIENT_FIXES": "Chase open client fixes (reviews, page speed, missing pages)"}
-LABELS = {"TRACKING": "Is tracking working?", "BUDGET_LIMITED": "Is budget limiting traffic?",
+LABELS = {"MEASUREMENT": "Are conversions being measured correctly?", "BUDGET_LIMITED": "Is budget limiting traffic?",
           "RANK_LIMITED": "Is ad rank limiting traffic?", "LOW_CTR": "Is click-through rate low?",
           "LOW_CVR": "Is conversion rate low?", "CALLS_MISSED": "Are calls missed or too short?",
           "HIGH_CPC": "Is CPC too high?", "OPEN_CLIENT_FIXES": "Are client fixes still open?"}
@@ -46,10 +46,10 @@ def _week_rows(db, c: Campaign, start: date, end: date):
             "source_type": "MIXED" if nsrc and nsrc > 1 else (src or "NONE")}
 
 
-def rule_causes(m: dict, tracking_state: str, missed_rate: float | None, open_fixes: int, cpc_benchmark: float | None, db) -> list[str]:
+def rule_causes(m: dict, measurement_issues: list[str], missed_rate: float | None, open_fixes: int, cpc_benchmark: float | None, db) -> list[str]:
     causes = []
-    if tracking_state in ("RED", "YELLOW"):  # UNKNOWN is missing evidence, not a cause
-        causes.append("TRACKING")
+    if measurement_issues:  # confirmed findings only; "could not be assessed" is not a cause
+        causes.append("MEASUREMENT")
     if (m.get("budget_lost_is") or 0) > float(settings_service.get_value("monitoring.budget_limited_is", 0.2, db)):
         causes.append("BUDGET_LIMITED")
     if (m.get("rank_lost_is") or 0) > float(settings_service.get_value("monitoring.rank_limited_is", 0.3, db)):
@@ -90,21 +90,20 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         m["cpc"] = round(cur["cost"] / cur["clicks"], 2) if cur["clicks"] else None
         m["cpl"] = round(cur["cost"] / cur["conversions"], 2) if cur["conversions"] else None
         b = db.get(Business, c.business_id) if c.business_id else None
-        state = tracking_gate.effective_state(db, b.id) if b else "UNKNOWN"
-        gate = tracking_gate.current_result(db, b) if b else None
-        if gate and gate.override_active:
-            warnings.append(f"{b.name}: tracking override active — conversion-based automation disabled")
-        elif state != "GREEN" and b:
-            warnings.append(f"{b.name}: tracking {state}")
+        ma = measurement.current(db, b) if b else None
+        m_issues = [f"{f['inspected']}: {f['actual']}" for f in (ma.findings if ma else []) if f["result"] == "issue"]
+        for msg in m_issues:
+            if f"{b.name}: {msg}" not in warnings:
+                warnings.append(f"{b.name}: {msg}")
         b_fixes = [f for f in fixes if b and f.business_id == b.id]
         prior = [w for w in weeks[1:] if w["clicks"]]
         bench = (sum(w["cost"] for w in prior) / sum(w["clicks"] for w in prior)) if prior else None
-        rules = rule_causes(m, state, calls.get("missed_rate"), len(b_fixes), bench, db)
+        rules = rule_causes(m, m_issues, calls.get("missed_rate"), len(b_fixes), bench, db)
         try:
             ai, _ = ai_service.generate(db, "DIAGNOSE", {"metrics": {**m, "missed_call_rate": calls.get("missed_rate"),
                                                                      "cpc_benchmark": bench, "budget_lost_is": m["budget_lost_is"],
                                                                      "rank_lost_is": m["rank_lost_is"]},
-                                                         "tracking_state": state, "open_fixes": len(b_fixes)})
+                                                         "measurement_issues": m_issues, "open_fixes": len(b_fixes)})
             ai_causes = list(ai.causes)
         except (ai_service.AIOutputInvalid, IntegrationNotConfigured):
             ai_causes = []  # no AI opinion: only causes confirmed by the deterministic rules AND the AI are recommended, so none are
@@ -116,7 +115,7 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
                  "forms": cur["forms"], "calls": cur["calls"],
                  "diagnosis": [{"step": i + 1, "key": k, "question": LABELS[k], "rules": k in rules, "ai": k in ai_causes,
                                 "recommended": k in agreed} for i, k in enumerate(ORDER)],
-                 "recommended_actions": [ACTIONS[k] for k in agreed], "tracking_state": state}
+                 "recommended_actions": [ACTIONS[k] for k in agreed], "measurement_issues": m_issues}
         campaigns.append(entry)
         recommended_all += [f"{c.name}: {ACTIONS[k]}" for k in agreed]
         totals["target"] += target
@@ -142,7 +141,7 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
     if client.automation_frozen:
         warnings.append("Automation frozen by the emergency brake")
     sections = {
-        "tracking_warnings": warnings,
+        "warnings": warnings,
         "open_fixes": [{"issue": f.issue, "priority": f.priority, "owner": f.owner, "since": f.created_at.date().isoformat()} for f in fixes],
         "emergency_actions": [{"rule": e.rule, "action": e.action, "mode": e.action_mode, "message": e.message, "at": e.created_at.isoformat()} for e in brake],
         "recommendations": {"small_changes_made": [r.title for r in recs if r.size == "SMALL" and r.status == "APPLIED"],

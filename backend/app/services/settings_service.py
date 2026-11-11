@@ -13,10 +13,9 @@ from app.db.session import session_scope
 from app.models import KillSwitch, SystemSetting
 
 DEFAULTS: dict[str, Any] = {
-    # tracking gate (D-01, D-02, D-03)
-    "tracking.green_min_conversions_30d": 3,
-    "tracking.call_min_seconds": 60,
-    "tracking.override_roles": ["SUPER_ADMIN", "ADMIN"],
+    # conversion measurement audit thresholds
+    "measurement.min_conversions_30d": 3,
+    "measurement.call_min_seconds": 60,
     # approvals (D-04, D-07, D-08)
     "approvals.reminder_hours": 24,
     "approvals.expiry_hours": 72,
@@ -66,7 +65,7 @@ DESCRIPTIONS = {
     "real_writes_authorized": "Second key for real Google Ads writes (also needs GOOGLE_ADS_WRITES_ENABLED=true).",
     "negatives.mode": "shadow = proposals only; active = apply safe negatives (also needs AUTO_NEGATIVES_MODE=active).",
 }
-SUPER_ADMIN_ONLY = {"operating_mode", "real_writes_authorized", "real_emergency_writes_authorized", "tracking.override_roles"}
+SUPER_ADMIN_ONLY = {"operating_mode", "real_writes_authorized", "real_emergency_writes_authorized"}
 
 
 def get_value(key: str, default: Any = None, db: Session | None = None) -> Any:

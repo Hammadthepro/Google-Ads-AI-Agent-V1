@@ -35,9 +35,9 @@ export default function Weekly() {
             <Stat label="Forms / calls" value={`${t.forms} / ${t.calls}`} /><Stat label="Spend" value={money(t.cost)} /><Stat label="Wasted spend (30d)" value={money(t.wasted_spend)} />
           </div>
           <Card title="Summary (AI-written, figures from the app)"><p className="whitespace-pre-wrap text-sm text-slate-700">{r.ai_summary}</p></Card>
-          {s.tracking_warnings.length > 0 && <Notice tone="amber"><b>Warnings:</b> {s.tracking_warnings.join(" · ")}</Notice>}
+          {(s.warnings ?? []).length > 0 && <Notice tone="amber"><b>Warnings:</b> {s.warnings.join(" · ")}</Notice>}
           {r.metrics.campaigns.map((c: any) => (
-            <Card key={c.campaign_id} title={<span className="flex items-center gap-2">{c.name} <StatusBadge value={c.tracking_state} /></span>}
+            <Card key={c.campaign_id} title={<span className="flex items-center gap-2">{c.name}</span>}
               actions={<span className="text-sm">{c.actual} / {c.target} {c.gap !== null && <span className={c.gap < 0 ? "text-rose-600" : "text-emerald-600"}>({c.gap < 0 ? `${Math.abs(c.gap)} short` : "on target"})</span>}</span>}>
               <div className="mb-3 flex flex-wrap items-center gap-4 text-sm text-slate-600">
                 <span>4-week trend: {c.trend.join(" → ")}</span><span>Forms {c.forms} · Calls {c.calls}</span><span>CPC {money(c.metrics.cpc)} · CPL {money(c.metrics.cpl)}</span>

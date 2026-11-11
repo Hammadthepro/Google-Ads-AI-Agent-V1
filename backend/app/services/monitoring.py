@@ -1,5 +1,5 @@
 """Daily monitoring (step 10): pulls real results, re-downloads the last 30 days (conversion lag),
-re-checks tracking, records search terms, calls and manual changes. Numbers come only from the adapter."""
+records search terms, calls and manual changes. Numbers come only from the adapter."""
 from __future__ import annotations
 
 import logging
@@ -14,7 +14,7 @@ from app.core import clock
 from app.core.errors import IntegrationNotConfigured
 from app.models import (Business, CallRecord, Campaign, ChangeEvent, Client, GoogleAdsAccount, JobRun, PerformanceSnapshot,
                         SearchTermRow)
-from app.services import accounts_service, activity, settings_service, tracking_gate
+from app.services import accounts_service, activity, measurement, settings_service
 
 log = logging.getLogger("gaa.monitoring")
 LEVELS = ("CAMPAIGN", "AD_GROUP", "KEYWORD", "AD")
@@ -192,18 +192,18 @@ def calls_summary(db: Session, client_id: str) -> dict:
     accts = [a.id for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client_id))]
     rows = list(db.scalars(select(CallRecord).where(CallRecord.google_ads_account_id.in_(accts or ["-"]),
                                                     CallRecord.started_at >= clock.now() - timedelta(days=30))))
-    min_len = int(settings_service.get_value("tracking.call_min_seconds", 60, db))
+    min_len = int(settings_service.get_value("measurement.call_min_seconds", 60, db))
     missed = sum(1 for r in rows if r.status == "MISSED")
     short = sum(1 for r in rows if r.status == "ANSWERED" and r.duration_seconds < min_len)
     return {"calls": len(rows), "missed": missed, "short": short, "missed_rate": round(missed / len(rows), 3) if rows else None,
             "min_seconds": min_len}
 
 
-def recheck_tracking_all(db: Session) -> int:
+def audit_measurement_all(db: Session) -> int:
     n = 0
     for b in db.scalars(select(Business)):
         if b.website_url:
-            tracking_gate.evaluate(db, b)
+            measurement.audit(db, b)
             n += 1
     return n
 

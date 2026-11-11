@@ -115,7 +115,7 @@ export function ClientDetail() {
           { key: "name", label: "Business", render: (x) => <Link className="font-medium text-brand-700 hover:underline" to={`/businesses/${x.id}`}>{x.name}</Link> },
           { key: "website_url", label: "Website" },
           { key: "services", label: "Services", render: (x) => x.services.filter((s: any) => !s.is_excluded).map((s: any) => s.name).join(", ") },
-          { key: "tracking", label: "Tracking", render: (x) => <StatusBadge value={c.tracking[x.id]?.effective_state} /> },
+          { key: "measurement", label: "Measurement", render: (x) => { const m = c.measurement?.[x.id]; return !m?.evaluated_at ? <span className="text-slate-400">not audited</span> : m.counts.issue ? `${m.counts.issue} problem(s)` : "no problems found"; } },
         ]} />
       </Card>
       <IntelligencePanel clientId={c.id} canRun={can("audits.run")} />

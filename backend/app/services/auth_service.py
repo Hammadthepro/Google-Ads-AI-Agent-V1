@@ -32,7 +32,6 @@ PERMISSIONS: dict[str, set[str]] = {
     "approvals.decide": {Role.SUPER_ADMIN, Role.ADMIN},
     "approvals.decide_privileged": {Role.SUPER_ADMIN},
     "execution.run": {Role.SUPER_ADMIN, Role.ADMIN},
-    "tracking.override": {Role.SUPER_ADMIN, Role.ADMIN},
     "real_writes.authorize": {Role.SUPER_ADMIN},
     "experiments.pick_winner": {Role.SUPER_ADMIN, Role.ADMIN},
     "playbook.manage": {Role.SUPER_ADMIN, Role.ADMIN},

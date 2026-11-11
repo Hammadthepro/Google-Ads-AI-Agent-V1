@@ -37,9 +37,9 @@ def daily_sync():
     return _run("monitoring.daily_sync_all", monitoring.run_daily_all)
 
 
-def recheck_tracking():
+def audit_measurement():
     from app.services import monitoring
-    return _run("tracking_gate.recheck_all", lambda db: {"businesses": monitoring.recheck_tracking_all(db)})
+    return _run("measurement.audit_all", lambda db: {"businesses": monitoring.audit_measurement_all(db)})
 
 
 def hourly_brake():
@@ -79,7 +79,7 @@ def evaluate_predictions():
 
 def run_daily_cycle() -> list[dict]:
     """One daily cycle: the same jobs Celery beat runs on a schedule."""
-    out = [daily_sync(), recheck_tracking(), optimize_all(), insights_all(), hourly_brake(), recheck_fixes(), approvals_sweep(), evaluate_predictions()]
+    out = [daily_sync(), audit_measurement(), optimize_all(), insights_all(), hourly_brake(), recheck_fixes(), approvals_sweep(), evaluate_predictions()]
     if clock.today().weekday() == 0:
         out.append(weekly_reports())
     return out

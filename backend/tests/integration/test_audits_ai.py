@@ -1,4 +1,4 @@
-"""#6-#13 audits + tracking gate, #15-#18 AI provider behaviour, #32 integration failure handling."""
+"""#6-#13 audits, #15-#18 AI provider behaviour, #32 integration failure handling."""
 from __future__ import annotations
 
 import json
@@ -8,61 +8,11 @@ import pytest
 from app.adapters import registry
 from app.adapters.ai import GroqAIProvider
 from app.services import ai_service
-from tests.conftest import ADMIN, ANALYST, MANAGER, Api, inject
+from tests.conftest import ADMIN, ANALYST, Api, inject
 
 
 def _biz(api, name):
     return next(b for b in api.get("/businesses").json() if b["name"] == name)
-
-
-# ------------------------------------------------------------------ tracking gate
-def test_tracking_green_amber_red():
-    admin = Api(ADMIN)
-    plumb = admin.post(f"/businesses/{_biz(admin, 'Northside Plumbing')['id']}/tracking-gate/run").json()
-    assert plumb["state"] == "GREEN" and plumb["automation_allowed"] is True
-    assert any("proves installation" in c["evidence"] for c in plumb["checks"] if c["key"] == "google_tag")
-    hvac = admin.post(f"/businesses/{_biz(admin, 'Northside Heating & Air')['id']}/tracking-gate/run").json()
-    assert hvac["state"] == "YELLOW" and hvac["automation_allowed"] is False
-    assert {c["key"] for c in hvac["checks"] if c["status"] != "PASS"} >= {"call_min_length", "recorded_conversions"}
-    dental = admin.post(f"/businesses/{_biz(admin, 'Brightsmile Dental')['id']}/tracking-gate/run").json()
-    assert dental["state"] == "RED"
-    failed = {c["key"] for c in dental["checks"] if c["status"] == "FAIL"}
-    assert {"google_tag", "counted_once", "duplicates", "recorded_conversions"} <= failed
-    assert dental["fix_list"] and all(f["owner"] for f in dental["fix_list"])
-    fixes = admin.get(f"/fixes?client_id={dental and _biz(admin, 'Brightsmile Dental')['client_id']}").json()
-    assert any(f["category"] == "tracking" for f in fixes)
-
-
-def test_red_gate_blocks_build_and_admin_override_behaves_like_amber():
-    admin, mgr = Api(ADMIN), Api(MANAGER)
-    dental = _biz(admin, "Brightsmile Dental")
-    r = mgr.post("/tasks?sync=true", {"task_type": "BUILD_CAMPAIGN", "client_id": dental["client_id"], "business_id": dental["id"],
-                                      "fields": {"monthly_budget": 2000, "weekly_target": 4, "services": ["Emergency Dentist"]}})
-    assert r.json()["status"] == "BLOCKED_TRACKING"
-    assert mgr.post(f"/businesses/{dental['id']}/tracking-gate/override", {"reason": "client says fine"}).status_code == 403
-    assert admin.post(f"/businesses/{dental['id']}/tracking-gate/override", {"reason": "short"}).status_code == 422
-    r = admin.post(f"/businesses/{dental['id']}/tracking-gate/override",
-                   {"reason": "Client launching anyway; tag fix scheduled with their web agency next week"})
-    assert r.status_code == 200 and r.json()["effective_state"] == "YELLOW"
-    gate = admin.get(f"/businesses/{dental['id']}/tracking-gate").json()
-    assert gate["state"] == "RED" and gate["effective_state"] == "YELLOW" and gate["override_active"] and not gate["automation_allowed"]
-    acts = admin.get("/activity?action=tracking_gate.override").json()
-    assert acts and acts[0]["actor"] == ADMIN and "web agency" in acts[0]["details"]["reason"]
-    r = mgr.post("/tasks?sync=true", {"task_type": "BUILD_CAMPAIGN", "client_id": dental["client_id"], "business_id": dental["id"],
-                                      "fields": {"monthly_budget": 2000, "weekly_target": 4, "services": ["Emergency Dentist"]}})
-    task = r.json()
-    assert task["status"] == "AWAITING_APPROVAL", task
-    appr = admin.get(f"/approvals/{task['approval_id']}").json()
-    assert any("override" in w["message"].lower() for w in appr["validation"]["warnings"])
-    # override never enables conversion-based automation
-    from app.db.session import SessionLocal
-    from app.models import Campaign
-    from app.services import optimization
-    s = SessionLocal()
-    c = s.query(Campaign).filter(Campaign.business_id == dental["id"], Campaign.campaign_type == "SEARCH").first()
-    gate = optimization.enough_data(s, c)
-    assert next(ch for ch in gate["checks"] if ch["key"] == "tracking")["passed"] is False
-    s.close()
 
 
 # ------------------------------------------------------------------ audits
@@ -109,7 +59,7 @@ def test_landing_page_outage_detected_by_website_audit():
 # ------------------------------------------------------------------ AI
 def _draft_payload():
     return {"business_name": "Northside Plumbing", "website": "https://www.northsideplumbing.example/", "city": "Columbus",
-            "phone": "(555) 201-4400", "verified_claims": ["Licensed & Insured"], "excluded_services": [], "tracking_state": "GREEN",
+            "phone": "(555) 201-4400", "verified_claims": ["Licensed & Insured"], "excluded_services": [], "measurement": {"conversion_bidding_supported": None, "reason": "not verified", "issues": []},
             "services": [{"name": "Drain Cleaning", "landing_page": "https://www.northsideplumbing.example/drain-cleaning"}],
             "keyword_table": [], "playbook_rules": []}
 
@@ -128,12 +78,12 @@ def test_challenger_disagrees_with_bad_draft(db):
                           "ads": [{"headlines": ["Best Plumber in Town", "Guaranteed Fix", "Call Today"], "descriptions": ["a", "b"]}]},
                          {"name": "Drains 2", "service": "Drain Cleaning", "landing_page": "https://site.example/drain",
                           "keywords": [{"text": "drain cleaning", "match_type": "BROAD"}], "ads": []}]}
-    report, _ = ai_service.generate(db, "CHALLENGE", {"draft": bad, "verified_claims": [], "tracking_state": "YELLOW",
+    report, _ = ai_service.generate(db, "CHALLENGE", {"draft": bad, "verified_claims": [], "measurement": {"conversion_bidding_supported": None, "reason": "not verified", "issues": []},
                                                       "feasibility": {"status": "UNREALISTIC", "expected_weekly_conversions": 2, "weekly_target": 10}},
                                     model_role="challenger")
     cats = {o.category for o in report.objections}
     assert report.verdict == "REVISE"
-    assert {"UNSUPPORTED_CLAIM", "KEYWORD_OVERLAP", "WEAK_INTENT", "MISSING_EXCLUSION", "BUDGET", "TRACKING", "LANDING_PAGE"} <= cats
+    assert {"UNSUPPORTED_CLAIM", "KEYWORD_OVERLAP", "WEAK_INTENT", "MISSING_EXCLUSION", "BUDGET", "MEASUREMENT", "LANDING_PAGE"} <= cats
     db.rollback()
 
 

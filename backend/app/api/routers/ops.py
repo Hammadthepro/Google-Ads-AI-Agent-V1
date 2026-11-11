@@ -17,7 +17,7 @@ from app.models import (ActivityLog, Alert, Approval, Campaign, Client, Emergenc
                         KillSwitch, PlaybookRule, Prediction, Recommendation, RegressionCase,
                         Task, User, WeeklyReport)
 from app.services import (accounts_service, activity, auth_service, emergency, experiments, learning, monitoring, optimization, reporting,
-                          settings_service, tracking_gate)
+                          settings_service)
 
 router = APIRouter()
 
@@ -37,9 +37,8 @@ def dashboard(user: User = Depends(require("reports.view")), db: Session = Depen
         cost = sum(x["cost"] for x in camps)
         conv = sum(x["conversions"] for x in camps)
         target = sum(x["weekly_target"] or 0 for x in camps if x["type"] == "SEARCH")
-        states = {b.name: tracking_gate.effective_state(db, b.id) for b in c.businesses}
         cards.append({"client_id": c.id, "name": c.name, "cost_7d": round(cost, 2), "conversions_7d": round(conv, 1),
-                      "weekly_target": target, "gap": round(conv - target, 1), "tracking": states,
+                      "weekly_target": target, "gap": round(conv - target, 1),
                       "automation_frozen": c.automation_frozen, "flagged": c.flagged,
                       "open_fixes": db.scalar(select(func.count(FixTrackerItem.id)).where(FixTrackerItem.client_id == c.id, FixTrackerItem.status != "RESOLVED")),
                       "pending_approvals": db.scalar(select(func.count(Approval.id)).where(Approval.client_id == c.id, Approval.status == "PENDING_APPROVAL")),

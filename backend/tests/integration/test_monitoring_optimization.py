@@ -89,7 +89,7 @@ def test_shadow_mode_proposes_only_and_active_mode_needs_green(db, monkeypatch):
             assert len(ops) > before and all(o.integration_mode == "MOCK" and o.state == "SUCCEEDED" for o in ops)
         assert s2["negatives_applied"] <= 25
         dental = db.scalar(select(Client).where(Client.name == "Brightsmile Dental Group"))
-        s3 = optimization.run_for_client(db, dental)  # RED/override -> nothing automatic
+        s3 = optimization.run_for_client(db, dental)  # conversion data unreliable -> nothing automatic
         db.commit()
         assert s3["negatives_applied"] == 0
     finally:
@@ -104,7 +104,7 @@ def test_enough_data_hold_for_new_campaign(db):
     gate = optimization.enough_data(db, hvac)
     assert gate["decision"] == "HOLD"
     failed = {c["key"] for c in gate["checks"] if not c["passed"]}
-    assert {"volume", "learning", "tracking"} <= failed
+    assert {"volume", "learning", "conversion_data"} <= failed
     held = db.scalars(select(Recommendation).where(Recommendation.campaign_id == hvac.id)).all()
     assert all(r.status == "HELD" and r.hold_reason for r in held)
 
@@ -119,7 +119,7 @@ def test_weekly_report_numbers_and_diagnosis():
     assert totals["gap"] == round(totals["conversions"] - totals["target"], 1)
     for c in camps:
         assert len(c["trend"]) == 4 and len(c["diagnosis"]) == 8
-        assert [d["question"] for d in c["diagnosis"]][0] == "Is tracking working?"
+        assert [d["question"] for d in c["diagnosis"]][0] == "Are conversions being measured correctly?"
         for d in c["diagnosis"]:
             assert d["recommended"] == (d["rules"] and d["ai"])  # only causes named by BOTH become actions
     assert rep["source_type"] == "MOCK" and rep["ai_summary"]

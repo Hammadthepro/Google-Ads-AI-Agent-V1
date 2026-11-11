@@ -22,9 +22,11 @@ def propose(db: Session, actor: User, campaign_id: str, variable: str, hypothesi
     if not c or c.campaign_type != "SEARCH":
         raise ValidationFailed("Select a Search campaign")
     if variable == "MATCH_TYPE" and treatment.get("match_type") == "BROAD":
-        from app.services import tracking_gate
-        if c.business_id and tracking_gate.effective_state(db, c.business_id) != "GREEN":
-            raise ValidationFailed("A broad-match test requires GREEN tracking")
+        from app.models import Business
+        from app.services import measurement
+        ok, why = measurement.conversion_data_reliable(db, db.get(Business, c.business_id) if c.business_id else None)
+        if not ok:  # broad match is only safe to judge with conversion data: say exactly what is missing
+            raise ValidationFailed(f"A broad-match test is judged by conversions, and {why}")
     account = db.get(GoogleAdsAccount, c.google_ads_account_id)
     exp = Experiment(client_id=c.client_id, campaign_id=c.id, name=f"{c.name} — {variable.replace('_', ' ').lower()} test",
                      variable=variable, hypothesis=hypothesis, treatment=treatment, split_percent=50, status="PROPOSED",

@@ -59,12 +59,14 @@ def test_anomalies_are_windowed_corroborated_and_hypotheses_not_conclusions():
     assert an["available"] and an["data_status"]["state"] == "data_available"
     drop = next(c for c in an["campaigns"] if c["anomalies"]["status"] == "anomalies")["anomalies"]
     kinds = {f["kind"]: f for f in drop["flags"]}
-    assert {"CONVERSION_DROP", "TRACKING_SUSPECT"} <= set(kinds)
-    assert kinds["CONVERSION_DROP"]["corroborated_by"] == ["TRACKING_SUSPECT"] and kinds["CONVERSION_DROP"]["confidence"] == "medium"
+    assert {"CONVERSION_DROP", "CONVERSIONS_STOPPED"} <= set(kinds)
+    assert kinds["CONVERSION_DROP"]["corroborated_by"] == ["CONVERSIONS_STOPPED"] and kinds["CONVERSION_DROP"]["confidence"] == "medium"
     assert drop["current_window"] != drop["baseline_window"] and drop["baseline"]["days"] >= 14
     dx = {d["key"]: d for d in drop["diagnosis"]}
-    assert "TRACKING" in dx and dx["TRACKING"]["is_hypothesis"] and len(dx["TRACKING"]["evidence"]) >= 2
-    assert an["baselines"]["tracking"]["gate"] == "RED" and any("tracking is RED" in w for w in an["warnings"])
+    assert "MEASUREMENT" in dx and dx["MEASUREMENT"]["is_hypothesis"] and len(dx["MEASUREMENT"]["evidence"]) >= 2
+    m = an["baselines"]["measurement"]
+    assert m["audited"] and m["conversion_data_reliable"] is False and m["issues"] and "status" not in m and "gate" not in m
+    assert any("held:" in w and m["reason"] in w for w in an["warnings"])
 
 
 def _scratch_series(db, c, days, *, conv=lambda i: 5, lost=lambda i: 0.0, clicks=lambda i: 100, cost=lambda i: 300.0):
@@ -87,7 +89,7 @@ def test_a_single_metric_is_a_signal_and_too_little_history_concludes_nothing():
     db = SessionLocal()
     try:
         c = db.scalar(select(Campaign).where(Campaign.name.like("%Drain Cleaning%")))
-        base = {"tracking": {"gate": "GREEN"}}
+        base = {"measurement": {"issues": []}}
         _scratch_series(db, c, 35, lost=lambda i: 0.4 if i < 7 else 0.0)  # only the budget-lost share moves; spend, CPC, CTR and conversions are flat
         an = pi.anomalies(db, c, base)
         assert [f["kind"] for f in an["flags"]] == ["BUDGET_LIMITED"] and an["status"] == "anomalies"
@@ -96,8 +98,8 @@ def test_a_single_metric_is_a_signal_and_too_little_history_concludes_nothing():
         _scratch_series(db, c, 35, conv=lambda i: 0 if i < 7 else 5)  # conversions vanish while clicks, CPC and CTR hold: post-click, not traffic
         an = pi.anomalies(db, c, base)
         kinds = {f["kind"] for f in an["flags"]}
-        assert {"CONVERSION_DROP", "TRACKING_SUSPECT"} <= kinds and "CPC_INCREASE" not in kinds and "CTR_DROP" not in kinds
-        assert {d["key"] for d in an["diagnosis"]} == {"POST_CLICK", "TRACKING"} and all(d["is_hypothesis"] for d in an["diagnosis"])
+        assert {"CONVERSION_DROP", "CONVERSIONS_STOPPED"} <= kinds and "CPC_INCREASE" not in kinds and "CTR_DROP" not in kinds
+        assert {d["key"] for d in an["diagnosis"]} == {"POST_CLICK", "MEASUREMENT"} and all(d["is_hypothesis"] for d in an["diagnosis"])
         _scratch_series(db, c, 35, cost=lambda i: 700.0 if i < 7 else 300.0)  # spend more than doubles, nothing else changes
         an = pi.anomalies(db, c, base)
         assert "SPEND_SPIKE" in {f["kind"] for f in an["flags"]} and an["flags"][0]["change"] > 1
@@ -163,13 +165,13 @@ def test_recommendations_carry_impact_estimates_gates_and_are_idempotent_advice_
         assert db.scalar(select(func.count()).select_from(Recommendation).where(Recommendation.client_id == cid)) == n  # same week: refreshed, not duplicated
         assert {r.id for r in first} == {r.id for r in second}
         cats = {r.category: r for r in first}
-        assert "TRACKING_CHECK" in cats and "NEGATIVE_REVIEW" in cats
+        assert "MEASUREMENT_CHECK" in cats and "NEGATIVE_REVIEW" in cats
         neg = cats["NEGATIVE_REVIEW"]
         imp = neg.evidence["impact_estimate"]
         assert imp["is_estimate"] and imp["low"] < imp["expected"] <= imp["high"] and "avoided" in imp["metric"] and "Not a promise" in imp["caveat"]
         assert neg.evidence["requires_approval"] is True and neg.evidence["executable"] is False
         conv_gated = [r for r in first if r.category in ("CONVERSION_SHORTFALL", "BID_CEILING", "LANDING_PAGE")]
-        assert all(r.decision == "HOLD" and "Tracking" in r.hold_reason for r in conv_gated)  # tracking RED: conversion-based advice is held
+        assert all(r.decision == "HOLD" and "Conversions are recorded and counted once" in r.hold_reason for r in conv_gated)  # held for a named data reason
         from app.core.errors import ValidationFailed
         with pytest.raises(ValidationFailed, match="advice only|HOLD"):
             optimization.create_approval_for(db, db.scalar(select(__import__("app.models", fromlist=["User"]).User)), neg.id)
@@ -203,8 +205,8 @@ def test_diagnosis_request_reads_fresh_data_without_resyncing_and_shows_hypothes
     text = " ".join(i for s in res["sections"] if s["type"] == "list" for i in s["items"])
     assert "hypothesis" in text and "Evidence:" in text and "corroborated by" in text
     judged = next(s for s in res["sections"] if s["title"].startswith("What it was judged against"))
-    assert any(i["label"] == "Tracking gate" and i["value"] == "RED" for i in judged["items"])
-    assert any("Conversion tracking is RED" in w for w in res["warnings"])
+    assert any(i["label"] == "Conversion data" and i["value"].startswith("not usable for decisions") for i in judged["items"])
+    assert any("judged by conversion counts are held" in w for w in res["warnings"])
 
 
 def test_old_data_is_refreshed_read_only_and_the_record_follows(api, fresh_data):
@@ -234,7 +236,7 @@ def test_search_terms_and_recommendation_intents(api):
     rows = run["result"]["sections"][0]["rows"]
     assert rows and all(len(r) == 6 for r in rows) and any("estimate" in r[3] or r[3] == "not estimated" for r in rows)
     assert any("advice" in r[5] for r in rows)  # advice is labelled as advice: a person makes those changes
-    assert any(h.startswith("HOLD") for h in [r[4] for r in rows])  # tracking RED holds the conversion-based ones, with the reason
+    assert any(h.startswith("HOLD") for h in [r[4] for r in rows])  # conversion-based ones are held, each with its reason
 
 
 def test_requesting_approval_needs_confirmation_and_creates_only_an_approval_request(api):
@@ -270,7 +272,7 @@ def test_weekly_report_is_integrated_with_the_record_and_reused_when_current(api
         rep = db.scalar(select(WeeklyReport).where(WeeklyReport.client_id == cid))
         s = rep.sections
         assert {"insights", "optimisation", "outcomes_of_earlier_changes", "intelligence"} <= set(s)
-        assert s["intelligence"]["judged_against"]["tracking"]["gate"] == "RED" and "stale_modules" in s["intelligence"]
+        assert s["intelligence"]["judged_against"]["measurement"]["conversion_data_reliable"] is False and "stale_modules" in s["intelligence"]
         assert any(c["anomalies"] for c in s["insights"]["campaigns"]) and s["optimisation"]
         n = db.scalar(select(func.count()).select_from(WeeklyReport).where(WeeklyReport.client_id == cid))
     run2 = list(api.post(f"/agent/conversations/{conv}/messages?sync=true", {"text": "weekly report"}).json()["runs"].values())[-1]

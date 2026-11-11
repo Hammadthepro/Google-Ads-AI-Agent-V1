@@ -228,7 +228,7 @@ def _challenge_side(db, challenger_side, provider, target_draft, ctx, task_id):
 
 
 def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: list[dict], verified_claims: list[str],
-        tracking_state: str, override: bool, task_id: str | None) -> dict:
+        conversion_bidding: bool | None, task_id: str | None) -> dict:
     """Returns {draft, competition, internal_run_id, challenger_run_id, challenger(merged report)}."""
     purpose = {"CAMPAIGN": "DRAFT_CAMPAIGN", "AD_GROUP": "DRAFT_AD_GROUP"}[scope]
     provs = _providers()
@@ -290,7 +290,7 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
         callouts = [c for c in {*(base.get("callouts") or []), *((other or {}).get("callouts") or [])}
                     if len(c) <= 25 and any(normalize_term(c) in normalize_term(v) or normalize_term(v) in normalize_term(c)
                                             for v in verified_claims)]
-        final = {**base, "bidding_strategy": "MAXIMIZE_CLICKS" if override else "MAXIMIZE_CONVERSIONS",
+        final = {**base, "bidding_strategy": "MAXIMIZE_CLICKS" if conversion_bidding is False else "MAXIMIZE_CONVERSIONS",  # False = confirmed: nothing is recording
                  "ad_groups": groups, "campaign_negatives": negatives[:60],
                  "budget_allocation": [{"ad_group": g["name"], "percent": share} for g in groups],
                  "callouts": sorted(callouts)[:4],

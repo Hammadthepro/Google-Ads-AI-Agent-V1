@@ -10,7 +10,7 @@ from app.adapters.base import AdapterError
 from app.services.ad_policy import DESCRIPTION_MAX, HEADLINE_MAX, PATH_MAX, policy_issues_for_text
 from app.core.util import normalize_term, payload_hash
 from app.models import Business, ValidationRun
-from app.services import crawler_service, settings_service, tracking_gate
+from app.services import crawler_service, settings_service, measurement
 
 CLAIM_PATTERNS = {
     "#1": r"#\s?1\b|number one", "best": r"\bbest\b", "top rated": r"top[- ]rated", "guarantee": r"guarantee",
@@ -46,7 +46,7 @@ def claim_violations(text: str, verified: list[str]) -> list[str]:
 
 def validate(db: Session, payload: dict, business: Business, *, existing_keywords: dict[str, list[str]] | None = None,
              task_id: str | None = None, approval_id: str | None = None, check_landing_pages: bool = True,
-             run_adapter: bool = True, budget_context: dict | None = None, deployment: bool = False) -> ValidationRun:
+             run_adapter: bool = True, budget_context: dict | None = None) -> ValidationRun:
     errors, warnings = [], []
     ops = payload.get("operations", [])
     kind = payload.get("kind", "")
@@ -90,7 +90,7 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
             if "maximize_conversions" not in f and "target_spend" not in f:
                 errors.append(_err("BIDDING", "A bidding strategy is required"))
             if "target_spend" in f:
-                warnings.append(_err("BIDDING", "Maximize Clicks (CPC cap) is an exception reserved for RED tracking with override", severity="warning"))
+                warnings.append(_err("BIDDING", "Maximize Clicks with a CPC cap: appropriate while no conversion action records leads; review once conversions are recorded", severity="warning"))
         if r == "campaign_budget":
             amount = int(f.get("amount_micros", 0))
             if amount <= 0:
@@ -179,25 +179,14 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
     for op in ops:
         if op.get("resource") == "campaign" and op.get("op") == "create" and (op.get("fields") or {}).get("name") in existing_names:
             errors.append(_err("DUPLICATE_RESOURCE", f"A campaign named '{op['fields']['name']}' already exists"))
-    # tracking state
-    # Two different gates on the same state. PREPARATION (drafting, local validation, creating an approval request) is stopped only by
-    # CONFIRMED broken tracking (RED); UNKNOWN / YELLOW are warnings that list what is still to be verified. DEPLOYMENT (execution
-    # re-validates with deployment=True) is strict: verified tracking (GREEN) or an explicit, audited admin override.
-    a = tracking_gate.assessment(db, business.id)
-    state, res = a["effective_state"], a["result"]
-    todo = "; ".join(o["what"] for o in tracking_gate.outstanding(res)[:4]) or a["reason"] or "run the tracking assessment"
-    if kind in ("BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_KEYWORDS", "ENABLE"):
-        overridden = bool(res and res.override_active)
-        if state == "RED":
-            errors.append(_err("TRACKING", "Tracking gate is RED (confirmed broken) — fix tracking or obtain an admin override"))
-        elif deployment and state != "GREEN" and not overridden:
-            errors.append(_err("TRACKING_NOT_VERIFIED", f"Live deployment needs verified conversion tracking (GREEN) or an explicit admin authorisation; tracking is {state}. Outstanding: {todo}"))
-        elif overridden:
-            warnings.append(_err("TRACKING", "Tracking override active: deployment authorised by an admin, no conversion-based automation", severity="warning"))
-        elif state == "UNKNOWN":
-            warnings.append(_err("TRACKING_UNKNOWN", f"Tracking cannot be assessed yet (UNKNOWN), so it is not a failure and does not stop drafting. Before deployment: {todo}", severity="warning"))
-        elif state == "YELLOW":
-            warnings.append(_err("TRACKING_YELLOW", f"Tracking YELLOW: configured but not fully verified; deployment will need verified tracking or an admin authorisation. Outstanding: {todo}", severity="warning"))
+    # Measurement is not a gate. The one specific dependency a payload can have on it is said here, with its consequence.
+    if kind in ("BUILD_CAMPAIGN", "CHANGE_BIDDING") and any((op.get("fields") or {}).get("maximize_conversions") is not None for op in ops if op.get("resource") == "campaign"):
+        ok, why = measurement.supports_conversion_bidding(measurement.facts_for(db, business))
+        if ok is False:
+            warnings.append(_err("CONVERSION_BIDDING_WITHOUT_DATA", f"This campaign uses Maximize Conversions. {why} Google would spend the budget without a conversion signal; "
+                                 "consider Maximize Clicks with a CPC ceiling until a conversion action records leads.", severity="warning"))
+        elif ok is None:
+            warnings.append(_err("CONVERSION_BIDDING_UNVERIFIED", f"This campaign uses Maximize Conversions. {why}", severity="warning"))
     # budget change thresholds
     if budget_context:
         cur, new = budget_context.get("current_monthly", 0), budget_context.get("new_monthly", 0)

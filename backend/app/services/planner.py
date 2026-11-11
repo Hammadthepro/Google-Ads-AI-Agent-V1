@@ -22,19 +22,19 @@ def playbook_rules(db: Session, business: Business) -> list[PlaybookRule]:
             or (r.scope == "CLIENT" and r.scope_value == business.client_id)]
 
 
-def _common_payload(db, business: Business, tracking_state: str, override: bool) -> dict:
+def _common_payload(db, business: Business, measurement_ctx: dict) -> dict:
     rules = playbook_rules(db, business)
     return {"business_name": business.name, "website": business.website_url, "city": clients_service.city_of(business),
             "phone": business.phone, "radius_miles": business.default_radius_miles,
             "verified_claims": business.verified_claims or [], "brand_rules": business.brand_rules or [],
             "excluded_services": clients_service.excluded_services(business),
-            "tracking_state": "OVERRIDE_RED" if override else tracking_state,
+            "measurement": measurement_ctx,
             "playbook_rules": [r.text for r in rules], "_rule_ids": [r.id for r in rules]}
 
 
 def draft(db: Session, task: Task, business: Business, *, scope: str, services: list[dict], keyword_table: list[dict],
-          feasibility: dict | None, tracking_state: str, override: bool, extra: dict | None = None) -> CampaignPlan:
-    payload = _common_payload(db, business, tracking_state, override)
+          feasibility: dict | None, measurement_ctx: dict, extra: dict | None = None) -> CampaignPlan:
+    payload = _common_payload(db, business, measurement_ctx)
     rule_ids = payload.pop("_rule_ids")
     payload.update({"services": services, "monthly_budget": (task.fields or {}).get("monthly_budget"),
                     "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in
@@ -49,9 +49,9 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
         payload["service"] = services[0]["name"]
     if scope in ("CAMPAIGN", "AD_GROUP"):
         ctx = {"verified_claims": business.verified_claims or [], "excluded_services": clients_service.excluded_services(business),
-               "tracking_state": payload["tracking_state"], "feasibility": payload["feasibility"]}
+               "measurement": measurement_ctx, "feasibility": payload["feasibility"]}
         res = competition.run(db, scope=scope, payload=payload, challenge_ctx=ctx, table=keyword_table,
-                              verified_claims=business.verified_claims or [], tracking_state=tracking_state, override=override,
+                              verified_claims=business.verified_claims or [], conversion_bidding=measurement_ctx.get("conversion_bidding_supported"),
                               task_id=task.id)
         plan = CampaignPlan(task_id=task.id, client_id=task.client_id, business_id=business.id, scope=scope, draft=res["draft"],
                             original=res["draft"], competition=res["competition"], challenger=res["challenger"],
@@ -70,11 +70,11 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
     return plan
 
 
-def challenge(db: Session, plan: CampaignPlan, business: Business, feasibility: dict | None, tracking_state: str) -> dict:
+def challenge(db: Session, plan: CampaignPlan, business: Business, feasibility: dict | None, measurement_ctx: dict) -> dict:
     if plan.competition:  # the AI competition already cross-challenged both drafts
         return plan.challenger
     payload = {"draft": plan.draft, "verified_claims": business.verified_claims or [],
-               "excluded_services": clients_service.excluded_services(business), "tracking_state": tracking_state,
+               "excluded_services": clients_service.excluded_services(business), "measurement": measurement_ctx,
                "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in
                                ("status", "expected_weekly_conversions", "weekly_target")}}
     parsed, run = ai_service.generate(db, "CHALLENGE", payload, task_id=plan.task_id, model_role="challenger")
@@ -135,7 +135,7 @@ def compare_human_plan(db: Session, plan: CampaignPlan, human_text: str, form_bu
             agreed.append(f"bidding: {human['bidding_strategy']}")
         else:
             diffs.append({"topic": "bidding_strategy", "human": human["bidding_strategy"], "ai": d.get("bidding_strategy"),
-                          "ai_reason": "Maximize Conversions is the V1 default when tracking is GREEN/YELLOW/UNKNOWN (never RED without an override)."})
+                          "ai_reason": "Maximize Conversions is the default; Maximize Clicks is used only when the account has no conversion action recording."})
     if "monthly_budget" in human and form_budget and abs(human["monthly_budget"] - form_budget) > 0.5:
         diffs.append({"topic": "monthly_budget", "human": human["monthly_budget"], "ai": form_budget,
                       "ai_reason": "The task form budget was used for feasibility."})

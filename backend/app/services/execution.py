@@ -265,7 +265,7 @@ def execute(db: Session, actor: User, approval_id: str) -> Operation:
                                 details={"reasons": ["parent operation not verified"]})
     business = db.get(Business, a.business_id) if a.business_id else None
     if business and payload.get("operations"):
-        v = validation.validate(db, payload, business, approval_id=a.id, run_adapter=True, deployment=True,
+        v = validation.validate(db, payload, business, approval_id=a.id, run_adapter=True,
                                 check_landing_pages=a.approval_type != "PAUSE")
         if not v.passed:
             a.status = "EXECUTION_BLOCKED"
