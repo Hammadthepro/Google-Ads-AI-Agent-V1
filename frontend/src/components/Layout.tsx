@@ -6,6 +6,7 @@ import { cx } from "./ui";
 
 const NAV: { to: string; label: string; icon: string }[] = [
   { to: "/", label: "Dashboard", icon: "◧" },
+  { to: "/agent", label: "Agent", icon: "✦" },
   { to: "/clients", label: "Clients", icon: "◎" },
   { to: "/businesses", label: "Businesses", icon: "▣" },
   { to: "/accounts", label: "Google Ads Accounts", icon: "◈" },

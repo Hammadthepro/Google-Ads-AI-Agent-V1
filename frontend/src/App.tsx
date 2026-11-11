@@ -1,4 +1,5 @@
 import { NewClient, EditClient } from "./pages/ClientForm";
+import { Agent } from "./pages/Agent";
 import { AuditReportPage } from "./pages/AuditReportPage";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Layout from "./components/Layout";
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<Protected><Layout /></Protected>}>
           <Route index element={<Dashboard />} />
+          <Route path="agent" element={<Agent />} />
           <Route path="clients" element={<Clients />} />
           <Route path="clients/new" element={<NewClient />} />
           <Route path="clients/:id" element={<ClientDetail />} />

@@ -86,6 +86,16 @@ class MockAIProvider(AIProvider):
         brand = (u.get("business_name") or "").split()
         return {"services": services, "service_areas": sorted(areas), "claims": claims[:12], "brand_words": brand[:3]}
 
+    def _h_agent_intent(self, u):
+        """Deterministic stand-in: picks the allowed intent whose label shares the most words with the request."""
+        words = set(re.findall(r"[a-z]+", u.get("request", "").lower()))
+        best, score = "", 0
+        for key, label in u.get("allowed_intents", {}).items():
+            sc = len(words & set(re.findall(r"[a-z]+", (label + " " + key.replace("_", " ")).lower())))
+            if sc > score:
+                best, score = key, sc
+        return {"intent": best, "reason": "word overlap"}
+
     def _h_label_keywords(self, u):
         out = []
         for kw in u.get("keywords", []):

@@ -84,7 +84,8 @@ export function ClientDetail() {
         {can("clients.edit") && <Link to={`/clients/${c.id}/edit`}><Button>Edit client information</Button></Link>}
         {c.automation_frozen && <Badge tone="red">automation frozen by emergency brake</Badge>}
         {c.automation_frozen && can("killswitch.client") && <Button size="sm" onClick={() => unfreeze.mutate({})}>Unfreeze automation</Button>}
-        <Link to={`/tasks?client=${c.id}`}><Button variant="primary">Run a task</Button></Link></>} />
+        <Link to={`/agent?client=${c.id}`}><Button variant="primary">Ask the agent</Button></Link>
+        <Link to={`/tasks?client=${c.id}`}><Button>Run a task</Button></Link></>} />
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="Contacts">
           <KV items={[["Owner", c.owner_contact || "—"], ["Backup", c.backup_contact || "—"], ["Website / tag access", c.tag_access_contact || "—"]]} />

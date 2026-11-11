@@ -194,18 +194,21 @@ def module_inputs(db: Session, biz: Business, client: Client, module: str) -> di
     comps = sorted((c.name, c.website_url) for c in biz.competitors)
     areas = [a.get("label") for a in (biz.service_areas or [])]
     acct = accounts_service.account_for_business(db, biz)
+    rep = _latest_report(db, biz)
+    rid = rep.id if rep else None  # a newer research report makes the modules built on it stale
+    feas = db.scalar(select(FeasibilityResult.id).where(FeasibilityResult.business_id == biz.id).order_by(FeasibilityResult.created_at.desc()))
     base = {
         "business_intelligence": {"name": biz.name, "category": biz.category, "services": svc, "excluded": excluded, "claims": sorted(biz.verified_claims or []),
-                                  "notes": biz.notes, "weekly": client.weekly_conversion_target, "budget": biz.monthly_budget_usd, "phone": biz.phone,
+                                  "notes": biz.notes, "weekly": client.weekly_conversion_target, "budget": biz.monthly_budget_usd, "phone": biz.phone, "report": rid,
                                   "email": biz.email, "form": biz.lead_form_url, "areas": areas},
         "website": {"website": biz.website_url, "form": biz.lead_form_url, "thanks": biz.thank_you_url, "services": svc,
-                    "pages": sorted((s.name, s.landing_page_url) for s in biz.services), "areas": areas},
-        "competitors": {"competitors": comps, "gbp": biz.gbp_url, "has_gbp": biz.has_gbp, "category": biz.category, "areas": areas, "ads_text": biz.competitor_ads_text},
-        "search_intent": {"services": svc, "areas": areas, "category": biz.category},
-        "keywords": {"services": svc, "excluded": excluded, "areas": areas, "website": biz.website_url, "competitors": comps},
+                    "pages": sorted((s.name, s.landing_page_url) for s in biz.services), "areas": areas, "report": rid},
+        "competitors": {"competitors": comps, "gbp": biz.gbp_url, "has_gbp": biz.has_gbp, "category": biz.category, "areas": areas, "ads_text": biz.competitor_ads_text, "report": rid},
+        "search_intent": {"services": svc, "areas": areas, "category": biz.category, "report": rid},
+        "keywords": {"services": svc, "excluded": excluded, "areas": areas, "website": biz.website_url, "competitors": comps, "report": rid},
         "geography": {"areas": areas, "states": sorted(biz.states or []), "mode": biz.targeting_mode, "radius": biz.default_radius_miles,
                       "hours": biz.business_hours, "excluded": excluded},
-        "finance": {"budget": biz.monthly_budget_usd, "weekly": client.weekly_conversion_target, "services": svc},
+        "finance": {"budget": biz.monthly_budget_usd, "weekly": client.weekly_conversion_target, "services": svc, "feasibility": feas},
         "tracking": {"website": biz.website_url, "thanks": biz.thank_you_url, "gtm": biz.gtm_id, "phone": biz.phone, "account": acct.id if acct else None},
         "account_policy": {"account": acct.id if acct else None, "customer": acct.customer_id if acct else None},
         "strategy": {"services": svc, "weekly": client.weekly_conversion_target},
@@ -849,11 +852,24 @@ def report(db: Session, biz: Business, client: Client) -> dict:
     return {"business_id": biz.id, "client_id": client.id, "client_code": client.client_code, "modules": mods, "stale_modules": sorted(stale, key=MODULE_KEYS.index),
             "decision": decision, "decision_label": DECISIONS.get(decision, "Not yet assessed"),
             "decision_reason": next((f["finding"] for f in strat["findings"] if f["category"] == "readiness_decision"), ""),
-            "account_linked": accounts_service.account_for_business(db, biz) is not None,
+            "account_linked": accounts_service.account_for_business(db, biz) is not None, "research": research_status(db, biz, client),
             "totals": {"checks_specified": spec_check_count(), "checks_evaluated": sum(m["checks_evaluated"] for m in mods)},
             "legend": {"origin": list(ORIGINS), "verification": list(VERIFICATION), "confidence": CONFIDENCE,
                        "note": "Confidence is categorical, set by how a finding was obtained (verified 0.9, client-provided 0.7, estimate/inference 0.5, assumption 0.3, unknown 0). It is not a statistical probability."},
             "reuse_note": "Unchanged modules are reused; editing an input marks only the affected module and the modules that depend on it as stale."}
+
+
+def research_status(db: Session, biz: Business, client: Client) -> dict:
+    """Is the external-research audit the modules are built on still current? (Used by the agent to decide whether to research again.)"""
+    from app.services import audit_report
+    rep = _latest_report(db, biz)
+    if rep is None:
+        return {"exists": False, "up_to_date": False, "reason": "No completed research yet"}
+    changed = rep.input_hash != audit_report._hash(audit_report.snapshot(biz, client))
+    when = rep.finished_at or rep.created_at
+    age = (clock.now() - when).days
+    return {"exists": True, "report_id": rep.id, "version": rep.version, "date": when.isoformat(), "age_days": age, "client_info_changed": changed,
+            "up_to_date": not changed, "reason": "Client information changed since this research" if changed else "Matches the client's current information"}
 
 
 def history(db: Session, biz: Business, module: str) -> list[dict]:

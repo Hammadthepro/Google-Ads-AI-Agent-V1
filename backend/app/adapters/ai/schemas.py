@@ -130,7 +130,13 @@ class TextSummary(Strict):
     highlights: list[str] = Field(default_factory=list)
 
 
+class AgentIntent(Strict):
+    intent: str = ""
+    reason: str = ""
+
+
 SCHEMAS = {
+    "AGENT_INTENT": AgentIntent,
     "EXTRACT_SERVICES": ServiceExtraction,
     "LABEL_KEYWORDS": KeywordLabels,
     "EXTRACT_COMPETITOR_ADS": CompetitorAdsExtraction,

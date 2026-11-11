@@ -3,3 +3,4 @@ from app.models.core import *  # noqa: F401,F403
 from app.models.monitoring import *  # noqa: F401,F403
 from app.models.workflow import *  # noqa: F401,F403
 from app.models.integrations import *  # noqa: F401,F403
+from app.models.agent import *  # noqa: F401,F403
