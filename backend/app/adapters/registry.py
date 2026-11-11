@@ -102,5 +102,15 @@ def get(name: str):
     return _overrides.get(name) or ALL[name]()
 
 
+def optional(name: str):
+    """The adapter, or None when its integration is not configured. For steps that only ANNOTATE (data source labels) or that can be
+    skipped honestly (Google's validate-only call, duplicate-name lookups); never for reading data a decision depends on."""
+    from app.core.errors import IntegrationNotConfigured
+    try:
+        return get(name)
+    except IntegrationNotConfigured:
+        return None
+
+
 def clear_overrides() -> None:
     _overrides.clear()

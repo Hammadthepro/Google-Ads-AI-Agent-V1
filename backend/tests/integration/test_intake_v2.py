@@ -171,3 +171,28 @@ def test_audit_only_still_needs_an_account():
     cid, bid = _fixture_client(api, "Audit No Account")
     r = api.post("/tasks?sync=true", {"task_type": "AUDIT_ONLY", "client_id": cid, "business_id": bid, "fields": {}})
     assert r.status_code == 422 and "No Google Ads account" in r.text
+
+
+def test_preparation_needs_neither_an_account_nor_the_google_ads_integration_and_records_the_intelligence_step(monkeypatch):
+    from app.adapters import registry
+    monkeypatch.delitem(registry._overrides, "google_ads")  # no test double: the real factory finds Google Ads not configured (restored afterwards)
+    assert registry.optional("google_ads") is None
+    api = Api(ADMIN)
+    cid, bid = _fixture_client(api, "No Integration Co", weekly_target=5)
+    r = api.post("/tasks?sync=true", {"task_type": "BUILD_CAMPAIGN", "client_id": cid, "business_id": bid, "fields": {}})
+    assert r.status_code == 200, r.text
+    task = r.json()
+    assert task["status"] == "AWAITING_APPROVAL", (task["status"], task["error"], [s for s in task["steps"] if s["status"] != "DONE"])
+    names = [s["name"] for s in task["steps"]]
+    assert names.index("Feasibility") < names.index("Intelligence record") < names.index("AI draft")
+    appr = api.get(f"/approvals/{task['approval_id']}").json()
+    assert appr["integration_mode"] == "NONE" and appr["source_type"] == "NONE" and appr["context"]["data_source"] == "NONE"
+    assert appr["context"]["intelligence"]["available"] is True and appr["context"]["intelligence"]["account_linked"] is False
+    codes = {w["code"] for w in appr["validation"]["warnings"]}
+    assert {"DEPLOYMENT_ACCOUNT_MISSING", "GOOGLE_VALIDATION_SKIPPED"} <= codes  # said out loud, not hidden
+    assert any(x.startswith("Readiness:") for x in appr["risks"]) or appr["context"]["intelligence"]["decision"] == "ready"
+    # and it still cannot be deployed
+    approver = Api(SUPER)
+    approver.post(f"/approvals/{appr['id']}/approve", {"payload_hash": appr["payload_hash"]})
+    r = approver.post(f"/approvals/{appr['id']}/execute")
+    assert r.status_code in (423, 424)

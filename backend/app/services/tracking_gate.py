@@ -43,11 +43,13 @@ def effective_state(db: Session, business_id: str) -> str:
 
 
 def evaluate(db: Session, business: Business, actor: User | None = None) -> TrackingGateResult:
-    ads = registry.get("google_ads")
+    ads = registry.optional("google_ads")
     account = accounts_service.account_for_business(db, business)
+    if ads is None:  # Google Ads integration not configured: nothing can be read from Google, exactly as with no linked account
+        account = None
     host = (urlparse(business.website_url).hostname or "").lower()
     checks: list[dict] = []
-    source = ads.source
+    source = ads.source if ads else "NONE"
     if not account:
         # Not critical: a campaign can be prepared without an account. Without one the tracking can never be VERIFIED (so never GREEN),
         # and deployment requires an account anyway.

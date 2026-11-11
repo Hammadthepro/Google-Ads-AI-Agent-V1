@@ -34,6 +34,7 @@ def create(db: Session, *, client_id: str, approval_type: str, title: str, paylo
     if approval_type not in TYPES:
         raise ValidationFailed(f"Unknown approval type {approval_type}")
     hours = float(settings_service.get_value("approvals.expiry_hours", 72, db))
+    ads = registry.optional("google_ads")  # preparation does not need the Google Ads integration; execution does
     a = Approval(client_id=client_id, business_id=business_id, google_ads_account_id=account_id, task_id=task_id,
                  approval_type=approval_type, title=title, payload=payload, payload_version=version,
                  payload_hash=payload_hash(payload), current_state=current_state or {}, proposed_state=proposed_state or {},
@@ -45,8 +46,8 @@ def create(db: Session, *, client_id: str, approval_type: str, title: str, paylo
                  status="PENDING_APPROVAL" if (validation is None or validation.passed) else "VALIDATION_FAILED",
                  expires_at=clock.now() + timedelta(hours=hours), parent_operation_id=parent_operation_id,
                  supersedes_id=supersedes_id,
-                 integration_mode="REAL" if registry.get("google_ads").is_real else "MOCK",
-                 source_type=registry.get("google_ads").source)
+                 integration_mode=("REAL" if ads.is_real else "MOCK") if ads else "NONE",
+                 source_type=ads.source if ads else "NONE")
     db.add(a)
     db.flush()
     if validation:

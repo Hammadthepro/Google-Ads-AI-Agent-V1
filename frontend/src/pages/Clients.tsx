@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction, useClients } from "../lib/hooks";
+import { IntelligencePanel } from "../components/IntelligencePanel";
 import { Badge, Button, Card, dt, ErrorBox, Field, Input, KV, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
 
 export function Clients() {
@@ -92,7 +93,7 @@ export function ClientDetail() {
           <p className="mb-3 text-xs text-slate-500">Client-level target for all campaigns combined. Weekly reports compare against this and against each campaign's own target.</p>
           <div className="grid gap-3">
             <Field label="Weekly conversion target (leads)"><Input type="number" disabled={!can("clients.edit")} value={tg.weekly ?? String(c.weekly_conversion_target ?? 0)} onChange={(e) => setTg({ ...tg, weekly: e.target.value })} /></Field>
-            <Field label="Agreed monthly ad budget ($)"><Input type="number" disabled={!can("clients.edit")} value={tg.budget ?? String(c.monthly_budget_usd ?? 0)} onChange={(e) => setTg({ ...tg, budget: e.target.value })} /></Field>
+            <Field label="Agreed monthly ad budget ($)" hint="Optional: leave 0 to use the recommended budget"><Input type="number" disabled={!can("clients.edit")} value={tg.budget ?? String(c.monthly_budget_usd ?? 0)} onChange={(e) => setTg({ ...tg, budget: e.target.value })} /></Field>
           </div>
           {can("clients.edit") && (
             <div className="mt-3 flex items-center gap-3">
@@ -116,6 +117,7 @@ export function ClientDetail() {
           { key: "tracking", label: "Tracking", render: (x) => <StatusBadge value={c.tracking[x.id]?.effective_state} /> },
         ]} />
       </Card>
+      <IntelligencePanel clientId={c.id} canRun={can("audits.run")} />
       <AuditReports clientId={c.id} canRun={can("audits.run")} highlight={params.get("report")} />
       <Card title="Campaign structure" actions={structure.data && <Badge tone="violet">{structure.data.source} DATA</Badge>}>
         {structure.isLoading ? <Spinner /> : (

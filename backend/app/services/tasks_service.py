@@ -102,7 +102,7 @@ def create(db: Session, actor: User, data: dict) -> Task:
                                details={"intake": report})
     t = Task(client_id=client.id, business_id=b.id, task_type=ttype, intake=report, campaign_id=campaign_id, ad_group_id=ad_group_id,
              ad_id=ad_id, fields=fields, human_plan=data.get("human_plan") or "", note=data.get("note") or "",
-             created_by_id=actor.id, status="QUEUED", source_type=registry.get("google_ads").source)
+             created_by_id=actor.id, status="QUEUED", source_type=(registry.optional("google_ads").source if registry.optional("google_ads") else "NONE"))
     db.add(t)
     db.flush()
     activity.log(db, "task.created", actor=actor, entity="task", entity_id=t.id, client_id=client.id,
@@ -263,7 +263,7 @@ class Runner:
                             keyword_rows=self.ctx.get("keywords", {}).get("keywords", []),
                             audits={"gbp": a.get("gbp"), "website": a.get("website")}, account_history=history,
                             task_id=self.task.id, campaign_id=self.campaign.id if self.campaign else None,
-                            source_type=registry.get("google_ads").source)
+                            source_type=(registry.optional("google_ads").source if registry.optional("google_ads") else "NONE"))
         dec = (self.task.fields or {}).get("budget_decision")
         if dec:
             from datetime import datetime, timezone
@@ -294,6 +294,21 @@ class Runner:
             raise Stop("AWAITING_BUDGET_DECISION", "The target is unrealistic for this budget (estimate). A team member must choose: "
                        "accept the recommended budget, adjust budget/target, or keep the current numbers. " + msg)
         return msg
+
+    def s_intelligence(self):
+        """Bring the persistent ten-module record up to date from what this task just learned (stale modules only; valid ones are reused)
+        and attach the readiness decision to the approval. Never stops the task: an unavailable record is reported, not hidden."""
+        from app.services import intelligence_service
+        try:
+            with self.db.begin_nested():
+                out = intelligence_service.refresh(self.db, self.business, self.client, self.task.created_by_id)
+                rep = intelligence_service.report(self.db, self.business, self.client)
+        except Exception as exc:  # noqa: BLE001
+            self.ctx["intelligence"] = {"available": False, "error": f"{type(exc).__name__}"}
+            return f"Intelligence record not updated ({type(exc).__name__})"
+        self.ctx["intelligence"] = {"available": True, "decision": rep["decision"], "label": rep["decision_label"], "reason": rep["decision_reason"],
+                                    "stale_modules": rep["stale_modules"], "account_linked": rep["account_linked"]}
+        return f"{rep['decision_label']} (ran {len(out['ran'])}, reused {len(out['reused'])} module(s))"
 
     def _tracking_state(self) -> tuple[str, bool]:
         r = self.ctx.get("tracking") or tracking_gate.latest(self.db, self.business.id)
@@ -457,6 +472,9 @@ class Runner:
             FixTrackerItem.business_id == self.business.id, FixTrackerItem.status != "RESOLVED"))]
         requires_super = any(w["code"] == "BUDGET_THRESHOLD" for w in v.warnings)
         risks = [w["message"] for w in v.warnings]
+        intel_ctx = self.ctx.get("intelligence") or {}
+        if intel_ctx.get("available") and intel_ctx.get("decision") not in ("ready", None):
+            risks.append(f"Readiness: {intel_ctx['label']}. {intel_ctx['reason'][:300]}")
         if plan and plan.challenger:
             risks += [o["message"] for o in plan.challenger.get("objections", []) if o["severity"] == "HIGH"]
         expected = ""
@@ -486,8 +504,8 @@ class Runner:
                                          "overlaps": (self.ctx.get("keywords") or {}).get("overlaps", [])[:10]},
                      "draft": plan.draft if plan else None, "challenger": plan.challenger if plan else None,
                      "human_comparison": plan.human_comparison if plan else None, "plan_id": plan.id if plan else None,
-                     "requires_super_admin": requires_super,
-                     "data_source": registry.get("google_ads").source})
+                     "requires_super_admin": requires_super, "intelligence": self.ctx.get("intelligence"),
+                     "data_source": (registry.optional("google_ads").source if registry.optional("google_ads") else "NONE")})
         self.task.approval_id = a.id
         if plan:
             plan.status = "SUBMITTED"
@@ -506,8 +524,8 @@ class Runner:
         self.task.steps = []
         self.db.commit()
         flows = {
-            "BUILD_CAMPAIGN": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "draft", "challenge", "human", "validate", "approval"],
-            "ADD_AD_GROUP": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "draft", "challenge", "human", "validate", "approval"],
+            "BUILD_CAMPAIGN": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
+            "ADD_AD_GROUP": ["load", "tracking", "audits", "keywords", "overlap", "feasibility", "intelligence", "draft", "challenge", "human", "validate", "approval"],
             "ADD_AD": ["load", "audits", "draft", "challenge", "validate", "approval"],
             "ADD_KEYWORDS": ["load", "tracking", "keywords", "overlap", "validate", "approval"],
             "EDIT_AD": ["load", "draft", "challenge", "validate", "approval"],
@@ -518,7 +536,7 @@ class Runner:
             "AUDIT_ONLY": ["load", "tracking", "account_audit"],
         }
         names = {"load": "Load account", "tracking": "Conversion tracking gate", "audits": "Audits (website, GBP, competitors)",
-                 "keywords": "Keyword research", "overlap": "Overlap check", "feasibility": "Feasibility",
+                 "intelligence": "Intelligence record", "keywords": "Keyword research", "overlap": "Overlap check", "feasibility": "Feasibility",
                  "draft": "AI draft", "challenge": "AI challenger", "human": "Human plan comparison",
                  "validate": "Validation", "approval": "Approval request", "account_audit": "Read-only account audit (90 days)"}
         try:

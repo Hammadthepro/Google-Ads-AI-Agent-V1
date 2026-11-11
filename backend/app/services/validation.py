@@ -166,9 +166,14 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
             if not res["ok"]:
                 errors.append(_err("LANDING_PAGE", f"Landing page {url} is not available ({res['status'] or res['error']})", url))
     # duplicate campaign / ad group names in the account
-    ads = registry.get("google_ads")
+    ads = registry.optional("google_ads")  # None: integration not configured -> Google-side checks are skipped and said so
+    if ads is None and kind in ("BUILD_CAMPAIGN", "ADD_AD_GROUP"):
+        warnings.append(_err("GOOGLE_VALIDATION_SKIPPED", "The Google Ads integration is not configured, so Google's own validation was not run. "
+                             "This draft was validated locally only.", severity="warning"))
+    elif ads is None:
+        errors.append(_err("REQUIRED", "The Google Ads integration is not configured"))
     try:
-        existing_names = {c.get("name") for c in ads.list_campaigns(payload.get("customer_id", ""))} if payload.get("customer_id") else set()
+        existing_names = {c.get("name") for c in ads.list_campaigns(payload.get("customer_id", ""))} if (ads and payload.get("customer_id")) else set()
     except AdapterError:
         existing_names = set()
     for op in ops:
@@ -196,7 +201,7 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
                                  severity="warning"))
     # Google-side validate-only (validate_only=true asks Google to validate and creates nothing)
     adapter_result: dict = {}
-    if run_adapter and ops and not errors and not unbound_draft:
+    if run_adapter and ops and not errors and not unbound_draft and ads is not None:
         try:
             adapter_result = ads.mutate(payload["customer_id"], ops, validate_only=True)
         except AdapterError as exc:

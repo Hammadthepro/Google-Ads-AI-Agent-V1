@@ -137,8 +137,13 @@ def audit_client(biz: Business, client: Client, ctx: dict, kw: dict, website: di
           source=src, needs="client", sim=False)
     c.add("objective", "A. Business understanding", "Primary business objective", "PASS", "VERIFIED",
           "Lead generation (calls and form leads) — fixed for Google Search campaigns in this app.", source="App configuration", sim=False)
-    c.add("budget", "A. Business understanding", "Monthly advertising budget provided", "PASS" if biz.monthly_budget_usd > 0 else "FAIL", "VERIFIED",
-          f"${biz.monthly_budget_usd:,.0f}/month" if biz.monthly_budget_usd else "No budget.", source=src, weight=3, rec="Set a monthly budget.")
+    if biz.monthly_budget_usd > 0:
+        c.add("budget", "A. Business understanding", "Monthly advertising budget provided", "PASS", "VERIFIED", f"${biz.monthly_budget_usd:,.0f}/month (client-supplied)",
+              source=src, weight=1)
+    else:  # no longer asked for at intake: the analysis recommends one from evidence, so its absence is not a defect
+        c.add("budget", "A. Business understanding", "Monthly advertising budget", "INFO", "VERIFIED",
+              "Not supplied. A daily and monthly budget is recommended from the financial feasibility analysis (cost per click, conversion rate, target).",
+              source=src, weight=1)
     c.add("conversion_path", "A. Business understanding", "Lead handling path (phone and/or form) defined",
           "PASS" if biz.phone and (biz.lead_form_url or biz.email) else "WARN" if biz.phone or biz.lead_form_url else "FAIL", "VERIFIED",
           f"Phone: {biz.phone or '—'} · Lead form: {biz.lead_form_url or '—'} · Email: {biz.email or '—'}", source=src, weight=3,

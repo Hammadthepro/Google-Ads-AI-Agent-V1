@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, require
 from app.core.errors import NotFound, ValidationFailed
 from app.db.session import get_db
-from app.models import AuditReport, Business, User
+from app.models import AuditReport, Business, Client, User
 from app.services import activity, audit_report, auth_service, client_profile, clients_service
 
 router = APIRouter(tags=["client profiles"])
@@ -100,3 +100,39 @@ def keywords_csv(report_id: str, user: User = Depends(require("clients.view")), 
         raise ValidationFailed("The report is not finished yet")
     return PlainTextResponse(audit_report.keyword_csv(r), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="keywords-{r.client_id[:8]}-v{r.version}.csv"'})
+
+
+# ------------------------------------------------------------------------------------------ ten-module intelligence record
+class IntelligenceIn(BaseModel):
+    modules: list[str] | None = None   # re-run these stages (and the stages that depend on them); omit to bring everything up to date
+    force: bool = False                # re-evaluate even unchanged modules
+    research: bool = False             # also run the external-research audit if none exists yet (contacts external services)
+    business_id: str | None = None
+
+
+@router.get("/clients/{client_id}/intelligence")
+def intelligence(client_id: str, business_id: str | None = None, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The persistent ten-module record for the client: statuses, findings with provenance, stale stages, and the readiness decision."""
+    from app.services import intelligence_service
+    biz = _business(db, user, client_id, business_id)
+    return intelligence_service.report(db, biz, db.get(Client, client_id))
+
+
+@router.post("/clients/{client_id}/intelligence/refresh")
+def intelligence_refresh(client_id: str, body: IntelligenceIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Resume / re-run. Reuses valid modules; re-evaluates only stale ones unless modules/force are given. Writes only the intelligence record."""
+    from app.services import intelligence_service
+    auth_service.require(user, "audits.run")
+    biz = _business(db, user, client_id, body.business_id)
+    client = db.get(Client, client_id)
+    out = intelligence_service.refresh(db, biz, client, user.id, modules=body.modules, force=body.force, research=body.research)
+    activity.log(db, "intelligence.refreshed", actor=user, entity="business", entity_id=biz.id, client_id=client.id,
+                 details={"ran": out["ran"], "reused": out["reused"], "forced": body.force})
+    db.commit()
+    return {**out, "report": intelligence_service.report(db, biz, client)}
+
+
+@router.get("/clients/{client_id}/intelligence/{module}/history")
+def intelligence_history(client_id: str, module: str, business_id: str | None = None, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    from app.services import intelligence_service
+    return intelligence_service.history(db, _business(db, user, client_id, business_id), module)
