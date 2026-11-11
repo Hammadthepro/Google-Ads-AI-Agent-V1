@@ -1,7 +1,9 @@
 """API & Account Integrations: credential cards, real connection tests, Google OAuth, operating mode, health."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from urllib.parse import quote
+
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,6 +17,15 @@ from app.services import activity, integrations_service as svc
 router = APIRouter(tags=["integrations"])
 
 
+def _origin(request: Request) -> str:
+    """The address the browser is using (sent by browsers on POST/fetch); only used when GOOGLE_ADS_REDIRECT_URI is blank."""
+    origin = request.headers.get("origin", "")
+    if not origin:
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+        origin = f"{request.headers.get('x-forwarded-proto') or request.url.scheme}://{host}" if host else ""
+    return origin
+
+
 def _provider(name: str) -> str:
     if name not in svc.PROVIDERS:
         raise NotFound("Unknown integration")
@@ -22,9 +33,10 @@ def _provider(name: str) -> str:
 
 
 @router.get("/integrations")
-def list_integrations(user: User = Depends(require("reports.view")), db: Session = Depends(get_db)):
+def list_integrations(request: Request, user: User = Depends(require("reports.view")), db: Session = Depends(get_db)):
+    uri, source = svc.oauth_redirect_uri(_origin(request))
     return {"integrations": [svc.serialize(db, p) for p in svc.PROVIDERS], "mode": svc.mode_summary(db),
-            "redirect_uri": svc.oauth_redirect_uri()}
+            "redirect_uri": uri, "redirect_uri_source": source}
 
 
 @router.get("/integrations/health")
@@ -66,9 +78,10 @@ class GoogleStart(BaseModel):
 
 
 @router.post("/integrations/google/start")
-def google_start(body: GoogleStart, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
-    out = svc.oauth_start(db, body.providers, user.id)
-    activity.log(db, "integrations.oauth_started", actor=user, entity="integration", entity_id=",".join(body.providers))
+def google_start(body: GoogleStart, request: Request, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    out = svc.oauth_start(db, body.providers, user.id, origin=_origin(request))
+    activity.log(db, "integrations.oauth_started", actor=user, entity="integration", entity_id=",".join(body.providers),
+                 details={"redirect_uri": out["redirect_uri"], "redirect_uri_source": out["redirect_uri_source"]})  # never the state, challenge or URL
     db.commit()
     return out
 
@@ -77,8 +90,12 @@ def google_start(body: GoogleStart, user: User = Depends(require("integrations.m
 def google_callback(state: str = "", code: str = "", error: str = "", user: User = Depends(require("integrations.manage")),
                     db: Session = Depends(get_db)):
     if error or not code:
-        return RedirectResponse(f"/integrations?oauth=failed&reason={error or 'no_code'}")
-    out = svc.oauth_callback(db, state, code, user.id)
+        return RedirectResponse("/integrations?oauth=failed&reason=" + quote((error or "no_code")[:80]))
+    try:
+        out = svc.oauth_callback(db, state, code, user.id)
+    except ValidationFailed as exc:  # show the Integrations page with a reason, not a bare JSON error; the code/state are never logged
+        db.commit()  # keeps the single-use mark on the state
+        return RedirectResponse("/integrations?oauth=failed&reason=" + quote(str(exc.message)[:160]))
     activity.log(db, "integrations.oauth_connected", actor=user, entity="integration", entity_id=",".join(out["saved"]),
                  details={"scopes": out["granted_scopes"]})
     db.commit()

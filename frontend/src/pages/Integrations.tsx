@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/hooks";
+import { checkAuthorizationUrl } from "../lib/oauth";
 import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, Stat, Textarea } from "../components/ui";
 
 const MODES: { value: string; label: string; text: string }[] = [
@@ -213,6 +214,7 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<"" | "disconnect" | "enable" | "disable">("");
+  const [oauthProblem, setOauthProblem] = useState("");
   const save = useAction(() => api.put(`/integrations/${item.provider}`, { settings, secrets }), inv);
   const test = useAction((target: string) => api.post(`/integrations/${item.provider}/test?target=${target}`), inv);
   const enable = useAction((enabled: boolean) => api.post(`/integrations/${item.provider}/enable`, { enabled }), inv);
@@ -290,13 +292,14 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
           {hasFields && !unsaved && save.isSuccess && <span className="text-xs text-emerald-700">Saved. Run Test Connection to verify.</span>}
           {pickable && <Button disabled={opts.isFetching} onClick={() => setDiscover(true)}>{opts.isFetching ? "Discovering…" : item.provider === "claude" ? "Load models" : item.provider === "ga4" ? "Discover properties" : "Discover accounts & locations"}</Button>}
           {testable && <Button variant="primary" disabled={test.isPending} onClick={() => test.mutate("all")}>{test.isPending ? "Testing…" : "Test Connection"}</Button>}
-          {item.oauth && <Button disabled={oauth.isPending} title="Opens Google's consent screen" onClick={() => oauth.mutate({}, { onSuccess: (r: any) => { window.location.href = r.authorization_url; } })}>Connect with Google</Button>}
+          {item.oauth && <Button disabled={oauth.isPending} title="Opens Google's consent screen" onClick={() => { setOauthProblem(""); oauth.mutate({}, { onSuccess: (r: any) => { const c = checkAuthorizationUrl(r?.authorization_url); if (c.ok) window.location.assign(c.url); else setOauthProblem(c.reason); } }); }}>Connect with Google</Button>}
           {!item.readonly && d.label === "Connected" && !item.enabled && <Button onClick={() => setConfirm("enable")}>Enable in app</Button>}
           {!item.readonly && item.enabled && <Button onClick={() => setConfirm("disable")}>Disable</Button>}
           {!item.readonly && (item.status !== "NOT_CONNECTED" || Object.values(item.secrets).some((s: any) => s.saved && s.source === "saved")) && <Button variant="ghost" onClick={() => setConfirm("disconnect")}>Disconnect</Button>}
         </div>
       )}
       <div className="mt-2"><ErrorBox error={err || opts.error} /></div>
+      {oauthProblem && <div className="mt-2"><Notice tone="red"><b>Google sign-in was not started.</b> {oauthProblem} Nothing was sent to Google.</Notice></div>}
       {opts.data && !opts.data.ok && opts.data.error && <div className="mt-2"><Notice tone="amber"><b>{opts.data.error.step}:</b> {opts.data.error.detail} {opts.data.error.hint}</Notice></div>}
       {open && item.provider === "smtp" && canManage && <SmtpTestEmail />}
       {open && <StepList steps={steps} />}
@@ -396,7 +399,7 @@ export default function Integrations() {
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
-        ? <Notice tone="blue">Google OAuth redirect URI to register in your Google Cloud OAuth client: <code>{q.data.redirect_uri}</code></Notice>
+        ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code>{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
       {[["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]].map(([g, title]) => {
         const list = items.filter((i) => i.group === g);

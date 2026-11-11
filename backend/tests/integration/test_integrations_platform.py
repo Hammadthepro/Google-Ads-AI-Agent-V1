@@ -300,7 +300,7 @@ def test_ga4_and_groq_and_claude_steps():
 
 def test_oauth_state_is_single_use_user_bound_and_pkce():
     with session_scope() as db:
-        svc.save(db, "google_ads", settings={"client_id": "cid"}, secrets={"client_secret": "csecret"}, user_id=None)
+        svc.save(db, "google_ads", settings={"client_id": "1-cid.apps.googleusercontent.com"}, secrets={"client_secret": "csecret"}, user_id=None)
         out = svc.oauth_start(db, ["google_ads", "ga4"], "user1")
         url = out["authorization_url"]
         assert "code_challenge_method=S256" in url and "access_type=offline" in url and "csecret" not in url

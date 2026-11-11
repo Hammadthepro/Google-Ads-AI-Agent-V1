@@ -1233,15 +1233,53 @@ def set_enabled(db: Session, provider: str, enabled: bool, user_id: str | None) 
 
 
 # --------------------------------------------------------------------------------------------- OAuth
-def oauth_redirect_uri() -> str:
-    s = get_settings()
-    return s.GOOGLE_ADS_REDIRECT_URI or "http://localhost:5173/api/v1/integrations/google/callback"
+LOCAL_REDIRECT = "http://localhost:5173/api/v1/integrations/google/callback"
+CALLBACK_PATH = "/api/v1/integrations/google/callback"
+AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 
 
-def oauth_start(db: Session, providers: list[str], user_id: str) -> dict:
+def oauth_redirect_uri(origin: str = "") -> tuple[str, str]:
+    """(redirect_uri, source). GOOGLE_ADS_REDIRECT_URI always wins. If it is blank, the address the browser is actually using (Origin) is
+    used, so a Codespaces/forwarded URL works without editing .env; localhost is the last resort. The URI must be registered in the OAuth client."""
+    configured = (get_settings().GOOGLE_ADS_REDIRECT_URI or "").strip()
+    if configured:
+        return configured, "environment (GOOGLE_ADS_REDIRECT_URI)"
+    m = re.match(r"^(https?)://([^\s/?#:]+)(:\d+)?$", origin or "")
+    if m and (m.group(1) == "https" or m.group(2) in ("localhost", "127.0.0.1")):  # Google rejects plain-http redirect URIs for any other host
+        return origin.rstrip("/") + CALLBACK_PATH, "the address of this page"
+    return LOCAL_REDIRECT, "default (localhost)"
+
+
+def validate_redirect_uri(uri: str) -> str:
+    from urllib.parse import urlsplit
+    p = urlsplit(uri)
+    if p.scheme not in ("http", "https") or not p.netloc or re.search(r"\s", uri) or p.fragment or p.query:
+        raise ValidationFailed("GOOGLE_ADS_REDIRECT_URI must be one absolute http(s) URL without spaces, query or fragment, e.g. "
+                               "https://your-host" + CALLBACK_PATH)
+    if p.scheme == "http" and p.hostname not in ("localhost", "127.0.0.1"):
+        raise ValidationFailed("Google only accepts http redirect URIs for localhost; use https for any other host")
+    return uri
+
+
+def build_authorization_url(*, client_id: str, redirect_uri: str, scopes: list[str], state: str, code_challenge: str) -> str:
+    """The Google authorization request. Built with urlencode (every value percent-encoded) and then PARSED BACK and checked, so a request that
+    is missing response_type=code, client_id, redirect_uri, scope, state or access_type=offline can never be sent to Google."""
+    from urllib.parse import parse_qs, urlencode, urlsplit
+    if not client_id.endswith(".apps.googleusercontent.com"):
+        raise ValidationFailed("The OAuth client ID must end with .apps.googleusercontent.com")
+    params = {"client_id": client_id, "redirect_uri": validate_redirect_uri(redirect_uri), "response_type": "code", "scope": " ".join(scopes),
+              "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": code_challenge,
+              "code_challenge_method": "S256", "include_granted_scopes": "true"}
+    url = AUTH_ENDPOINT + "?" + urlencode(params)
+    got = {k: v[0] for k, v in parse_qs(urlsplit(url).query, keep_blank_values=True).items()}
+    if got != params or got.get("response_type") != "code" or got.get("access_type") != "offline" or not all(got.get(k) for k in ("client_id", "redirect_uri", "scope", "state")):
+        raise ValidationFailed("The Google authorization request could not be built correctly; nothing was sent")
+    return url
+
+
+def oauth_start(db: Session, providers: list[str], user_id: str, *, origin: str = "") -> dict:
     import hashlib
     import secrets
-    from urllib.parse import urlencode
 
     from app.adapters.ads_oauth import new_pkce
     from app.models import OAuthState
@@ -1252,17 +1290,15 @@ def oauth_start(db: Session, providers: list[str], user_id: str) -> dict:
     if not ads.get("client_id") or not ads.get("client_secret"):
         raise ValidationFailed("Save the OAuth client ID and secret on the Google Ads card first")
     scopes = sorted({sc for p in providers for sc in GOOGLE_SCOPES[p]} | {"openid", "email"})
+    redirect_uri, source = oauth_redirect_uri(origin)
     verifier, challenge = new_pkce()
     state = secrets.token_urlsafe(32)
+    url = build_authorization_url(client_id=ads["client_id"], redirect_uri=redirect_uri, scopes=scopes, state=state, code_challenge=challenge)
     db.add(OAuthState(state_hash=hashlib.sha256(state.encode()).hexdigest(), provider=",".join(providers),
-                      verifier_ciphertext=encrypt_token(verifier), user_id=user_id, redirect_uri=oauth_redirect_uri(),
+                      verifier_ciphertext=encrypt_token(verifier), user_id=user_id, redirect_uri=redirect_uri,
                       expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)))
     db.flush()
-    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
-        "client_id": ads["client_id"], "redirect_uri": oauth_redirect_uri(), "response_type": "code", "scope": " ".join(scopes),
-        "access_type": "offline", "prompt": "consent", "state": state, "code_challenge": challenge,
-        "code_challenge_method": "S256", "include_granted_scopes": "true"})
-    return {"authorization_url": url, "redirect_uri": oauth_redirect_uri(), "scopes": scopes}
+    return {"authorization_url": url, "redirect_uri": redirect_uri, "redirect_uri_source": source, "scopes": scopes}
 
 
 def oauth_callback(db: Session, state: str, code: str, user_id: str, *, http: httpx.Client | None = None) -> dict:
