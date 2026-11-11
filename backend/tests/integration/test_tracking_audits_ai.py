@@ -22,7 +22,7 @@ def test_tracking_green_amber_red():
     assert plumb["state"] == "GREEN" and plumb["automation_allowed"] is True
     assert any("proves installation" in c["evidence"] for c in plumb["checks"] if c["key"] == "google_tag")
     hvac = admin.post(f"/businesses/{_biz(admin, 'Northside Heating & Air')['id']}/tracking-gate/run").json()
-    assert hvac["state"] == "AMBER" and hvac["automation_allowed"] is False
+    assert hvac["state"] == "YELLOW" and hvac["automation_allowed"] is False
     assert {c["key"] for c in hvac["checks"] if c["status"] != "PASS"} >= {"call_min_length", "recorded_conversions"}
     dental = admin.post(f"/businesses/{_biz(admin, 'Brightsmile Dental')['id']}/tracking-gate/run").json()
     assert dental["state"] == "RED"
@@ -43,9 +43,9 @@ def test_red_gate_blocks_build_and_admin_override_behaves_like_amber():
     assert admin.post(f"/businesses/{dental['id']}/tracking-gate/override", {"reason": "short"}).status_code == 422
     r = admin.post(f"/businesses/{dental['id']}/tracking-gate/override",
                    {"reason": "Client launching anyway; tag fix scheduled with their web agency next week"})
-    assert r.status_code == 200 and r.json()["effective_state"] == "AMBER"
+    assert r.status_code == 200 and r.json()["effective_state"] == "YELLOW"
     gate = admin.get(f"/businesses/{dental['id']}/tracking-gate").json()
-    assert gate["state"] == "RED" and gate["effective_state"] == "AMBER" and gate["override_active"] and not gate["automation_allowed"]
+    assert gate["state"] == "RED" and gate["effective_state"] == "YELLOW" and gate["override_active"] and not gate["automation_allowed"]
     acts = admin.get("/activity?action=tracking_gate.override").json()
     assert acts and acts[0]["actor"] == ADMIN and "web agency" in acts[0]["details"]["reason"]
     r = mgr.post("/tasks?sync=true", {"task_type": "BUILD_CAMPAIGN", "client_id": dental["client_id"], "business_id": dental["id"],
@@ -128,7 +128,7 @@ def test_challenger_disagrees_with_bad_draft(db):
                           "ads": [{"headlines": ["Best Plumber in Town", "Guaranteed Fix", "Call Today"], "descriptions": ["a", "b"]}]},
                          {"name": "Drains 2", "service": "Drain Cleaning", "landing_page": "https://site.example/drain",
                           "keywords": [{"text": "drain cleaning", "match_type": "BROAD"}], "ads": []}]}
-    report, _ = ai_service.generate(db, "CHALLENGE", {"draft": bad, "verified_claims": [], "tracking_state": "AMBER",
+    report, _ = ai_service.generate(db, "CHALLENGE", {"draft": bad, "verified_claims": [], "tracking_state": "YELLOW",
                                                       "feasibility": {"status": "UNREALISTIC", "expected_weekly_conversions": 2, "weekly_target": 10}},
                                     model_role="challenger")
     cats = {o.category for o in report.objections}

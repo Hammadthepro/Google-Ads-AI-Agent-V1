@@ -45,3 +45,20 @@
 - Impact numbers are estimates; before/after is not causal proof.
 - The conversational AI is used only for tie-breaking intent; answers are not free-form generation.
 - Verified in a real browser (headless Chromium against a scratch copy of the seeded test database with test doubles). No live Google Ads calls were made.
+
+---
+
+# Conversion tracking gate (evidence-based states)
+
+| State | Meaning | Stops preparation? | Live deployment |
+|---|---|---|---|
+| GREEN | verified: nothing failed or unknown, leads recorded in Google Ads | no | allowed |
+| YELLOW | exists, configuration or verification incomplete | no (warning + list of what to verify) | needs GREEN or an admin authorisation |
+| RED | evidence CONFIRMS it is broken/misconfigured (a check that could be read failed) | yes | blocked |
+| UNKNOWN | cannot be assessed: no linked account, integration not configured, account unreadable, never assessed, or assessed before the current account link | no (warning) | blocked unless an admin authorises |
+
+- Missing evidence is never a negative finding: no account makes the account checks, the conversion-action checks and the tag check "unknown" (the AW- tag comes from the account's conversion action, so its absence is only a failure once an account exists). Recorded conversions prove the tag works whatever the crawl saw; Tag Manager without an AW- tag is a warning, not a failure.
+- Stored results are only trusted while current: rows from the old rules (no `assessable` flags) or taken under a different account link read as UNKNOWN ("reassess"), so a cached RED cannot leak. Linking or unlinking an account reassesses tracking at once.
+- The admin override (any state but GREEN, written reason, audited) is the explicit authorisation for deployment; it behaves like YELLOW and never enables conversion-based automation.
+- Deployment gate: `validation.validate(deployment=True)` on execution and a defence-in-depth check in `safety.check`. Account binding, approval, write protection and kill switches are unchanged.
+- Behaviour change to note: a new advertiser with no recorded leads is YELLOW and can no longer be deployed on an approval alone; it needs the audited admin authorisation until tracking is verified.

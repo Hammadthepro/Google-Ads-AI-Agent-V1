@@ -84,6 +84,11 @@ def test_e2e_new_client_to_paused_campaign_then_enable_requires_approval():
     # approve the exact version reviewed
     r = admin.post(f"/approvals/{appr['id']}/approve", {"payload_hash": appr["payload_hash"]})
     assert r.status_code == 200, r.text
+    # deployment needs VERIFIED tracking: a brand-new advertiser has no recorded leads yet (YELLOW), so it is blocked until an admin explicitly authorises it
+    r = admin.post(f"/approvals/{appr['id']}/execute")
+    assert r.status_code == 423 and "needs verified conversion tracking" in r.text, r.text
+    r = admin.post(f"/businesses/{business_id}/tracking-gate/override", {"reason": "New advertiser: no leads recorded yet; launching paused and verifying with a test lead"})
+    assert r.status_code == 200 and r.json()["effective_state"] == "YELLOW", r.text
     r = admin.post(f"/approvals/{appr['id']}/execute")
     assert r.status_code == 200, r.text
     op = r.json()

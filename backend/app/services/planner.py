@@ -135,7 +135,7 @@ def compare_human_plan(db: Session, plan: CampaignPlan, human_text: str, form_bu
             agreed.append(f"bidding: {human['bidding_strategy']}")
         else:
             diffs.append({"topic": "bidding_strategy", "human": human["bidding_strategy"], "ai": d.get("bidding_strategy"),
-                          "ai_reason": "Maximize Conversions is the V1 default when tracking is GREEN/AMBER."})
+                          "ai_reason": "Maximize Conversions is the V1 default when tracking is GREEN/YELLOW/UNKNOWN (never RED without an override)."})
     if "monthly_budget" in human and form_budget and abs(human["monthly_budget"] - form_budget) > 0.5:
         diffs.append({"topic": "monthly_budget", "human": human["monthly_budget"], "ai": form_budget,
                       "ai_reason": "The task form budget was used for feasibility."})

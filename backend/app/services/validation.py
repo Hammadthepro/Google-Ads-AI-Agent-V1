@@ -46,7 +46,7 @@ def claim_violations(text: str, verified: list[str]) -> list[str]:
 
 def validate(db: Session, payload: dict, business: Business, *, existing_keywords: dict[str, list[str]] | None = None,
              task_id: str | None = None, approval_id: str | None = None, check_landing_pages: bool = True,
-             run_adapter: bool = True, budget_context: dict | None = None) -> ValidationRun:
+             run_adapter: bool = True, budget_context: dict | None = None, deployment: bool = False) -> ValidationRun:
     errors, warnings = [], []
     ops = payload.get("operations", [])
     kind = payload.get("kind", "")
@@ -180,15 +180,24 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
         if op.get("resource") == "campaign" and op.get("op") == "create" and (op.get("fields") or {}).get("name") in existing_names:
             errors.append(_err("DUPLICATE_RESOURCE", f"A campaign named '{op['fields']['name']}' already exists"))
     # tracking state
-    state = tracking_gate.effective_state(db, business.id)
-    latest = tracking_gate.latest(db, business.id)
+    # Two different gates on the same state. PREPARATION (drafting, local validation, creating an approval request) is stopped only by
+    # CONFIRMED broken tracking (RED); UNKNOWN / YELLOW are warnings that list what is still to be verified. DEPLOYMENT (execution
+    # re-validates with deployment=True) is strict: verified tracking (GREEN) or an explicit, audited admin override.
+    a = tracking_gate.assessment(db, business.id)
+    state, res = a["effective_state"], a["result"]
+    todo = "; ".join(o["what"] for o in tracking_gate.outstanding(res)[:4]) or a["reason"] or "run the tracking assessment"
     if kind in ("BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_KEYWORDS", "ENABLE"):
+        overridden = bool(res and res.override_active)
         if state == "RED":
-            errors.append(_err("TRACKING", "Tracking gate is RED — fix tracking or obtain an admin override"))
-        elif latest and latest.override_active:
-            warnings.append(_err("TRACKING", "Tracking override active: launch allowed, no conversion-based automation", severity="warning"))
-        elif state == "AMBER":
-            warnings.append(_err("TRACKING", "Tracking AMBER: launch requires approval; no conversion-based automation", severity="warning"))
+            errors.append(_err("TRACKING", "Tracking gate is RED (confirmed broken) — fix tracking or obtain an admin override"))
+        elif deployment and state != "GREEN" and not overridden:
+            errors.append(_err("TRACKING_NOT_VERIFIED", f"Live deployment needs verified conversion tracking (GREEN) or an explicit admin authorisation; tracking is {state}. Outstanding: {todo}"))
+        elif overridden:
+            warnings.append(_err("TRACKING", "Tracking override active: deployment authorised by an admin, no conversion-based automation", severity="warning"))
+        elif state == "UNKNOWN":
+            warnings.append(_err("TRACKING_UNKNOWN", f"Tracking cannot be assessed yet (UNKNOWN), so it is not a failure and does not stop drafting. Before deployment: {todo}", severity="warning"))
+        elif state == "YELLOW":
+            warnings.append(_err("TRACKING_YELLOW", f"Tracking YELLOW: configured but not fully verified; deployment will need verified tracking or an admin authorisation. Outstanding: {todo}", severity="warning"))
     # budget change thresholds
     if budget_context:
         cur, new = budget_context.get("current_monthly", 0), budget_context.get("new_monthly", 0)

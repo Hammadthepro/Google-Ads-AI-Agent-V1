@@ -48,7 +48,7 @@ def _week_rows(db, c: Campaign, start: date, end: date):
 
 def rule_causes(m: dict, tracking_state: str, missed_rate: float | None, open_fixes: int, cpc_benchmark: float | None, db) -> list[str]:
     causes = []
-    if tracking_state != "GREEN":
+    if tracking_state in ("RED", "YELLOW"):  # UNKNOWN is missing evidence, not a cause
         causes.append("TRACKING")
     if (m.get("budget_lost_is") or 0) > float(settings_service.get_value("monitoring.budget_limited_is", 0.2, db)):
         causes.append("BUDGET_LIMITED")
@@ -90,8 +90,8 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         m["cpc"] = round(cur["cost"] / cur["clicks"], 2) if cur["clicks"] else None
         m["cpl"] = round(cur["cost"] / cur["conversions"], 2) if cur["conversions"] else None
         b = db.get(Business, c.business_id) if c.business_id else None
-        state = tracking_gate.effective_state(db, b.id) if b else "RED"
-        gate = tracking_gate.latest(db, b.id) if b else None
+        state = tracking_gate.effective_state(db, b.id) if b else "UNKNOWN"
+        gate = tracking_gate.current_result(db, b) if b else None
         if gate and gate.override_active:
             warnings.append(f"{b.name}: tracking override active — conversion-based automation disabled")
         elif state != "GREEN" and b:

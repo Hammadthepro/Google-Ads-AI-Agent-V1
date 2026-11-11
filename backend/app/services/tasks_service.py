@@ -161,9 +161,14 @@ class Runner:
     def s_tracking(self):
         r = tracking_gate.evaluate(self.db, self.business, self.actor)
         self.ctx["tracking"] = r
-        msg = f"Tracking {r.state}" + (" (override active → treated as AMBER)" if r.override_active else "")
-        if r.effective_state == "RED" and self.task.task_type in GATED:
-            raise Stop("BLOCKED_TRACKING", msg + ". Fix list: " + "; ".join(f["fix"] for f in r.fix_list[:4]))
+        state, eff = tracking_gate.normalize(r.state), tracking_gate.normalize(r.effective_state)
+        todo = "; ".join(o["what"] for o in tracking_gate.outstanding(r)[:4])
+        msg = f"Tracking {state}" + (" (override active → treated as YELLOW)" if r.override_active else "")
+        if eff == "RED" and self.task.task_type in GATED:  # only CONFIRMED broken tracking stops preparation
+            raise Stop("BLOCKED_TRACKING", msg + " (confirmed by evidence). Fix list: " + "; ".join(f["fix"] for f in r.fix_list[:4]))
+        if eff in ("UNKNOWN", "YELLOW"):  # a warning, never a stop: preparation continues, deployment will need verified tracking
+            self.ctx["tracking_warning"] = todo
+            return msg + f" — preparation continues. Still to verify before deployment: {todo}"
         return msg
 
     def s_audits(self):
@@ -311,8 +316,8 @@ class Runner:
         return f"{rep['decision_label']} (ran {len(out['ran'])}, reused {len(out['reused'])} module(s))"
 
     def _tracking_state(self) -> tuple[str, bool]:
-        r = self.ctx.get("tracking") or tracking_gate.latest(self.db, self.business.id)
-        return (r.effective_state if r else "AMBER"), bool(r and r.override_active)
+        r = self.ctx.get("tracking") or tracking_gate.current_result(self.db, self.business)
+        return (tracking_gate.normalize(r.effective_state) if r else "UNKNOWN"), bool(r and r.override_active)
 
     def s_draft(self):
         state, override = self._tracking_state()
@@ -466,7 +471,7 @@ class Runner:
         v = self.ctx["validation"]
         plan = self.ctx.get("plan")
         f = self.ctx.get("feasibility") or {}
-        tr = tracking_gate.latest(self.db, self.business.id)
+        tr = tracking_gate.current_result(self.db, self.business)
         from app.models import FixTrackerItem
         open_fixes = [x.issue for x in self.db.scalars(select(FixTrackerItem).where(
             FixTrackerItem.business_id == self.business.id, FixTrackerItem.status != "RESOLVED"))]
@@ -486,7 +491,7 @@ class Runner:
         try:
             ex, _ = ai_service.generate(self.db, "EXPLAIN", {"headline": self.ctx["title"],
                                                              "facts": {**self.ctx["payload"].get("summary", {}),
-                                                                       "tracking": tr.effective_state if tr else "unknown",
+                                                                       "tracking": tracking_gate.normalize(tr.effective_state) if tr else "UNKNOWN",
                                                                        "feasibility": f.get("status")}}, task_id=self.task.id)
             explanation = ex.summary + (" — " + " | ".join(ex.highlights) if ex.highlights else "")
         except ai_service.AIOutputInvalid:
@@ -497,7 +502,7 @@ class Runner:
             account_id=self.account.id if self.account else None, task_id=self.task.id, current_state=self.ctx["current"],
             proposed_state=self.ctx["proposed"], reason=self.task.note or f"Requested via task {self.task.task_type}",
             expected_effect=expected, risks=risks, validation=v, ai_explanation=explanation,
-            context={"tracking": tracking_gate.serialize(tr), "feasibility": f, "open_client_fixes": open_fixes[:20],
+            context={"tracking": tracking_gate.serialize_for(self.db, self.business.id), "feasibility": f, "open_client_fixes": open_fixes[:20],
                      "research_summary": {k: (self.ctx.get("audits") or {}).get(k, {}).get("source") for k in ("website", "gbp", "competitor")},
                      "audit_ids": (self.ctx.get("audits") or {}).get("audit_ids"),
                      "keyword_summary": {"clusters": {k: len(v_) for k, v_ in (self.ctx.get("keywords") or {}).get("clusters", {}).items()},

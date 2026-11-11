@@ -391,7 +391,7 @@ class Ctx:
         self.db, self.biz, self.client, self.research, self.user_id = db, biz, client, research, user_id
         self.report = _latest_report(db, biz)
         self.account = accounts_service.account_for_business(db, biz)
-        self.tracking = tracking_gate.latest(db, biz.id)
+        self.tracking = tracking_gate.current_result(db, biz)  # None when never assessed or stale: never a cached verdict
         self.feas = db.scalar(select(FeasibilityResult).where(FeasibilityResult.business_id == biz.id).order_by(FeasibilityResult.created_at.desc()))
         from app.models import Audit
         aud = db.scalar(select(Audit).where(Audit.business_id == biz.id, Audit.audit_type == "KEYWORD", Audit.status == "COMPLETED").order_by(Audit.created_at.desc()))
@@ -708,8 +708,10 @@ def ev_tracking(ctx: Ctx, seq: _Seq) -> dict:
     if tr is None and ctx.research:  # the tracking audit reads the website (and the account when linked); only when research is requested
         tr = ctx.tracking = tracking_gate.evaluate(ctx.db, ctx.biz, None)
     if tr is None:
-        return _finish("tracking", ctx, seq, f, cov, [c["key"] for c in MODULES["tracking"]["checks"]],
-                       {c["key"]: "The tracking audit has not been run." for c in MODULES["tracking"]["checks"]}, status="NOT_STARTED")
+        a = tracking_gate.assessment(ctx.db, ctx.biz.id)
+        why = a["reason"] or "The tracking audit has not been run."
+        return _finish("tracking", ctx, seq, f, cov, [c["key"] for c in MODULES["tracking"]["checks"]], {c["key"]: why for c in MODULES["tracking"]["checks"]},
+                       status="NOT_STARTED", summary=f"Tracking is UNKNOWN: {why}")
     by = {c["key"]: c for c in tr.checks}
     KEYMAP = {"ads_conversion_tracking": ["form_conversion", "account_linked"], "google_tag": ["google_tag"], "google_tag_manager": ["gtm"], "form_submissions": ["form_conversion", "thank_you_page"],
               "phone_calls": ["call_conversion", "call_min_length"], "duplicate_conversions": ["duplicates", "counted_once"], "primary_conversions": ["form_conversion"]}
@@ -725,17 +727,28 @@ def ev_tracking(ctx: Ctx, seq: _Seq) -> dict:
         if items:
             cov[chk] = "evaluated"
     ladder = {"configured": any(c["status"] == "PASS" for k, c in by.items() if k == "form_conversion"), "detected": any(c["status"] == "PASS" for k, c in by.items() if k == "google_tag"),
-              "verified": tr.state == "GREEN", "generating_data": by.get("recorded_conversions", {}).get("status") == "PASS", "reliable_outcomes": False}
+              "verified": tracking_gate.normalize(tr.state) == "GREEN", "generating_data": by.get("recorded_conversions", {}).get("status") == "PASS", "reliable_outcomes": False}
     top = next((k for k in ("generating_data", "verified", "detected", "configured") if ladder[k]), "none")
-    f.append(make_finding(seq, "measurement_readiness", "Measurement readiness", f"Tracking gate {tr.effective_state}; highest level reached: {top}. Reliable business outcomes cannot be shown without CRM/offline data.",
-                          result="PASS" if tr.state == "GREEN" else ("WARN" if tr.state == "AMBER" else "FAIL"), severity="info" if tr.state == "GREEN" else ("medium" if tr.state == "AMBER" else "high"),
-                          origin="google_ads_api", verification="verified", source_type="tracking_gate", source_reference=f"tracking gate {tr.evaluated_at.date()}", retrieved_at=tr.evaluated_at.isoformat(),
-                          value=ladder, recommendation="Conversion-based bidding stays disabled until tracking is verified." if tr.state != "GREEN" else ""))
+    st = tracking_gate.normalize(tr.state)
+    todo = tracking_gate.outstanding(tr)
+    # RED only when evidence CONFIRMS a problem. UNKNOWN is missing evidence: it is reported as unavailable, never as a failure.
+    result = {"GREEN": "PASS", "YELLOW": "WARN", "RED": "FAIL", "UNKNOWN": "UNAVAILABLE"}[st]
+    f.append(make_finding(seq, "measurement_readiness", "Measurement readiness",
+                          f"Tracking is {st}" + (" (admin override active)" if tr.override_active else "") + f"; highest level reached: {top}." +
+                          (" It cannot be assessed because the required account access or data is unavailable." if st == "UNKNOWN" else "") +
+                          " Reliable business outcomes cannot be shown without CRM/offline data.",
+                          result=result, severity={"GREEN": "info", "YELLOW": "medium", "RED": "high", "UNKNOWN": "info"}[st],
+                          origin="google_ads_api", verification="verified" if st != "UNKNOWN" else "unknown", source_type="tracking_gate",
+                          source_reference=f"tracking gate {tr.evaluated_at.date()}", retrieved_at=tr.evaluated_at.isoformat(),
+                          value={**ladder, "state": st, "effective": tracking_gate.normalize(tr.effective_state), "outstanding": todo},
+                          limitations=(["Needs: a linked Google Ads account (and its conversion actions) to verify tracking"] if st == "UNKNOWN" else []),
+                          recommendation=("Before deployment: " + "; ".join(o["what"] for o in todo[:4])) if st != "GREEN" and todo else ""))
     cov["measurement_readiness"] = "evaluated"
     why = {k: "Not covered by the automated tracking audit yet." for k in ("ga4", "purchase_tracking", "booking_tracking", "conversion_values", "secondary_conversions", "attribution", "consent_privacy", "crm_integration")}
     why["offline_conversions"] = "Offline/enhanced conversions for leads need the current Data Manager API integration and a CRM; not implemented."
     left = [c["key"] for c in MODULES["tracking"]["checks"] if c["key"] not in cov]
-    return _finish("tracking", ctx, seq, f, cov, left, why, research_performed=["Tracking gate"], data_sources=["website crawl", "Google Ads (when linked)"])
+    return _finish("tracking", ctx, seq, f, cov, left, why, research_performed=["Tracking gate"], data_sources=["website crawl", "Google Ads (when linked)"],
+                   **({"status": "WAITING_FOR_INTEGRATION", "summary": "Tracking is UNKNOWN: it needs a linked, readable Google Ads account. Preparation is not blocked."} if st == "UNKNOWN" else {}))
 
 
 def ev_account_policy(ctx: Ctx, seq: _Seq) -> dict:
@@ -780,7 +793,7 @@ def ev_account_policy(ctx: Ctx, seq: _Seq) -> dict:
              recommendation="Review the non-converting terms for exclusion." if sx["no_conversion_cost"] > 0.2 * max(sx["cost"], 1) else "", value=sx)
         fact("negative_keywords", f"{facts['negatives']} negative keyword(s) are in place.", value=facts["negatives"])
         fact("conversion_history", f"{d90['conversions']:g} conversions in 90 days" + (f" at ${d90['cpl']:.2f} each" if d90["cpl"] else "") +
-             f"; tracking gate {ctx.tracking.effective_state if ctx.tracking else 'not evaluated'}.", value=d90)
+             f"; tracking gate {tracking_gate.normalize(ctx.tracking.effective_state) if ctx.tracking else 'UNKNOWN (not assessed)'}.", value=d90)
         ch = facts["changes"]
         fact("change_history", f"{ch['last_30_days']} account change(s) in 30 days, {ch['outside_app']} made outside this app.",
              result="WARN" if ch["outside_app"] else "INFO", severity="low" if ch["outside_app"] else "info",
@@ -814,6 +827,11 @@ def ev_strategy(ctx: Ctx, seq: _Seq, others: dict[str, dict]) -> dict:
     conditions = [x["finding"][:160] for x in high][:10] + [f"{MODULES[m]['title']} has not been completed" for m in unfinished]
     if ctx.account is None:
         conditions.append("No Google Ads account is linked: the draft can be prepared and validated, but deployment needs an account.")
+    tf = next((x for x in others.get("tracking", {}).get("findings", []) if x["category"] == "measurement_readiness"), None)
+    tstate = ((tf or {}).get("value") or {}).get("state", "UNKNOWN")
+    if tstate in ("UNKNOWN", "YELLOW"):  # a condition to resolve before deployment, not a reason to refuse to prepare
+        todo = "; ".join(o["what"] for o in ((tf or {}).get("value") or {}).get("outstanding", [])[:3]) or "run the tracking assessment with a linked account"
+        conditions.append(f"Conversion tracking is {tstate}: deployment needs it verified (GREEN) or an explicit admin authorisation. Outstanding: {todo}")
     if crit:
         decision = "blocked"
     elif not_viable:
@@ -842,7 +860,7 @@ def ev_strategy(ctx: Ctx, seq: _Seq, others: dict[str, dict]) -> dict:
                               verification="inferred", source_type="intelligence_engine", reason="Broad match needs conversion data and negative coverage to be safe."))
         cov["keyword_strategy"] = "evaluated"
     if ctx.tracking is not None:
-        st = ctx.tracking.effective_state
+        st = tracking_gate.normalize(ctx.tracking.effective_state)
         f.append(make_finding(seq, "bidding_strategy", "Bidding", "Maximize Conversions only when tracking is GREEN; otherwise start with click-based bidding and a CPC ceiling." + f" Current tracking gate: {st}.",
                               result="INFO", origin="ai_recommendation", verification="inferred", source_type="intelligence_engine", reason="Automated conversion bidding without reliable measurement optimises toward noise."))
         cov["bidding_strategy"] = "evaluated"

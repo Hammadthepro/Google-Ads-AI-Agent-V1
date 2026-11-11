@@ -48,7 +48,7 @@ export function Badge({ tone = "slate", children, title }: { tone?: keyof typeof
 }
 
 const STATUS_TONE: Record<string, string> = {
-  GREEN: "green", AMBER: "amber", RED: "red", ENABLED: "green", PAUSED: "slate", APPROVED: "blue", EXECUTED: "green",
+  GREEN: "green", YELLOW: "amber", AMBER: "amber", RED: "red", ENABLED: "green", PAUSED: "slate", APPROVED: "blue", EXECUTED: "green",
   PENDING_APPROVAL: "amber", REJECTED: "red", CHANGES_REQUESTED: "amber", INVALIDATED: "slate", EXPIRED: "slate",
   VALIDATION_FAILED: "red", EXECUTION_FAILED: "red", EXECUTION_BLOCKED: "red", SUCCEEDED: "green", FAILED: "red", UNKNOWN: "amber",
   NOT_APPLIED: "slate", RECONCILE_CONFLICT: "red", COMPLETED: "green", RUNNING: "blue", QUEUED: "slate",

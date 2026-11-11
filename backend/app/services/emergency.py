@@ -119,11 +119,11 @@ def hourly_check(db: Session) -> list[dict]:
                                           {"recent_daily_conversions": round(r_avg, 2), "prior_daily_conversions": round(p_avg, 2)},
                                           {"drop_pct": drop_pct}, "FREEZE_AUTOMATION",
                                           f"{c.name}: conversions fell {100 * (1 - r_avg / p_avg):.0f}% while clicks held — possible tracking outage"))
-        # 4. tracking outage (gate went RED after being GREEN/AMBER)
+        # 4. tracking outage (gate went RED after working: GREEN/YELLOW; UNKNOWN is never an outage)
         for b in db.scalars(select(Business).where(Business.client_id == client.id)):
             last2 = list(db.scalars(select(TrackingGateResult).where(TrackingGateResult.business_id == b.id)
                                     .order_by(TrackingGateResult.evaluated_at.desc()).limit(2)))
-            if len(last2) == 2 and last2[0].state == "RED" and last2[1].state != "RED" and not _already(db, "tracking_outage", b.id):
+            if len(last2) == 2 and last2[0].state == "RED" and last2[1].state in ("GREEN", "YELLOW", "AMBER") and not _already(db, "tracking_outage", b.id):
                 events.append(_record(db, client, account, b.id, "tracking_outage", "HIGH", {"from": last2[1].state, "to": "RED"}, {},
                                       "FREEZE_AUTOMATION", f"Tracking for {b.name} changed {last2[1].state} → RED; automatic changes frozen"))
         # 5. failed background jobs

@@ -152,7 +152,7 @@ class MockAIProvider(AIProvider):
         negatives = sorted({r["keyword"] for r in u.get("keyword_table", []) if r.get("label") == "IRRELEVANT"})
         negatives = sorted(set(negatives) | {"jobs", "diy", "free"})
         share = round(100 / max(1, len(groups)), 1)
-        tracking = u.get("tracking_state", "AMBER")
+        tracking = u.get("tracking_state", "YELLOW")
         rules = " ".join(u.get("playbook_rules", []))
         website = u.get("website", "").rstrip("/")
         return {
@@ -255,7 +255,7 @@ class MockAIProvider(AIProvider):
         elif feas.get("status") == "PARTIALLY_FEASIBLE":
             objections.append({"category": "BUDGET", "severity": "LOW", "target": "budget",
                                "message": "Target is only reachable in the optimistic scenario.", "suggestion": "Set expectations with the client."})
-        if u.get("tracking_state") in ("AMBER", "OVERRIDE"):
+        if u.get("tracking_state") in ("AMBER", "YELLOW", "UNKNOWN", "OVERRIDE"):
             objections.append({"category": "TRACKING", "severity": "LOW", "target": "tracking",
                                "message": "Tracking is not verified with real leads; automated conversion-based optimisation stays off.",
                                "suggestion": "Confirm a test lead is recorded in Google Ads."})

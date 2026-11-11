@@ -73,7 +73,7 @@ def baselines(db: Session, client: Client, biz: Business) -> dict:
         "max_affordable_cpc": {"value": aff.get("max_affordable_cpc"), "source": "client economics" if aff.get("max_affordable_cpc") else "needs target CAC, lead-to-customer and conversion rates"},
         "planning_cpc": {"value": aff.get("estimated_cpc"), "source": "Keyword Planner / history (estimate)" if aff.get("estimated_cpc") else "not available"},
         "tracking": {"verified": bool(track and (track["value"] or {}).get("verified")),
-                     "gate": (ictx.tracking.effective_state if ictx.tracking else "unknown"), "source": "tracking gate"},
+                     "gate": (tracking_gate.normalize(ictx.tracking.effective_state) if ictx.tracking else "UNKNOWN"), "source": "tracking gate"},
         "readiness": rep["decision_label"], "stale_modules": rep["stale_modules"], "research": rep["research"],
         "selected_keywords": sorted({normalize_term(r["keyword"]) for r in ictx.kw_rows if r.get("selected")}),
         "research_negatives": sorted(neg), "excluded_services": sorted(normalize_term(s) for s in _excluded(biz)),
@@ -152,7 +152,7 @@ def anomalies(db: Session, c: Campaign, base: dict) -> dict:
         if stable_traffic:
             ev = ["CTR and CPC are stable, so the same kind of traffic arrived", "conversions fell afterwards"]
             hyp = [("POST_CLICK", "Something after the click changed: landing page, form, phone handling or conversion tracking", ev)]
-            if gate != "GREEN" or "TRACKING_SUSPECT" in kinds:
+            if gate in ("YELLOW", "RED") or "TRACKING_SUSPECT" in kinds:  # UNKNOWN is missing evidence, not a reason to blame tracking
                 hyp.append(("TRACKING", f"Conversion tracking may have stopped recording (tracking gate: {gate})", ev + [f"tracking gate is {gate}"]))
         else:
             hyp = [("TRAFFIC_QUALITY", "The traffic changed: ad relevance, competition or search-term mix",
@@ -339,7 +339,8 @@ def analyse(db: Session, client: Client, biz: Business | None = None) -> dict:
                                  "last_30_days": window(db, c, end - timedelta(days=29), end)})
     out["search_terms"] = search_term_analysis(db, client, biz, base)
     if base["tracking"]["gate"] != "GREEN":
-        out["warnings"].append(f"Conversion tracking is {base['tracking']['gate']}: conversion-based conclusions and recommendations are held.")
+        out["warnings"].append(f"Conversion tracking is {base['tracking']['gate']}" + (" (not assessed or not assessable)" if base["tracking"]["gate"] == "UNKNOWN" else "")
+                               + ": conversion-based conclusions and recommendations are held.")
     if base["research"].get("exists") and not base["research"]["up_to_date"]:
         out["warnings"].append("The research that sets these baselines predates the client's latest information.")
     return out

@@ -46,8 +46,8 @@ def enough_data(db: Session, campaign: Campaign, *, item_changed_at=None, needs_
     launched_days = _days(campaign.launched_at)
     changed = item_changed_at or campaign.last_changed_at
     business = db.get(Business, campaign.business_id) if campaign.business_id else None
-    state = tracking_gate.effective_state(db, business.id) if business else "RED"
-    gate = tracking_gate.latest(db, business.id) if business else None
+    state = tracking_gate.effective_state(db, business.id) if business else "UNKNOWN"
+    gate = tracking_gate.current_result(db, business) if business else None
     checks = [
         {"key": "volume", "label": f"≥{min_clicks} clicks or spend ≥ {mult}× target CPL (30 days)",
          "passed": clicks >= min_clicks or (cpl is not None and cost >= mult * cpl),
@@ -328,7 +328,7 @@ def create_approval_for(db: Session, actor: User, rec_id: str):
                          business_id=b.id if b else None, account_id=account.id, current_state={}, proposed_state=payload["summary"],
                          reason="Optimization recommendation", expected_effect="See evidence", risks=[], validation=v,
                          context={"recommendation_id": r.id, "evidence": r.evidence, "enough_data": r.enough_data,
-                                  "tracking": tracking_gate.serialize(tracking_gate.latest(db, b.id)) if b else None})
+                                  "tracking": tracking_gate.serialize_for(db, b.id) if b else None})
     r.approval_id, r.status = a.id, "PROPOSED"
     return a
 

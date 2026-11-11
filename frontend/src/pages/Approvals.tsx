@@ -87,7 +87,7 @@ export function ApprovalDetail() {
 
       <Section n={1} title="Tracking status">
         {ctx.tracking ? <div className="flex flex-wrap items-center gap-2 text-sm"><StatusBadge value={ctx.tracking.state} />
-          {ctx.tracking.override_active && <Badge tone="amber">override (behaves as AMBER)</Badge>}
+          {ctx.tracking.override_active && <Badge tone="amber">override (behaves as YELLOW)</Badge>}
           <span className="text-slate-500">automation allowed: {ctx.tracking.automation_allowed ? "yes" : "no"}</span></div> : <span className="text-sm text-slate-500">n/a</span>}
       </Section>
       <Section n={2} title="Feasibility (estimate)">

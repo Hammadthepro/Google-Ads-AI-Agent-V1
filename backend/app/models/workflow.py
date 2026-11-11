@@ -35,7 +35,7 @@ class TrackingGateResult(TimestampMixin, Base):
     __tablename__ = "tracking_gate_results"
     business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), index=True)
     google_ads_account_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    state: Mapped[str] = mapped_column(String(8))  # GREEN / AMBER / RED
+    state: Mapped[str] = mapped_column(String(8))  # GREEN / YELLOW / RED / UNKNOWN (older rows say AMBER: read as YELLOW)
     effective_state: Mapped[str] = mapped_column(String(8))  # after override
     override_active: Mapped[bool] = mapped_column(Boolean, default=False)
     checks: Mapped[list] = mapped_column(JSONType, default=list)
