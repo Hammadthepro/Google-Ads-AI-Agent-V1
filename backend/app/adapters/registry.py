@@ -22,8 +22,10 @@ def google_ads():
 
 @lru_cache
 def keyword_research():
+    ads = google_ads()  # the Google Ads authorisation comes first
+    integrations_service.ensure_configured("keyword_planner")  # then the research customer ID; no client account is ever borrowed
     from app.adapters.keyword_research import GoogleKeywordPlannerAdapter
-    return GoogleKeywordPlannerAdapter(google_ads())
+    return GoogleKeywordPlannerAdapter(ads)
 
 
 @lru_cache

@@ -273,6 +273,27 @@ def calc(body: FeasIn, user: User = Depends(current_user)):
                                  cvr_range=tuple(body.cvr), review_adjustment=body.review_adjustment)
 
 
+class FinanceIn(BaseModel):
+    """{input_name: {"value": number|null, "source": client|measured|estimated|assumed, "note": ""}}. Unknown names are rejected."""
+    assumptions: dict[str, dict]
+
+
+@router.post("/finance/analyse", tags=["feasibility"])
+def finance_analyse(body: FinanceIn, user: User = Depends(require("clients.view"))):
+    """Deterministic financial feasibility (three scenarios, affordability, sufficiency, sensitivity). Writes nothing; no AI."""
+    from app.services import finance
+    known = finance.Assumptions.__dataclass_fields__
+    unknown = sorted(set(body.assumptions) - set(known))
+    if unknown:
+        raise ValidationFailed(f"Unknown financial input(s): {', '.join(unknown)}", details={"allowed": sorted(known)})
+    try:
+        a = finance.Assumptions(**{k: finance.Input(value=v.get("value"), source=v.get("source", "assumed"), note=str(v.get("note", ""))[:300])
+                                   for k, v in body.assumptions.items()})
+    except ValueError as exc:
+        raise ValidationFailed(str(exc)) from exc
+    return finance.analyse(a)
+
+
 @router.get("/feasibility", tags=["feasibility"])
 def list_feas(business_id: str | None = None, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
     ids = auth_service.accessible_client_ids(db, user)

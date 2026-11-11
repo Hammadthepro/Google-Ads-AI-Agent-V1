@@ -236,13 +236,3 @@ def select_account(db: Session, user: User, customer_id: str) -> dict:
                  client_id=acct.client_id, details={"customer_id": cid, "previous": previous})
     db.flush()
     return get_selection(db, user)
-
-
-def any_client_account(db: Session) -> str:
-    """A usable client account for read-only tools that do not depend on one client (Keyword Planner). '' if none discovered."""
-    ws = default_workspace(db)
-    row = db.scalar(select(GoogleAdsAccount.customer_id).where(
-        GoogleAdsAccount.workspace_id == ws.id, GoogleAdsAccount.is_manager.is_(False), GoogleAdsAccount.status == "ENABLED",
-        GoogleAdsAccount.discovery_state == "ACTIVE", GoogleAdsAccount.discovery_error == "").order_by(GoogleAdsAccount.customer_id).limit(1))
-    return row or ""
-

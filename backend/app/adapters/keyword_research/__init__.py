@@ -4,6 +4,34 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from app.adapters.base import AdapterError, InvalidInput
+from app.core import clock
+
+def _present(m, name: str):
+    """The metric if Google actually returned it, else None. Protobuf ints default to 0 when absent, which would read as 'zero searches' /
+    'free clicks', so use field presence (optional fields) and fall back to 'None when falsy' for fields without presence."""
+    try:
+        if not type(m).pb(m).HasField(name):
+            return None
+    except (ValueError, AttributeError, TypeError):
+        pass
+    v = getattr(m, name, None)
+    return v if v not in (None, "") else None
+
+
+def idea_row(text: str, m, *, retrieved_at: str, location: list[str], language: str, network: str, seeds: list[str], page_url: str = "") -> dict:
+    """One keyword idea with its provenance. Missing metrics are None and listed in ``metrics_unavailable``; nothing is zero-filled."""
+    comp = getattr(m.competition, "name", str(m.competition))
+    comp = None if comp in ("UNSPECIFIED", "UNKNOWN", "0", "") else comp
+    row = {"keyword": text, "avg_monthly_searches": _present(m, "avg_monthly_searches"), "competition": comp,
+           "competition_index": _present(m, "competition_index"),
+           "low_top_of_page_bid_micros": _present(m, "low_top_of_page_bid_micros"),
+           "high_top_of_page_bid_micros": _present(m, "high_top_of_page_bid_micros"),
+           "source": "LIVE", "provider": "google_keyword_planner", "retrieved_at": retrieved_at, "location": location, "language": language,
+           "network": network, "seed_keywords": seeds, "seed_url": page_url}
+    row["metrics_unavailable"] = [k for k in ("avg_monthly_searches", "competition", "competition_index", "low_top_of_page_bid_micros",
+                                              "high_top_of_page_bid_micros") if row[k] is None]
+    return row
+
 
 class KeywordResearchAdapter(ABC):
     name = "keyword_research"
@@ -31,18 +59,14 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
     def __init__(self, ads_adapter):
         self.ads = ads_adapter  # RealGoogleAdsAdapter (shares the client)
 
-    def _customer(self, customer_id: str) -> str:
-        """Keyword ideas do not depend on one client's data, so a client without a linked account uses the connection's
-        configured client account. With neither, fail clearly BEFORE calling Google (an empty ID is a guaranteed API error)."""
-        from app.db.session import session_scope
-        from app.services import mcc_service
-        cid = (customer_id or "").replace("-", "").strip()
-        if not cid:
-            with session_scope() as db:
-                cid = mcc_service.any_client_account(db)
-        if not cid.isdigit():
-            raise InvalidInput("Keyword Planner needs a Google Ads client account. Discover your accounts first (Integrations > Google Ads "
-                               "> choose a manager > refresh accounts).", adapter=self.name)
+    def _customer(self, deployment_customer_id: str = "") -> str:
+        """The RESEARCH customer. The deployment customer passed by callers is deliberately ignored: research never runs under, or
+        depends on, a client's account, and no discovered account is ever borrowed. Missing configuration is reported exactly."""
+        from app.services import integrations_service
+        vals = integrations_service.ensure_configured("keyword_planner")  # raises IntegrationNotConfigured(missing=research_customer_id)
+        cid = (vals.get("research_customer_id") or "").replace("-", "").strip()
+        if not (cid.isdigit() and len(cid) == 10):
+            raise InvalidInput("The Keyword Planner research customer ID must be a 10-digit Google Ads customer ID.", adapter=self.name)
         return cid
 
     def generate_ideas(self, customer_id, seeds, *, page_url="", location_ids=None, language="en", city=""):
@@ -64,13 +88,11 @@ class GoogleKeywordPlannerAdapter(KeywordResearchAdapter):
             else:
                 req.keyword_seed.keywords.extend(seeds)
             out = []
+            retrieved = clock.now().isoformat()
+            location = list(req.geo_target_constants)
             for idea in svc.generate_keyword_ideas(request=req):
-                m = idea.keyword_idea_metrics
-                out.append({"keyword": idea.text, "avg_monthly_searches": m.avg_monthly_searches,
-                            "competition": m.competition.name if hasattr(m.competition, "name") else str(m.competition),
-                            "competition_index": m.competition_index,
-                            "low_top_of_page_bid_micros": m.low_top_of_page_bid_micros,
-                            "high_top_of_page_bid_micros": m.high_top_of_page_bid_micros, "source": "LIVE"})
+                out.append(idea_row(idea.text, idea.keyword_idea_metrics, retrieved_at=retrieved, location=location,
+                                    language=req.language, network="GOOGLE_SEARCH", seeds=list(seeds), page_url=page_url))
             return out
         return self.ads._read(run)
 

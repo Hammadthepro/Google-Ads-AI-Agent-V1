@@ -157,7 +157,7 @@ def audit_client(biz: Business, client: Client, ctx: dict, kw: dict, website: di
         c.unavailable(fid, "B. Business economics", label, "Not provided. Economics are needed to judge profitability; none are estimated here.",
                       needs="client", rec=f"Collect from the client: {label.lower()}.")
     rows = (kw or {}).get("keywords", [])
-    bids = [(r["low_top_of_page_bid_micros"] + r["high_top_of_page_bid_micros"]) / 2e6 for r in rows
+    bids = [((r.get("low_top_of_page_bid_micros") or 0) + (r.get("high_top_of_page_bid_micros") or 0)) / 2e6 for r in rows
             if r.get("selected") and r.get("high_top_of_page_bid_micros")]
     if biz.monthly_budget_usd and bids:
         avg = sum(bids) / len(bids)

@@ -203,8 +203,8 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
                 entry["keyword_ideas"], entry["keyword_error"] = [], kw_unavailable
             else:
                 try:
-                    ideas = kw_adapter.generate_ideas(ctx["customer_id"], entry["services"][:3], page_url=c["website_url"], city=ctx["city"])
-                    entry["keyword_ideas"] = [i["keyword"] for i in sorted(ideas, key=lambda x: -x["avg_monthly_searches"])[:15]]
+                    ideas = kw_adapter.generate_ideas("", entry["services"][:3], page_url=c["website_url"], city=ctx["city"])
+                    entry["keyword_ideas"] = [i["keyword"] for i in sorted(ideas, key=lambda x: -(x.get("avg_monthly_searches") or 0))[:15]]
                 except AdapterError as exc:
                     entry["keyword_ideas"], entry["keyword_error"] = [], exc.kind
             entry["crawl_source"] = crawl["source"]
@@ -238,7 +238,8 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     for s in services:
         seeds = [s["name"]] + [x for x in (website or {}).get("keyword_seeds", []) if normalize_term(s["name"]) in normalize_term(x)][:2]
         try:
-            ideas = kw.generate_ideas(ctx["customer_id"], seeds, page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""),
+            ideas = kw.generate_ideas("", seeds,  # research runs under the configured research customer, never a client account
+                                       page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""),
                                       city=ctx["city"])
         except AdapterError as exc:
             errors.append({"service": s["name"], "error": exc.kind})
@@ -246,8 +247,9 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
         rows += ideas
     for comp in (competitors or {}).get("competitors", []):
         for k in comp.get("keyword_ideas", [])[:5]:
-            rows.append({"keyword": k, "avg_monthly_searches": 0, "competition": "UNKNOWN", "low_top_of_page_bid_micros": 0,
-                         "high_top_of_page_bid_micros": 0, "seed": f"competitor:{comp['name']}", "source": kw.source})
+            rows.append({"keyword": k, "avg_monthly_searches": None, "competition": None, "low_top_of_page_bid_micros": None,
+                         "high_top_of_page_bid_micros": None, "seed": f"competitor:{comp['name']}", "source": kw.source,
+                         "metrics_unavailable": ["avg_monthly_searches", "competition", "low_top_of_page_bid_micros", "high_top_of_page_bid_micros"]})
     dedup = {}
     for r in rows:
         dedup.setdefault(normalize_term(r["keyword"]), r)
@@ -273,13 +275,13 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     for r in dedup.values():
         high = (r.get("high_top_of_page_bid_micros") or 0) / 1e6
         affordable = max_bid is None or high == 0 or high <= max_bid
-        keep = r["label"] != "IRRELEVANT" and (r.get("avg_monthly_searches", 0) >= 20 or r["seed"].startswith("competitor")) and affordable
+        keep = r["label"] != "IRRELEVANT" and ((r.get("avg_monthly_searches") or 0) >= 20 or r["seed"].startswith("competitor")) and affordable
         table.append({"keyword": r["keyword"], "label": r["label"], "service": r.get("service"),
                       "ad_group": r.get("service") if r["label"] == "SERVICE" else ("Generic" if r["label"] == "GENERIC" else None),
                       "match_types": ["EXACT", "PHRASE"] if r["label"] != "IRRELEVANT" else [],
-                      "avg_monthly_searches": r.get("avg_monthly_searches", 0), "competition": r.get("competition"),
-                      "low_top_of_page_bid_micros": r.get("low_top_of_page_bid_micros", 0),
-                      "high_top_of_page_bid_micros": r.get("high_top_of_page_bid_micros", 0),
+                      "avg_monthly_searches": r.get("avg_monthly_searches"), "competition": r.get("competition"),
+                      "low_top_of_page_bid_micros": r.get("low_top_of_page_bid_micros"),
+                      "high_top_of_page_bid_micros": r.get("high_top_of_page_bid_micros"),
                       "bid_range": f"${from_micros(r.get('low_top_of_page_bid_micros')):.2f}–${high:.2f}" if high else "n/a",
                       "affordable": affordable, "selected": keep, "label_reason": r.get("label_reason"),
                       "labelled_by": r.get("labelled_by"), "seed": r.get("seed")})

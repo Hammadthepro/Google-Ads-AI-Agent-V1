@@ -125,17 +125,25 @@ def test_smtp_test_is_a_real_connection(monkeypatch):
 
 
 def test_keyword_planner_runs_a_real_readonly_request_and_explains_access_errors():
+    urls = []
+
     def handler(req):
         if "oauth2.googleapis.com" in str(req.url):
             return httpx.Response(200, json={"access_token": "ya29.fake", "scope": "adwords"})
         assert "developer-token" not in {k.lower() for k in req.headers}
+        urls.append(str(req.url))
         if str(req.url).endswith(":generateKeywordIdeas"):
             return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED", "message": "x", "details": [{"errors": [{"errorCode": {"authorizationError": "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"}}]}]}})
         return httpx.Response(404)
     with session_scope() as db:
         _save_ads(db)
+        no_rc = svc.test_connection(db, "keyword_planner", http=_client(handler))  # nothing is borrowed from any client account
+        assert not no_rc["connected"] and no_rc["steps"][-1]["name"] == "Research customer configured" and "never chosen automatically" in no_rc["steps"][-1]["hint"]
+        assert urls == []  # no Google request was made without a research customer
+        svc.save(db, "keyword_planner", settings={"research_customer_id": "999-888-7777"}, secrets={}, user_id=None)
         res = svc.test_connection(db, "keyword_planner", http=_client(handler))
         assert not res["connected"] and "Test access" in res["steps"][-1]["hint"]
+        assert urls and "/customers/9998887777:generateKeywordIdeas" in urls[-1]  # the research customer, normalised
         ok = svc.test_connection(db, "keyword_planner", http=_client(lambda r: httpx.Response(200, json={"access_token": "t"}) if "oauth2" in str(r.url)
                                                                        else httpx.Response(200, json={"results": [{"text": "plumber near me"}]})))
         assert ok["connected"]  # the Keyword Planner request itself succeeded…

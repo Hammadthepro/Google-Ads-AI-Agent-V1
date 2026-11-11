@@ -58,8 +58,10 @@ PROVIDERS: dict[str, dict] = {
     },
     "keyword_planner": {
         "label": "Keyword Planner", "group": "Google",
-        "description": "Uses the Google Ads authorisation and client account above (no separate credentials). The test asks Keyword Planner for real keyword ideas (read-only).",
-        "settings": {}, "secrets": {}, "required": [], "depends_on": "google_ads",
+        "description": "Keyword research for any client, before or without a linked Google Ads account. Uses the Google Ads authorisation above and ONE research "
+                       "customer ID (a Google Ads account used only to call Keyword Planner; never a client's deployment account). The test asks Keyword Planner for real ideas (read-only).",
+        "settings": {"research_customer_id": "Research customer ID — the Google Ads account Keyword Planner requests run under"},
+        "secrets": {}, "required": ["research_customer_id"], "depends_on": "google_ads",
         "docs": "https://developers.google.com/google-ads/api/docs/keyword-planning/overview",
     },
     "groq": {
@@ -212,9 +214,9 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
         if cur.get("from_email") and not re.match(r"^[^@\s]+@[^@\s]+$", cur["from_email"]):
             raise ValidationFailed("From email must look like name@example.com")
     cur.pop("customer_id", None)  # retired: the client account is chosen in the application (workspace account selector)
-    for k in ("login_customer_id",):
+    for k in ("login_customer_id", "research_customer_id"):
         if cur.get(k):
-            digits = cur[k].replace("-", "")
+            digits = str(cur[k]).replace("-", "").strip()
             if not digits.isdigit() or len(digits) != 10:
                 raise ValidationFailed(f"{spec['settings'][k]} must be a 10-digit number")
             cur[k] = digits
@@ -284,6 +286,7 @@ def disconnect(db: Session, provider: str, user_id: str | None) -> IntegrationCo
 
 # --------------------------------------------------------------------------------------------- resolution
 _ENV = {
+    "keyword_planner": {"research_customer_id": "GOOGLE_ADS_RESEARCH_CUSTOMER_ID"},
     "google_ads": {"client_id": "GOOGLE_ADS_CLIENT_ID", "login_customer_id": "GOOGLE_ADS_LOGIN_CUSTOMER_ID",
                    "client_secret": "GOOGLE_ADS_CLIENT_SECRET", "refresh_token": "GOOGLE_ADS_REFRESH_TOKEN"},
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
@@ -310,7 +313,7 @@ def effective(provider: str, row: IntegrationConfig | None, env_fallback: bool =
         out.update({k: v for k, v in (row.settings or {}).items() if v not in (None, "")})
         out.update({k: v for k, v in _secrets(row).items() if v})
     out.pop("customer_id", None)
-    for k in ("login_customer_id",):  # 123-456-7890 and 1234567890 are the same Google Ads ID
+    for k in ("login_customer_id", "research_customer_id"):  # 123-456-7890 and 1234567890 are the same Google Ads ID
         if isinstance(out.get(k), str):
             out[k] = out[k].replace("-", "").strip()
     return out
@@ -785,18 +788,21 @@ def _test_groq(vals: dict, http: httpx.Client, steps: Steps, row, target: str = 
 
 
 def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
-    """Real, read-only Keyword Planner request using the Google Ads authorisation and the client account."""
+    """Real, read-only Keyword Planner request under the configured RESEARCH customer (never a client's deployment account)."""
     need = [k for k in ("client_id", "client_secret", "refresh_token") if not vals.get(k)]
     if need:
         steps.fail("Google Ads configured", f"Needs the Google Ads OAuth credentials; missing {', '.join(need)}", hint="Configure Google Ads above first.")
         return {}
+    customer = (vals.get("research_customer_id") or "").replace("-", "").strip()
+    if not customer:
+        steps.fail("Research customer configured", "No research customer ID is set",
+                   hint="Keyword Planner requests need a Google Ads customer ID. Enter the account to use for research on this card. It is separate from any "
+                        "client's deployment account and is never chosen automatically.")
+        return {}
+    steps.ok("Research customer configured", f"Research customer {customer} (separate from client deployment accounts)")
     from app.services import mcc_service
     with session_scope() as db_:
-        customer = mcc_service.any_client_account(db_)
         login = mcc_service.default_workspace(db_).google_ads_manager_customer_id
-    if not customer:
-        steps.fail("Client account available", "No client account has been discovered yet", hint="Choose a manager account and refresh accounts first (Google Ads card).")
-        return {}
     token = refresh_access_token(vals, http, steps, "OAuth authentication")
     if not token:
         return {}
@@ -812,7 +818,7 @@ def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, tar
         steps.fail("Generate keyword ideas", _http_error(r), hint=_ads_hint(r, project)[0])
         return {}
     n = len(r.json().get("results", []))
-    steps.ok("Generate keyword ideas", f"Keyword Planner returned {n} idea(s) for the seed 'plumber' (read-only)")
+    steps.ok("Generate keyword ideas", f"Keyword Planner returned {n} idea(s) for the seed 'plumber' under research customer {customer} (read-only)")
     return {}
 
 
@@ -1103,7 +1109,7 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
     steps = Steps()
     started = datetime.now(timezone.utc)
     if provider == "keyword_planner":
-        vals = effective("google_ads", _row(db, "google_ads"))
+        vals = {**effective("google_ads", _row(db, "google_ads")), **effective("keyword_planner", row)}  # Ads authorisation + its own research customer
     else:
         vals = effective(provider, row)
     if spec.get("uses_google_client"):
@@ -1303,9 +1309,10 @@ def dependencies(db: Session, provider: str) -> list[dict]:
         ws = mcc_service.default_workspace(db)
         dep("manager", "Manager (MCC) account chosen", bool(ws.google_ads_manager_customer_id),
             f"Manager {ws.google_ads_manager_customer_id}" if ws.google_ads_manager_customer_id else "Choose a manager on the Google Ads card", "google_ads")
-        client = mcc_service.any_client_account(db)
-        dep("client_account", "At least one enabled client account discovered", bool(client),
-            f"Client account {client} is available" if client else "No client account has been discovered yet — choose a manager, then “Discover client accounts”", "google_ads")
+        rc = (effective("keyword_planner", _row(db, "keyword_planner")).get("research_customer_id") or "")
+        dep("research_customer", "Research customer ID set (separate from every client's deployment account)", bool(rc),
+            f"Research customer {rc}" if rc else "Enter the research customer ID on this card. It is never chosen automatically and no client account is borrowed.",
+            "" if rc else "keyword_planner")
         level = (((g.discovered or {}).get("cloud_access") or {}).get("level") if g else None) or "unknown"
         dep("access_level", "Google Ads API access level allows Keyword Planner (Basic or Standard)", level not in ("test",),
             "Level not known to be insufficient" if level != "test" else
@@ -1364,7 +1371,7 @@ def serialize(db: Session, provider: str) -> dict:
     status = row.status if row else "NOT_CONNECTED"
     if provider == "keyword_planner":
         ads_vals = effective("google_ads", _row(db, "google_ads"))
-        miss = [k for k in ("client_id", "client_secret", "refresh_token") if not ads_vals.get(k)]
+        miss = [k for k in ("client_id", "client_secret", "refresh_token") if not ads_vals.get(k)] + miss  # + research_customer_id
     elif miss and status in ("NOT_CONNECTED", "SYNCHRONIZATION_REQUIRED") and (row or env_vals):
         status = "CONFIGURATION_REQUIRED" if (row and (row.settings or row.secret_fingerprints)) else status
     elif not row and any(env_vals.get(k) for k in spec["required"]) and not miss:

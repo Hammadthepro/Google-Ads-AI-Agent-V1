@@ -169,7 +169,7 @@ def test_keyword_planner_dependency_chain_is_explicit():
         db.query(__import__("app.models", fromlist=["GoogleAdsAccount"]).GoogleAdsAccount).update({"status": "CLOSED"})
         card = svc.serialize(db, "keyword_planner")
         deps = {d["key"]: d["ok"] for d in card["dependencies"]}
-        assert deps["google_ads"] is False and deps["manager"] is False and deps["client_account"] is False
+        assert deps["google_ads"] is False and deps["manager"] is False and deps["research_customer"] is False
         assert card["display"]["label"] in ("Not configured", "Blocked by dependency")
         db.query(__import__("app.models", fromlist=["GoogleAdsAccount"]).GoogleAdsAccount).update({"status": "ENABLED"})
         ws.google_ads_manager_customer_id = saved
