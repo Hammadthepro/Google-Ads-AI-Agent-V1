@@ -281,3 +281,32 @@ def test_conversations_are_private_and_respect_client_access(world):
     assert Api(ADMIN).get("/agent/conversations/doesnotexist").status_code == 404
     assert api.post(f"/agent/conversations/{conv}/messages", {"text": "x" * 2001}).status_code == 422
     assert api.post(f"/agent/conversations/{conv}/messages", {"text": "  "}).status_code == 422
+
+
+def test_a_queued_run_counts_as_busy_so_the_page_keeps_polling_until_it_finishes(world):
+    """Found in a real-browser check: a run that was queued but not started yet reported 'not busy', so the page never refreshed."""
+    api, cid, _ = world
+    conv = _open(api, cid)["id"]
+    r = api.post(f"/agent/conversations/{conv}/messages", {"text": "What is out of date?"})  # no sync: the run is dispatched to a background thread
+    assert r.status_code == 200
+    import time
+    deadline = time.time() + 30
+    t = r.json()
+    while time.time() < deadline and t["busy"]:
+        time.sleep(0.3)
+        t = api.get(f"/agent/conversations/{conv}").json()
+    assert not t["busy"] and _last_run(t)["status"] == "COMPLETED"
+    # a planned run (dispatch never happened) is busy, blocks a second request, and becomes interruptible once stale
+    with session_scope() as db:
+        run = db.get(AgentRun, _last_run(t)["id"])
+        run.status = "PLANNED"
+    t = api.get(f"/agent/conversations/{conv}").json()
+    assert t["busy"] is True
+    assert api.post(f"/agent/conversations/{conv}/messages?sync=true", {"text": "status"}).status_code == 409
+    from datetime import timedelta
+
+    from app.core import clock
+    with session_scope() as db:
+        db.get(AgentRun, run.id).heartbeat_at = clock.now() - timedelta(minutes=agent.STALE_RUN_MINUTES + 1)
+    t = api.get(f"/agent/conversations/{conv}").json()
+    assert t["busy"] is False and t["runs"][run.id]["status"] == "INTERRUPTED"

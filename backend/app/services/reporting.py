@@ -155,6 +155,7 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         "business_breakdown": by_business, "calls": calls,
         "wasted_spend": {"total": waste["total"], "window_days": waste["window_days"], "top_terms": waste["terms"][:10]},
     }
+    sections.update(monitoring_sections(db, client))
     source = SourceType.combine(*sources) if sources else SourceType.NONE
     sections["provenance"] = provenance(db, client, week_start, week_end, campaigns, source)
     try:
@@ -171,6 +172,38 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
     db.add(report)
     db.flush()
     return report
+
+
+def monitoring_sections(db: Session, client: Client) -> dict:
+    """Anomalies, pacing, shortfall, search terms, recommendations with impact, outcomes of earlier changes, and the intelligence record the
+    numbers were judged against. A failure is written into the report as an error, never silently dropped."""
+    from app.services import intelligence_service as intel
+    from app.services import performance_insights as pi
+    biz = client.businesses[0] if client.businesses else None
+    if biz is None:
+        return {"insights": {"error": "The client has no business profile"}}
+    try:
+        with db.begin_nested():  # a failure here rolls back only this section
+            an = pi.analyse(db, client, biz)
+            pi.recommend(db, client, an)
+            rep = intel.report(db, biz, client)
+            recs = [r for r in db.scalars(select(Recommendation).where(Recommendation.client_id == client.id, Recommendation.status.in_(["OPEN", "HELD", "PROPOSED"]))
+                                          .order_by(Recommendation.created_at.desc()).limit(40))]
+            return {
+                "insights": {"available": an["available"], "data_status": an["data_status"], "blockers": an["blockers"], "warnings": an["warnings"],
+                             "campaigns": [{"name": c["name"], "anomalies": [{k: f[k] for k in ("kind", "detail", "severity", "confidence", "corroborated_by")} for f in c["anomalies"].get("flags", [])],
+                                            "diagnosis": c["anomalies"].get("diagnosis", []), "anomaly_status": c["anomalies"]["status"], "pacing": c["pacing"], "shortfall": c["shortfall"]}
+                                           for c in an.get("campaigns", [])],
+                             "search_terms": {k: v for k, v in (an.get("search_terms") or {}).items() if k in ("status", "terms", "total_cost", "irrelevant_cost", "wasted_cost", "note")}},
+                "optimisation": [{"id": r.id, "category": r.category, "title": r.title, "decision": r.decision, "hold_reason": r.hold_reason, "status": r.status,
+                                  "impact_estimate": (r.evidence or {}).get("impact_estimate"), "executable": (r.evidence or {}).get("executable", r.category in ("BUDGET", "PROMOTE_TERM", "PAUSE_KEYWORD", "NEGATIVE_KEYWORD")),
+                                  "requires_approval": True} for r in recs],
+                "outcomes_of_earlier_changes": pi.outcome_review(db, client), "changes_outside_app": pi.changes_outside_app(db, client),
+                "intelligence": {"readiness": rep["decision_label"], "stale_modules": rep["stale_modules"], "research": rep["research"], "account_linked": rep["account_linked"],
+                                 "judged_against": an.get("baselines")},
+            }
+    except Exception as exc:  # noqa: BLE001 - recorded in the report itself
+        return {"insights": {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}}
 
 
 def provenance(db: Session, client: Client, start: date, end: date, campaigns: list[dict], source: str) -> dict:

@@ -7,7 +7,7 @@ from app.workers.celery_app import celery, run_task_job
 
 def test_every_scheduled_job_is_a_registered_task_and_matches_a_job_function():
     sched = celery.conf.beat_schedule
-    assert len(sched) == 8
+    assert len(sched) == 9  # eight monitoring jobs + the insights pass
     for entry in sched.values():
         name = entry["task"]
         assert name in celery.tasks, f"{name} is scheduled but not registered"

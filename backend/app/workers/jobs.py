@@ -52,6 +52,11 @@ def optimize_all():
     return _run("optimization.run_all", lambda db: {c.name: optimization.run_for_client(db, c) for c in db.scalars(select(Client))})
 
 
+def insights_all():
+    from app.services import performance_insights
+    return _run("insights.run_all", performance_insights.run_all)
+
+
 def recheck_fixes():
     from app.services import fixes_service
     return _run("fixes.recheck_measurable", lambda db: {"checked": fixes_service.recheck_measurable(db)})
@@ -74,7 +79,7 @@ def evaluate_predictions():
 
 def run_daily_cycle() -> list[dict]:
     """One daily cycle: the same jobs Celery beat runs on a schedule."""
-    out = [daily_sync(), recheck_tracking(), optimize_all(), hourly_brake(), recheck_fixes(), approvals_sweep(), evaluate_predictions()]
+    out = [daily_sync(), recheck_tracking(), optimize_all(), insights_all(), hourly_brake(), recheck_fixes(), approvals_sweep(), evaluate_predictions()]
     if clock.today().weekday() == 0:
         out.append(weekly_reports())
     return out

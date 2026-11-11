@@ -162,7 +162,7 @@ def post_message(db: Session, user: User, conv_id: str, text: str, *, choice: di
         raise ValidationFailed("Write a request")
     if len(text) > 2000:
         raise ValidationFailed("Keep the request under 2000 characters")
-    busy = db.scalar(select(AgentRun).where(AgentRun.conversation_id == conv.id, AgentRun.status == "RUNNING"))
+    busy = db.scalar(select(AgentRun).where(AgentRun.conversation_id == conv.id, AgentRun.status.in_(OPEN_STATUSES)))
     if busy and not _is_stale(busy):
         raise Conflict("The agent is still working on the previous request. Wait for it to finish, or resume it if it was interrupted.")
     um = _say(db, conv, "user", "text", text or f"(selected: {choice.get('label') or choice.get('value')})")
@@ -248,7 +248,7 @@ def post_message(db: Session, user: User, conv_id: str, text: str, *, choice: di
 
 
 def _is_stale(run: AgentRun) -> bool:
-    return run.status == "RUNNING" and run.heartbeat_at is not None and clock.now() - run.heartbeat_at > timedelta(minutes=STALE_RUN_MINUTES)
+    return run.status in OPEN_STATUSES and run.heartbeat_at is not None and clock.now() - run.heartbeat_at > timedelta(minutes=STALE_RUN_MINUTES)
 
 
 def _ask(db, conv, user, original_text, intent_key, typ, question, options, um) -> tuple[AgentMessage, None]:
@@ -352,7 +352,7 @@ def resume(db: Session, user: User, run_id: str) -> AgentRun:
     if not run:
         raise NotFound("Run not found")
     _own(db, user, run.conversation_id)
-    if run.status == "RUNNING" and _is_stale(run):
+    if _is_stale(run):
         run.status = "INTERRUPTED"
     if run.status not in ("INTERRUPTED", "FAILED"):
         raise Conflict(f"This run is {run.status.lower().replace('_', ' ')}; only interrupted or failed runs can be resumed")
@@ -367,7 +367,7 @@ def resume(db: Session, user: User, run_id: str) -> AgentRun:
 def sweep_interrupted(db: Session) -> int:
     """Runs whose worker died (no heartbeat) become INTERRUPTED so they can be resumed instead of looking busy forever."""
     n = 0
-    for r in db.scalars(select(AgentRun).where(AgentRun.status == "RUNNING")):
+    for r in db.scalars(select(AgentRun).where(AgentRun.status.in_(OPEN_STATUSES))):
         if _is_stale(r):
             r.status = "INTERRUPTED"
             n += 1
@@ -417,12 +417,12 @@ def research_decision(db: Session, biz: Business, client: Client, force: bool = 
     return "reuse", f"Research from {st['date'][:10]} (v{st['version']}) still matches the client's information"
 
 
-def modules_decision(db: Session, biz: Business, client: Client, wanted: list[str], research_will_run: bool) -> tuple[str, str, list[str]]:
+def modules_decision(db: Session, biz: Business, client: Client, wanted: list[str], research_will_run: bool, cause: str = "new research") -> tuple[str, str, list[str]]:
     stale = set(intel.stale_modules(db, biz, client))
     todo = [m for m in wanted if m in stale or research_will_run]
     if not todo:
         return "reuse", "All of these stages are current: " + ", ".join(intel.MODULES[m]["title"] for m in wanted), []
-    why = "new research makes them out of date" if research_will_run else "their inputs changed or they have not run"
+    why = f"{cause} makes them out of date" if research_will_run else "their inputs changed or they have not run"
     return "run", f"{', '.join(intel.MODULES[m]['title'] for m in todo)}: {why}", todo
 
 
@@ -544,12 +544,15 @@ def base_answer(c: Ctx, wanted: list[str], headline_prefix: str) -> dict:
 
 @step("__answer__")
 def _answer(c: Ctx) -> dict:
-    return INTENTS[c.run.intent]["answer"](c)
+    return ANSWERS[c.run.intent](c)
+
+
+ANSWERS: dict[str, Callable] = {}
 
 
 def answer(key: str):
     def deco(fn):
-        INTENTS[key]["answer"] = fn
+        ANSWERS[key] = fn
         return fn
     return deco
 
@@ -739,4 +742,8 @@ def thread(db: Session, user: User, conv_id: str) -> dict:
     return {"id": conv.id, "client_id": conv.client_id, "title": conv.title, "context": {k: v for k, v in (conv.context or {}).items() if k != "pending"},
             "pending": ({"kind": pend["kind"], "type": pend.get("type"), "run_id": pend.get("run_id")} if pend else None),
             "messages": [serialize_message(m) for m in msgs], "runs": {r.id: serialize_run(r) for r in runs},
-            "busy": any(r.status == "RUNNING" for r in runs), "intents": [{"key": k, "label": v["label"], "example": v["example"]} for k, v in INTENTS.items()]}
+            "busy": any(r.status in OPEN_STATUSES for r in runs), "intents": [{"key": k, "label": v["label"], "example": v["example"]} for k, v in INTENTS.items()]}
+
+
+# Monitoring and optimisation intents register themselves here (same planner, executor and record).
+from app.services import agent_monitoring  # noqa: E402,F401

@@ -13,15 +13,15 @@ Rules enforced here
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core import clock
 from app.core.errors import NotFound, ValidationFailed
 from app.core.util import canonical_json
-from app.models import AuditReport, Business, Client, FeasibilityResult, IntelligenceRun
+from app.models import (AuditReport, Business, Client, FeasibilityResult, IntelligenceRun, PerformanceSnapshot)
 from app.services import accounts_service, clients_service, finance, tracking_gate
 
 STATUSES = ("NOT_STARTED", "IN_PROGRESS", "WAITING_FOR_CLIENT", "WAITING_FOR_INTEGRATION", "PARTIALLY_COMPLETED", "COMPLETED",
@@ -187,6 +187,58 @@ def _jsonable(x):
     return x.isoformat() if isinstance(x, datetime) else x
 
 
+def account_data_version(db: Session, acct) -> str | None:
+    """When the account's performance data was last retrieved (None without an account or data)."""
+    if acct is None:
+        return None
+    t = db.scalar(select(func.max(PerformanceSnapshot.fetched_at)).where(PerformanceSnapshot.google_ads_account_id == acct.id))
+    return t.isoformat() if t else None
+
+
+def account_facts(db: Session, acct) -> dict | None:
+    """Measured facts about the linked account from the synced data. None when nothing has been retrieved (then everything stays Unavailable)."""
+    from app.models import AdGroup, Ad, Campaign, ChangeEvent, Keyword, NegativeKeyword, SearchTermRow
+    when = account_data_version(db, acct)
+    if not when:
+        return None
+    end = clock.today() - timedelta(days=1)
+
+    def tot(days):
+        r = db.execute(select(func.count(func.distinct(PerformanceSnapshot.date)), func.sum(PerformanceSnapshot.impressions), func.sum(PerformanceSnapshot.clicks),
+                              func.sum(PerformanceSnapshot.cost_micros), func.sum(PerformanceSnapshot.conversions)).where(
+            PerformanceSnapshot.google_ads_account_id == acct.id, PerformanceSnapshot.level == "CAMPAIGN",
+            PerformanceSnapshot.date >= end - timedelta(days=days - 1))).one()
+        n, imp, clk, cost, conv = r
+        clk, cost, conv = int(clk or 0), float(cost or 0) / 1e6, float(conv or 0)
+        return {"days_with_data": int(n or 0), "impressions": int(imp or 0), "clicks": clk, "cost": round(cost, 2), "conversions": round(conv, 1),
+                "cpc": round(cost / clk, 2) if clk else None, "cvr": round(conv / clk, 4) if clk else None, "cpl": round(cost / conv, 2) if conv else None}
+    camps = list(db.scalars(select(Campaign).where(Campaign.google_ads_account_id == acct.id)))
+    cids = [c.id for c in camps]
+    groups = list(db.scalars(select(AdGroup).where(AdGroup.campaign_id.in_(cids or ["-"]))))
+    gids = [g.id for g in groups]
+    kws = list(db.scalars(select(Keyword).where(Keyword.ad_group_id.in_(gids or ["-"]))))
+    terms = list(db.scalars(select(SearchTermRow).where(SearchTermRow.google_ads_account_id == acct.id, SearchTermRow.window_days == 30)))
+    since = clock.now() - timedelta(days=30)
+    changes = list(db.scalars(select(ChangeEvent).where(ChangeEvent.google_ads_account_id == acct.id, ChangeEvent.changed_at >= since)))
+    return {"retrieved_at": when, "customer_id": acct.customer_id, "d30": tot(30), "d90": tot(90),
+            "campaigns": {"total": len(camps), "by_status": _count_by(camps, "status"), "by_type": _count_by(camps, "campaign_type"), "by_bidding": _count_by(camps, "bidding_strategy"),
+                          "monthly_budget": round(sum(c.monthly_budget_micros for c in camps if c.status == "ENABLED") / 1e6, 2)},
+            "structure": {"ad_groups": len(groups), "ads": db.scalar(select(func.count()).select_from(Ad).where(Ad.ad_group_id.in_(gids or ["-"]))), "keywords": len(kws)},
+            "keywords": {"enabled": sum(1 for k in kws if k.status == "ENABLED"), "match_types": _count_by(kws, "match_type")},
+            "search_terms": {"terms": len(terms), "cost": round(sum(t.cost_micros for t in terms) / 1e6, 2),
+                             "no_conversion_cost": round(sum(t.cost_micros for t in terms if not t.conversions and not t.conversions_90d) / 1e6, 2)},
+            "negatives": db.scalar(select(func.count()).select_from(NegativeKeyword).where(NegativeKeyword.google_ads_account_id == acct.id)),
+            "changes": {"last_30_days": len(changes), "outside_app": sum(1 for c in changes if c.made_outside_app)}}
+
+
+def _count_by(rows, attr: str) -> dict:
+    out: dict = {}
+    for r in rows:
+        k = getattr(r, attr) or "UNKNOWN"
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
 def module_inputs(db: Session, biz: Business, client: Client, module: str) -> dict:
     """Only what this module's conclusions depend on: editing anything else must not invalidate it."""
     svc = sorted(s.name for s in clients_service.active_services(biz))
@@ -194,6 +246,7 @@ def module_inputs(db: Session, biz: Business, client: Client, module: str) -> di
     comps = sorted((c.name, c.website_url) for c in biz.competitors)
     areas = [a.get("label") for a in (biz.service_areas or [])]
     acct = accounts_service.account_for_business(db, biz)
+    adata = account_data_version(db, acct)  # newer synced Google Ads data makes the modules that read it stale
     rep = _latest_report(db, biz)
     rid = rep.id if rep else None  # a newer research report makes the modules built on it stale
     feas = db.scalar(select(FeasibilityResult.id).where(FeasibilityResult.business_id == biz.id).order_by(FeasibilityResult.created_at.desc()))
@@ -205,12 +258,12 @@ def module_inputs(db: Session, biz: Business, client: Client, module: str) -> di
                     "pages": sorted((s.name, s.landing_page_url) for s in biz.services), "areas": areas, "report": rid},
         "competitors": {"competitors": comps, "gbp": biz.gbp_url, "has_gbp": biz.has_gbp, "category": biz.category, "areas": areas, "ads_text": biz.competitor_ads_text, "report": rid},
         "search_intent": {"services": svc, "areas": areas, "category": biz.category, "report": rid},
-        "keywords": {"services": svc, "excluded": excluded, "areas": areas, "website": biz.website_url, "competitors": comps, "report": rid},
+        "keywords": {"services": svc, "excluded": excluded, "areas": areas, "website": biz.website_url, "competitors": comps, "report": rid, "account_data": adata},
         "geography": {"areas": areas, "states": sorted(biz.states or []), "mode": biz.targeting_mode, "radius": biz.default_radius_miles,
                       "hours": biz.business_hours, "excluded": excluded},
-        "finance": {"budget": biz.monthly_budget_usd, "weekly": client.weekly_conversion_target, "services": svc, "feasibility": feas},
+        "finance": {"budget": biz.monthly_budget_usd, "weekly": client.weekly_conversion_target, "services": svc, "feasibility": feas, "account_data": adata},
         "tracking": {"website": biz.website_url, "thanks": biz.thank_you_url, "gtm": biz.gtm_id, "phone": biz.phone, "account": acct.id if acct else None},
-        "account_policy": {"account": acct.id if acct else None, "customer": acct.customer_id if acct else None},
+        "account_policy": {"account": acct.id if acct else None, "customer": acct.customer_id if acct else None, "account_data": adata},
         "strategy": {"services": svc, "weekly": client.weekly_conversion_target},
     }
     return base[module]
@@ -523,6 +576,15 @@ def ev_keywords(ctx: Ctx, seq: _Seq) -> dict:
                               result="PASS" if len(have) == len(rows) else "WARN", severity="low", origin="google_ads_api", verification="verified", source_type="keyword_planner",
                               source_reference="audit report keyword table", limitations=["Keyword Planner estimates; averages can include close variants."]))
         cov["metric_avg_searches"] = "evaluated"
+    facts = account_facts(ctx.db, ctx.account) if ctx.account else None
+    if facts:
+        ref = f"synced Google Ads data, customer {facts['customer_id']}"
+        for chk, text in (("src_existing_keywords", f"{facts['keywords']['enabled']} enabled keyword(s) already in the account"),
+                          ("src_search_terms", f"{facts['search_terms']['terms']} search term(s) from the last 30 days"),
+                          ("src_account_history", f"90-day history: {facts['d90']['clicks']:,} clicks, {facts['d90']['conversions']:g} conversions")):
+            f.append(make_finding(seq, chk, chk, text, result="INFO", origin="google_ads_api", verification="verified", source_type="google_ads_api", source_reference=ref,
+                                  retrieved_at=facts["retrieved_at"], geography=ctx.geography))
+            cov[chk] = "evaluated"
     why = {"src_semrush_magic": "SEMrush is not connected.", "src_semrush_competitors": "SEMrush is not connected.", "src_google_suggest": "Search suggestions have not been collected.",
            "src_existing_keywords": "Needs a linked Google Ads account.", "src_search_terms": "Needs a linked Google Ads account with serving history.",
            "src_account_history": "Needs a linked Google Ads account with history.", "forecasts": "Keyword Planner forecasts have not been requested for this plan.",
@@ -624,6 +686,14 @@ def ev_finance(ctx: Ctx, seq: _Seq) -> dict:
         add("sensitivity", f"Largest driver: {out['sensitivity']['largest_driver']}" if out["sensitivity"]["largest_driver"] else "Needs revenue inputs.", value=out["sensitivity"]["rows"][:6])
         add("budget_sufficiency", "; ".join(c["detail"] for c in out["sufficiency"]["checks"]) or "Cannot assess.", result="INFO" if out["sufficiency"]["sufficient"] else "WARN",
             severity="medium" if not out["sufficiency"]["sufficient"] else "info", value=out["sufficiency"])
+    facts = account_facts(ctx.db, ctx.account) if ctx.account else None
+    if facts and facts["d90"]["days_with_data"]:
+        d = facts["d90"]
+        f.append(make_finding(seq, "historical_performance", "Measured 90-day performance", f"90 days: ${d['cost']:,.2f} spent, {d['clicks']:,} clicks, {d['conversions']:g} conversions"
+                              + (f", CPC ${d['cpc']:.2f}" if d["cpc"] else "") + (f", conversion rate {d['cvr']:.1%}" if d["cvr"] else "") + ". Measured actuals: the best basis for CPC and conversion-rate assumptions.",
+                              result="INFO", origin="google_ads_api", verification="verified", source_type="google_ads_api",
+                              source_reference=f"synced Google Ads data, customer {facts['customer_id']}", retrieved_at=facts["retrieved_at"], value=d))
+        cov["historical_performance"] = "evaluated"
     why = {"max_daily_spend": "Not collected at intake.", "target_cpa": "Not collected at intake.", "target_cpl": "Not collected at intake.", "target_cac": "Needs: client",
            "avg_customer_value": "Needs: client", "avg_profit_per_customer": "Needs: client", "lead_to_customer_rate": "Needs: client", "landing_page_cvr": "Measured after launch; planning value is an assumption.",
            "expected_impressions_clicks": "Needs a Keyword Planner forecast.", "seasonal_demand": "Needs monthly search history.", "keyword_competition": "See keyword module.",
@@ -683,6 +753,38 @@ def ev_account_policy(ctx: Ctx, seq: _Seq) -> dict:
                           severity="info" if status == "ENABLED" else "high", origin="google_ads_api", verification="verified", source_type="google_ads_api", source_reference=f"customer {a.customer_id}",
                           recommendation="" if status == "ENABLED" else "Resolve the account status before deployment."))
     cov["account_status"] = "evaluated"
+    facts = account_facts(ctx.db, a)
+    if facts:
+        ref, when = f"synced Google Ads data, customer {a.customer_id}", facts["retrieved_at"]
+
+        def fact(chk, text, result="INFO", **kw):
+            f.append(make_finding(seq, chk, chk, text, result=result, origin="google_ads_api", verification="verified", source_type="google_ads_api",
+                                  source_reference=ref, retrieved_at=when, geography=ctx.geography, **kw))
+            cov[chk] = "evaluated"
+        d30, d90 = facts["d30"], facts["d90"]
+        fact("historical_performance", f"Last 30 days ({d30['days_with_data']} days with data): {d30['impressions']:,} impressions, {d30['clicks']:,} clicks, ${d30['cost']:,.2f}, "
+             f"{d30['conversions']:g} conversions" + (f", CPC ${d30['cpc']:.2f}" if d30["cpc"] else "") + (f", cost per lead ${d30['cpl']:.2f}" if d30["cpl"] else "") +
+             f". Last 90 days: ${d90['cost']:,.2f}, {d90['conversions']:g} conversions.", value={"d30": d30, "d90": d90})
+        cp = facts["campaigns"]
+        fact("existing_campaigns", f"{cp['total']} campaign(s): " + ", ".join(f"{v} {k.lower()}" for k, v in cp["by_status"].items()) + "; types " + ", ".join(cp["by_type"]), value=cp)
+        fact("campaign_settings", "Campaign types: " + ", ".join(f"{k} {v}" for k, v in cp["by_type"].items()), value=cp["by_type"])
+        fact("budget_bidding_config", f"Enabled monthly budget ${cp['monthly_budget']:,.0f}; bidding: " + ", ".join(f"{k} {v}" for k, v in cp["by_bidding"].items()), value=cp["by_bidding"])
+        st = facts["structure"]
+        fact("ad_groups_ads_assets", f"{st['ad_groups']} ad group(s), {st['ads']} ad(s), {st['keywords']} keyword(s). Assets (sitelinks, callouts) are not synced.",
+             limitations=["Asset-level data is not synced."])
+        kw = facts["keywords"]
+        fact("existing_keywords", f"{kw['enabled']} enabled keyword(s); match types " + ", ".join(f"{k} {v}" for k, v in kw["match_types"].items()), value=kw)
+        sx = facts["search_terms"]
+        fact("search_terms", f"{sx['terms']} search term(s) in 30 days costing ${sx['cost']:,.2f}; ${sx['no_conversion_cost']:,.2f} on terms with no conversion in 90 days.",
+             result="WARN" if sx["no_conversion_cost"] > 0.2 * max(sx["cost"], 1) else "INFO", severity="medium" if sx["no_conversion_cost"] > 0.2 * max(sx["cost"], 1) else "info",
+             recommendation="Review the non-converting terms for exclusion." if sx["no_conversion_cost"] > 0.2 * max(sx["cost"], 1) else "", value=sx)
+        fact("negative_keywords", f"{facts['negatives']} negative keyword(s) are in place.", value=facts["negatives"])
+        fact("conversion_history", f"{d90['conversions']:g} conversions in 90 days" + (f" at ${d90['cpl']:.2f} each" if d90["cpl"] else "") +
+             f"; tracking gate {ctx.tracking.effective_state if ctx.tracking else 'not evaluated'}.", value=d90)
+        ch = facts["changes"]
+        fact("change_history", f"{ch['last_30_days']} account change(s) in 30 days, {ch['outside_app']} made outside this app.",
+             result="WARN" if ch["outside_app"] else "INFO", severity="low" if ch["outside_app"] else "info",
+             recommendation="Review changes made outside the app before optimising." if ch["outside_app"] else "", value=ch)
     from app.models import Audit
     aud = ctx.db.scalar(select(Audit).where(Audit.business_id == ctx.biz.id, Audit.audit_type == "ACCOUNT", Audit.status == "COMPLETED").order_by(Audit.created_at.desc()))
     if aud:
@@ -835,7 +937,9 @@ def serialize_run(run: IntelligenceRun | None, module: str, stale: bool = False)
     meta = MODULES[module]
     if run is None:
         return {"module": module, "number": meta["number"], "title": meta["title"], "status": "NOT_STARTED", "stale": True, "version": 0, "findings": [], "coverage": {},
-                "checks_total": len(meta["checks"]), "checks_evaluated": 0, "depends_on": meta["depends_on"]}
+                "checks_total": len(meta["checks"]), "checks_evaluated": 0, "depends_on": meta["depends_on"], "decision": "", "summary": "",
+                "missing_information": [], "contradictions": [], "risks": [], "recommendations": [], "client_actions": [], "research_performed": [],
+                "data_sources": [], "retrieved_at": None, "source_report_id": None}
     ev = sum(1 for v in (run.coverage or {}).values() if v == "evaluated")
     return {"module": module, "number": meta["number"], "title": meta["title"], "status": run.status, "stale": stale, "version": run.version, "run_id": run.id,
             "decision": run.decision, "summary": run.summary, "findings": run.findings, "coverage": run.coverage, "checks_total": len(meta["checks"]), "checks_evaluated": ev,
