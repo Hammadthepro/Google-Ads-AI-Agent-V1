@@ -88,8 +88,10 @@ def test_scopes_per_integration():
     _, r = _start(providers=("ga4",))
     assert r.status_code == 200, r.text
     assert set(_q(r.json()["authorization_url"])["scope"].split()) == {"openid", "email", "https://www.googleapis.com/auth/analytics.readonly"}
-    _, r = _start(providers=("google_ads", "gbp"))
-    assert {"https://www.googleapis.com/auth/adwords", "https://www.googleapis.com/auth/business.manage"} <= set(_q(r.json()["authorization_url"])["scope"].split())
+    _, r = _start(providers=("google_ads", "ga4"))
+    assert {"https://www.googleapis.com/auth/adwords", "https://www.googleapis.com/auth/analytics.readonly"} <= set(_q(r.json()["authorization_url"])["scope"].split())
+    _, r = _start(providers=("gbp",))
+    assert r.status_code == 422  # the Business Profile API integration no longer exists
     _, r = _start(providers=("groq",))
     assert r.status_code == 422  # not a Google OAuth integration
 

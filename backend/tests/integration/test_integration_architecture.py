@@ -114,9 +114,9 @@ def test_default_manager_that_this_google_user_cannot_reach_is_reported_before_a
 
 
 # --------------------------------------------------------------------------- dependencies
-def test_ga4_and_gbp_are_blocked_until_the_shared_oauth_client_and_their_own_authorisation_exist():
+def test_ga4_is_blocked_until_the_shared_oauth_client_and_their_own_authorisation_exist():
     sup = Api(SUPER)
-    for p in ("ga4", "gbp"):
+    for p in ("ga4",):
         c = _card(sup, p)
         assert c["display"]["label"] == "Not configured"  # nothing present
         keys = {d["key"]: d["ok"] for d in c["dependencies"]}
@@ -158,31 +158,6 @@ def test_ga4_requires_a_selected_property_and_tests_both_apis():
         svc.save(db, "ga4", settings={"property_id": "properties/42"}, secrets={}, user_id=None)
         good = svc.test_connection(db, "ga4", http=_client(handler))
         assert good["connected"] and any("analyticsdata" in c for c in calls)  # the Data API was really called
-
-
-def test_gbp_distinguishes_enable_the_api_from_google_approval_and_never_connects_on_oauth_alone():
-    def make(status, body):
-        def handler(req):
-            u = str(req.url)
-            if "oauth2.googleapis.com" in u:
-                return httpx.Response(200, json={"access_token": "ya29.fake"})
-            if "mybusinessaccountmanagement" in u:
-                return httpx.Response(status, json=body) if status != 200 else httpx.Response(200, json={"accounts": [{"name": "accounts/1", "accountName": "Acme"}]})
-            if "mybusinessbusinessinformation" in u:
-                return httpx.Response(200, json={"locations": [{"name": "locations/9", "title": "Acme HQ"}]})
-            return httpx.Response(404)
-        return handler
-    with session_scope() as db:
-        _save_ads(db)
-        svc.save(db, "gbp", settings={}, secrets={"refresh_token": "1//0gbp"}, user_id=None)
-        res = svc.test_connection(db, "gbp", http=_client(make(429, {"error": {"message": "Quota exceeded for quota metric ... limit 0", "status": "RESOURCE_EXHAUSTED"}})))
-        assert not res["connected"] and res["status"] == "REQUIRES_APPROVAL"
-        card = svc.serialize(db, "gbp")
-        assert card["display"]["label"] == "Requires approval" and "Apply for Basic API access" in res["steps"][-1]["hint"]
-        res = svc.test_connection(db, "gbp", http=_client(make(403, {"error": {"message": "SERVICE_DISABLED: has not been used in project", "status": "PERMISSION_DENIED"}})))
-        assert res["status"] == "CONNECTION_FAILED" and "Enable" in res["steps"][-1]["hint"] and svc.serialize(db, "gbp")["display"]["label"] == "Connection failed"
-        res = svc.test_connection(db, "gbp", http=_client(make(200, {})))
-        assert res["connected"] and any(s["name"] == "List locations" and s["status"] == "PASSED" for s in res["steps"])
 
 
 def test_keyword_planner_dependency_chain_is_explicit():

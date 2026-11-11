@@ -76,10 +76,13 @@ def create(db: Session, actor: User, data: dict) -> Task:
     if not b.website_url:
         raise ValidationFailed("The business profile needs a website before tasks can run")
     if ttype == "BUILD_CAMPAIGN":
-        if float(fields.get("monthly_budget") or 0) <= 0:
-            raise ValidationFailed("Monthly budget is required")
-        if float(fields.get("weekly_target") or 0) <= 0:
-            raise ValidationFailed("Weekly conversion target is required")
+        # Both are optional: the budget is recommended from evidence, and the weekly target falls back to the client's.
+        for k in ("monthly_budget", "weekly_target"):
+            if fields.get(k) not in (None, "") and float(fields[k]) <= 0:
+                raise ValidationFailed(f"{'Monthly budget' if k == 'monthly_budget' else 'Weekly conversion target'} must be greater than 0 when supplied")
+        if not fields.get("weekly_target") and client.weekly_conversion_target:
+            fields["weekly_target"] = client.weekly_conversion_target
+            fields["weekly_target_source"] = "client"
         fields.setdefault("services", [s.name for s in clients_service.active_services(b)])
         if not fields["services"]:
             raise ValidationFailed("Add at least one service to the business profile")
@@ -148,7 +151,10 @@ class Runner:
     # ---------------------------------------------------------------- steps
     def s_load(self):
         if not self.account:
-            raise Stop("FAILED", "No Google Ads account is linked to this client")
+            if self.task.task_type == "AUDIT_ONLY" or self.campaign is not None:
+                raise Stop("FAILED", "No Google Ads account is linked to this client")
+            # Preparation (research, strategy, draft, validation) does not need an account; deployment does and is blocked at execution.
+            return "No Google Ads account linked: preparing a draft without account data (deployment needs a linked account)"
         counts = accounts_service.sync_account(self.db, self.account)
         return f"Account {self.account.customer_id} read ({registry.get('google_ads').source}): {counts['campaigns']} campaigns"
 
@@ -238,14 +244,16 @@ class Runner:
             self._apply_budget_decision()
         f = self.task.fields or {}
         if self.task.task_type == "BUILD_CAMPAIGN":
-            monthly, target, camp_ids = float(f["monthly_budget"]), float(f["weekly_target"]), None
+            monthly, target, camp_ids = float(f.get("monthly_budget") or 0), float(f.get("weekly_target") or 0), None
+            self._needs_recommendation = monthly <= 0
         else:
             monthly = self.campaign.monthly_budget_micros / 1e6 or self.campaign.daily_budget_micros * 30.4 / 1e6
             target = self.campaign.weekly_conversion_target or 0
             camp_ids = {self.campaign.external_id}
         history = None
         try:
-            history = feasibility.account_history(registry.get("google_ads"), self.account.customer_id, camp_ids)
+            if self.account:
+                history = feasibility.account_history(registry.get("google_ads"), self.account.customer_id, camp_ids)
         except AdapterError:
             history = None
         if self.task.task_type == "BUILD_CAMPAIGN" and history and history.get("clicks", 0) < 200:
@@ -262,6 +270,13 @@ class Runner:
             r.decision, r.decision_note = dec["decision"], dec.get("note", "")
             r.decided_by_id, r.decided_at = dec.get("by"), datetime.now(timezone.utc)
             r.accepted_monthly_budget, r.accepted_weekly_target = monthly, target
+        if self.task.task_type == "BUILD_CAMPAIGN" and getattr(self, "_needs_recommendation", False):
+            monthly = float(r.summary.get("monthly_budget") or 0)
+            if monthly <= 0:
+                raise Stop("FAILED", "A budget could not be recommended: cost per lead could not be estimated from the available evidence")
+            self.task.fields = {**(self.task.fields or {}), "monthly_budget": monthly,
+                                "budget_source": r.inputs.get("budget_source", "recommended")}
+            flag_modified(self.task, "fields")
         self.ctx["feasibility"] = feasibility.serialize(r)
         s = r.summary
         thin = ""

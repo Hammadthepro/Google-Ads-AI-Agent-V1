@@ -31,7 +31,6 @@ from app.models import IntegrationConfig
 GOOGLE_SCOPES = {
     "google_ads": ["https://www.googleapis.com/auth/adwords"],
     "ga4": ["https://www.googleapis.com/auth/analytics.readonly"],
-    "gbp": ["https://www.googleapis.com/auth/business.manage"],
 }
 ADS_API_VERSION = "v26"  # matches the installed google-ads library default
 
@@ -56,13 +55,6 @@ PROVIDERS: dict[str, dict] = {
         "settings": {"property_id": "GA4 property ID"}, "secrets": {"refresh_token": "Refresh token"},
         "required": ["refresh_token", "property_id"], "oauth": True, "scopes": GOOGLE_SCOPES["ga4"], "uses_google_client": True,
         "docs": "https://developers.google.com/analytics/devguides/reporting/data/v1",
-    },
-    "gbp": {
-        "label": "Google Business Profile", "group": "Google",
-        "description": "Business Profile data. Requires Google's Business Profile API access approval for the Cloud project.",
-        "settings": {"account_name": "Business Profile account (accounts/…)", "location_name": "Location (locations/…)"}, "secrets": {"refresh_token": "Refresh token"},
-        "required": ["refresh_token"], "oauth": True, "scopes": GOOGLE_SCOPES["gbp"], "uses_google_client": True,
-        "docs": "https://developers.google.com/my-business/content/prereqs",
     },
     "keyword_planner": {
         "label": "Keyword Planner", "group": "Google",
@@ -718,61 +710,6 @@ def _test_ga4(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "
     return {"properties": props}
 
 
-def _test_gbp(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
-    """Account Management API (accounts) then Business Information API (locations). OAuth alone is not enough: both must answer."""
-    need = [k for k in ("client_id", "client_secret", "refresh_token") if not vals.get(k)]
-    if need:
-        steps.fail("Credentials present", f"Missing: {', '.join(need)}", hint="Authorize Google with the Business Profile scope.")
-        return {}
-    steps.ok("Credentials present")
-    token = refresh_access_token(vals, http, steps)
-    if not token:
-        return {}
-    h = {"Authorization": f"Bearer {token}"}
-    project = _cloud_project_number(vals.get("client_id", ""))
-
-    def explain(r: httpx.Response, api: str, service: str) -> tuple[str, bool]:
-        body = r.text.lower()
-        if "service_disabled" in body or "has not been used" in body:
-            return (f"Enable “{api}” ({service}) in Google Cloud project {project or '(your project)'}: "
-                    f"https://console.cloud.google.com/apis/library/{service}" + (f"?project={project}" if project else ""), False)
-        if r.status_code == 429 or "quota" in body:
-            return ("Google has not granted this Cloud project Business Profile API access (quota 0). Apply for Basic API access: "
-                    "https://developers.google.com/my-business/content/prereqs#request-access (your website domain must match your email domain). "
-                    "A quota increase is not the fix.", True)
-        if r.status_code == 403:
-            return ("The authorised Google user cannot manage a Business Profile, or the consent did not include the business.manage scope.", False)
-        return ("", False)
-    try:
-        r = http.get("https://mybusinessaccountmanagement.googleapis.com/v1/accounts", headers=h)
-    except httpx.HTTPError as exc:
-        steps.fail("List Business Profile accounts", f"Request failed: {type(exc).__name__}")
-        return {}
-    if r.status_code != 200:
-        hint, approval = explain(r, "My Business Account Management API", "mybusinessaccountmanagement.googleapis.com")
-        steps.fail("List Business Profile accounts", _http_error(r), hint=hint, approval=approval)
-        return {}
-    accts = [{"name": a.get("name"), "account": a.get("accountName", ""), "type": a.get("type", "")} for a in r.json().get("accounts", [])]
-    steps.ok("List Business Profile accounts", f"{len(accts)} account(s)", accounts=accts[:50])
-    chosen = vals.get("account_name") or (accts[0]["name"] if accts else "")
-    if not chosen:
-        steps.fail("List locations", "This Google user has no Business Profile account, so there are no locations to read",
-                   hint="Authorise with the Google user that owns or manages the Business Profile listings.")
-        return {"accounts": accts}
-    try:
-        r = http.get(f"https://mybusinessbusinessinformation.googleapis.com/v1/{chosen}/locations", headers=h, params={"readMask": "name,title", "pageSize": 100})
-    except httpx.HTTPError as exc:
-        steps.fail("List locations", f"Request failed: {type(exc).__name__}")
-        return {"accounts": accts}
-    if r.status_code != 200:
-        hint, approval = explain(r, "My Business Business Information API", "mybusinessbusinessinformation.googleapis.com")
-        steps.fail("List locations", _http_error(r), hint=hint, approval=approval)
-        return {"accounts": accts}
-    locs = [{"name": x.get("name"), "title": x.get("title", "")} for x in r.json().get("locations", [])]
-    steps.ok("List locations", f"{len(locs)} location(s) in {chosen}", locations=locs[:100])
-    return {"accounts": accts, "locations": locs}
-
-
 def _groq_probe(http: httpx.Client, key: str, model: str, ids: list[str], steps: Steps, label: str, sub: str) -> dict:
     """A REAL chat completion in JSON mode (the mode the app uses). Passing needs HTTP 200 and a parseable JSON reply."""
     if ids and model not in ids:
@@ -1116,7 +1053,7 @@ def _test_crawler(vals: dict, http: httpx.Client, steps: Steps, row, target: str
 
 
 _TESTERS: dict[str, Callable] = {"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
-                                 "google_ads": _test_google_ads, "ga4": _test_ga4, "gbp": _test_gbp, "groq": _test_groq,
+                                 "google_ads": _test_google_ads, "ga4": _test_ga4, "groq": _test_groq,
                                  "claude": _test_claude, "pagespeed": _test_pagespeed, "places": _test_places,
                                  "crawler": _test_crawler}
 
@@ -1347,7 +1284,7 @@ def dependencies(db: Session, provider: str) -> list[dict]:
 
     def dep(key, label, ok, detail, action=""):
         out.append({"key": key, "label": label, "ok": bool(ok), "detail": detail, "action": action})
-    if provider in ("ga4", "gbp"):
+    if provider == "ga4":
         ads = effective("google_ads", _row(db, "google_ads"))
         have = bool(ads.get("client_id") and ads.get("client_secret"))
         dep("oauth_client", "Google OAuth client (shared, set on the Google Ads card)", have,
@@ -1451,15 +1388,12 @@ def serialize(db: Session, provider: str) -> dict:
         info = {"usage": ai_usage(db, "claude:%"), "models": (row.discovered or {}).get("models", []) if row else [],
                 "independent": "Claude uses its own API key and model and drafts the same inputs separately from Groq; each side then reviews the other's draft. "
                                "If Claude is unavailable the plan is created from the single available draft and says so."}
-    if provider in ("ga4", "gbp"):
+    if provider == "ga4":
         info = {"shared_oauth_client": "Uses the OAuth client ID/secret saved on the Google Ads card; has its OWN refresh token and scope.",
-                "properties": (row.discovered or {}).get("properties", []) if row else [], "accounts": (row.discovered or {}).get("accounts", []) if row else [],
-                "locations": (row.discovered or {}).get("locations", []) if row else [],
-                "required_apis": (["analyticsadmin.googleapis.com", "analyticsdata.googleapis.com"] if provider == "ga4" else
-                                  ["mybusinessaccountmanagement.googleapis.com", "mybusinessbusinessinformation.googleapis.com"]),
-                "approval": None if provider == "ga4" else "Google must approve Business Profile API access for the Cloud project (quota 0 until approved)."}
+                "properties": (row.discovered or {}).get("properties", []) if row else [],
+                "required_apis": ["analyticsadmin.googleapis.com", "analyticsdata.googleapis.com"]}
     if provider == "places":
-        info = {"required_apis": ["places.googleapis.com (Places API (New))"], "note": "Billing must be enabled and the key restricted to Places API (New). Not the Business Profile API."}
+        info = {"required_apis": ["places.googleapis.com (Places API (New))"], "note": "Billing must be enabled and the key restricted to Places API (New). No Business Profile API is used anywhere."}
     if provider == "crawler":
         from app.adapters.crawler import MAX_BYTES
         info = {"guarantees": ["Resolves DNS itself and refuses private, loopback, link-local and reserved addresses", "Re-checks every redirect hop",
@@ -1522,13 +1456,13 @@ def ai_usage(db: Session, prefix: str) -> dict:
 
 
 def options(db: Session, provider: str, *, http: httpx.Client | None = None) -> dict:
-    """Real, read-only discovery of the choices a user must pick from (GA4 properties, Business Profile accounts/locations, Claude models).
+    """Real, read-only discovery of the choices a user must pick from (GA4 properties, Claude models).
     Nothing is saved and no connection status changes."""
-    if provider not in ("ga4", "gbp", "claude"):
+    if provider not in ("ga4", "claude"):
         raise ValidationFailed(f"{provider} has no selectable options")
     row = _row(db, provider)
     vals = effective(provider, row)
-    if provider in ("ga4", "gbp"):
+    if provider == "ga4":
         ads = effective("google_ads", _row(db, "google_ads"))
         vals.setdefault("client_id", ads.get("client_id", ""))
         vals.setdefault("client_secret", ads.get("client_secret", ""))
@@ -1543,7 +1477,7 @@ def options(db: Session, provider: str, *, http: httpx.Client | None = None) -> 
     failed = next((x for x in steps.items if x["status"] == "FAILED"), None)
     return {"provider": provider, "ok": failed is None or provider == "ga4" and bool(found.get("properties")),
             "error": ({"step": failed["name"], "detail": failed["detail"], "hint": failed.get("hint", "")} if failed else None),
-            "properties": found.get("properties", []), "accounts": found.get("accounts", []), "locations": found.get("locations", []),
+            "properties": found.get("properties", []),
             "models": [m for m in found.get("models", []) if not NOT_CLAUDE_CHAT.search(m)] if provider == "claude" else []}
 
 

@@ -32,6 +32,8 @@ TYPE_HINTS = (("home_services", ("plumb", "hvac", "heating", "cooling", "electri
               ("dental", ("dent", "orthodon", "oral")), ("legal", ("law", "attorney", "lawyer", "legal")))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 ID_RE = re.compile(r"\b(GTM-[A-Z0-9]{4,8}|G-[A-Z0-9]{6,12}|AW-\d{6,12})\b")
+MAX_COMPETITORS = 10
+GBP_HOSTS = ("google.com", "maps.app.goo.gl", "goo.gl", "g.page", "share.google", "business.google.com", "maps.google.com")
 ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
 
 
@@ -41,6 +43,25 @@ def business_type_for(category: str) -> str:
         if any(w in c for w in words):
             return t
     return "default"
+
+
+def normalize_gbp_url(raw: str) -> str | None:
+    """A Google Maps / Business Profile share link. Returns the cleaned https URL, or None when it is not one."""
+    t = (raw or "").strip()
+    if not t or re.search(r"\s", t):
+        return None
+    if not re.match(r"^https?://", t, re.I):
+        t = "https://" + t
+    u = urlparse(t)
+    host = (u.hostname or "").lower()
+    if u.scheme not in ("http", "https") or not host:
+        return None
+    ok = any(host == h or host.endswith("." + h) for h in GBP_HOSTS)
+    if host.endswith("google.com") and not (host.startswith(("maps.", "business.", "www.google")) or host == "google.com"):
+        ok = False
+    if host in ("google.com", "www.google.com") and not u.path.lower().startswith(("/maps", "/search", "/local", "/business", "/localservices")):
+        ok = False
+    return t if ok else None
 
 
 def parse_budget(raw) -> float | None:
@@ -170,8 +191,17 @@ def validate_profile(db: Session, payload: dict, *, exclude_client_id: str | Non
         else:
             gtm = ids[0]
     has_gbp = p.get("has_gbp")
+    gbp_url = ""
     if has_gbp not in (True, False):
         e["has_gbp"] = "Choose Yes or No"
+    elif has_gbp is True:
+        raw_gbp = (p.get("gbp_url") or "").strip()
+        if not raw_gbp:
+            e["gbp_url"] = "Paste the Google Maps or Google Business Profile link"
+        else:
+            gbp_url = normalize_gbp_url(raw_gbp) or ""
+            if not gbp_url:
+                e["gbp_url"] = "Enter a valid Google Maps or Google Business Profile link"
     services = _clean_list(p.get("services"), limit=30, maxlen=100)
     if not services:
         e["services"] = "Add at least one service"
@@ -201,27 +231,46 @@ def validate_profile(db: Session, payload: dict, *, exclude_client_id: str | Non
                 raise ValueError
         except (TypeError, ValueError):
             e["radius_miles"] = "Radius must be between 1 and 500 miles"
+    # The monthly budget is no longer asked for: the analysis recommends one from evidence. A value that is supplied is still validated.
     budget = parse_budget(p.get("monthly_budget"))
-    if p.get("monthly_budget") in (None, ""):
-        e["monthly_budget"] = "Monthly ad budget is required"
-    elif budget is None or budget <= 0:
-        e["monthly_budget"] = "Enter an amount like 1500, 1,500 or 1.5k"
-    elif budget > 1_000_000:
-        e["monthly_budget"] = "That budget looks too large — check the amount"
+    if p.get("monthly_budget") not in (None, ""):
+        if budget is None or budget <= 0:
+            e["monthly_budget"] = "Enter an amount like 1500, 1,500 or 1.5k, or leave it blank"
+        elif budget > 1_000_000:
+            e["monthly_budget"] = "That budget looks too large — check the amount"
+    weekly = None
+    raw_weekly = p.get("weekly_conversion_target")
+    if raw_weekly not in (None, ""):
+        try:
+            weekly = float(str(raw_weekly).strip())
+            if weekly != weekly or weekly <= 0 or weekly > 100_000:
+                raise ValueError
+        except (TypeError, ValueError):
+            weekly = None
+            e["weekly_conversion_target"] = "Enter a number greater than 0 (for example 15), or leave it blank if unknown"
     comps = []
     raw_comps = [c for c in (p.get("competitors") or []) if (c.get("name") or c.get("website") or c.get("maps_url") or "").strip()]
-    if len(raw_comps) > 3:
-        e["competitors"] = "Up to 3 competitors"
-    for i, c in enumerate(raw_comps[:3]):
-        cname, cweb, cmaps = (c.get("name") or "").strip(), normalize_url(c.get("website") or ""), (c.get("maps_url") or "").strip()
-        if not cname and not (c.get("website") or "").strip():
-            e[f"competitors.{i}"] = "Add a name or a website"
+    if len(raw_comps) > MAX_COMPETITORS:
+        e["competitors"] = f"Up to {MAX_COMPETITORS} competitors"
+    for i, c in enumerate(raw_comps[:MAX_COMPETITORS]):
+        cname, cweb_raw = (c.get("name") or "").strip(), (c.get("website") or "").strip()
+        cmaps = (c.get("maps_url") or "").strip()
+        bad = False
+        if not cname:
+            e[f"competitors.{i}"] = "Competitor name is required"
+            bad = True
+        cweb = normalize_url(cweb_raw) if cweb_raw else None
+        if not cweb_raw:
+            e[f"competitors.{i}.website"] = "Competitor website is required"
+            bad = True
         elif cweb is None:
-            e[f"competitors.{i}.website"] = "Enter a valid website"
-        elif cmaps and "google." not in cmaps.lower() and "goo.gl" not in cmaps.lower():
+            e[f"competitors.{i}.website"] = "Enter a valid website, e.g. competitor.com"
+            bad = True
+        if cmaps and "google." not in cmaps.lower() and "goo.gl" not in cmaps.lower() and "g.page" not in cmaps.lower():
             e[f"competitors.{i}.maps_url"] = "Paste a Google Maps link"
-        else:
-            comps.append({"name": cname or host_of(cweb or ""), "website": cweb or "", "maps_url": cmaps})
+            bad = True
+        if not bad:
+            comps.append({"name": cname, "website": cweb or "", "maps_url": cmaps})
     if website and not e.get("website"):
         other = db.scalars(select(Business).where(Business.website_url.ilike(f"%{host_of(website)}%"))).all()
         clash = next((b for b in other if host_of(b.website_url) == host_of(website) and b.client_id != exclude_client_id), None)
@@ -229,7 +278,7 @@ def validate_profile(db: Session, payload: dict, *, exclude_client_id: str | Non
             code = db.get(Client, clash.client_id).client_code
             e["website"] = f"This website already belongs to client {code} ({clash.name})"
     clean = {"name": name, "category": category, "phone": phone or "", "email": email, "website": website or "", "lead_form_url": lead or "",
-             "thank_you_url": thanks or "", "gtm_id": gtm, "has_gbp": has_gbp, "services": services, "selling_points": points,
+             "thank_you_url": thanks or "", "gtm_id": gtm, "has_gbp": has_gbp, "gbp_url": gbp_url, "weekly_conversion_target": weekly, "services": services, "selling_points": points,
              "service_areas": areas, "states": states, "targeting_mode": mode, "radius_miles": radius, "monthly_budget": budget or 0,
              "competitors": comps, "notes": (p.get("notes") or "").strip()[:4000]}
     return clean, e
@@ -241,8 +290,7 @@ def _apply(db: Session, b: Business, c: dict) -> None:
     b.phone, b.email, b.website_url, b.lead_form_url, b.thank_you_url, b.gtm_id = (
         c["phone"], c["email"], c["website"], c["lead_form_url"], c["thank_you_url"], c["gtm_id"])
     b.has_gbp = c["has_gbp"]
-    if c["has_gbp"] is False:
-        b.gbp_url = ""
+    b.gbp_url = c["gbp_url"] if c["has_gbp"] else ""  # "No" always clears a previously entered link
     b.verified_claims = c["selling_points"]
     b.service_areas, b.states, b.targeting_mode = c["service_areas"], c["states"], c["targeting_mode"]
     b.zip_codes = sorted({a["zip"] for a in c["service_areas"] if a["zip"]})
@@ -278,7 +326,8 @@ def create(db: Session, user: User, payload: dict) -> tuple[Client, Business]:
     clean, errors = validate_profile(db, payload)
     if errors:
         _fail(errors)
-    client = Client(name=clean["name"], owner_contact=user.email, created_by_id=user.id, monthly_budget_usd=clean["monthly_budget"])
+    client = Client(name=clean["name"], owner_contact=user.email, created_by_id=user.id, monthly_budget_usd=clean["monthly_budget"],
+                    weekly_conversion_target=clean["weekly_conversion_target"] or 0)
     db.add(client)
     db.flush()
     b = Business(client_id=client.id, name=clean["name"])
@@ -301,7 +350,8 @@ def get(db: Session, user: User, client_id: str, business_id: str | None = None)
 def to_form(client: Client, b: Business) -> dict:
     return {"client_id": client.id, "client_code": client.client_code, "business_id": b.id, "name": b.name, "category": b.category or b.business_type,
             "phone": b.phone, "email": b.email, "website": b.website_url, "lead_form_url": b.lead_form_url,
-            "thank_you_url": b.thank_you_url, "gtm_id": b.gtm_id, "has_gbp": b.has_gbp,
+            "thank_you_url": b.thank_you_url, "gtm_id": b.gtm_id, "has_gbp": b.has_gbp, "gbp_url": b.gbp_url or "",
+            "weekly_conversion_target": client.weekly_conversion_target or "",
             "services": [s.name for s in b.services if not s.is_excluded], "selling_points": list(b.verified_claims or []),
             "service_areas": [a["label"] for a in (b.service_areas or [])] or ([b.address] if b.address else []),
             "states": list(b.states or []), "targeting_mode": b.targeting_mode or "AREAS", "radius_miles": b.default_radius_miles,
@@ -322,6 +372,7 @@ def update(db: Session, user: User, client_id: str, business_id: str | None, pay
     before = to_form(client, b)
     _apply(db, b, clean)
     client.monthly_budget_usd = clean["monthly_budget"]
+    client.weekly_conversion_target = clean["weekly_conversion_target"] or 0
     if len(client.businesses) == 1:
         client.name = clean["name"]
     db.flush()

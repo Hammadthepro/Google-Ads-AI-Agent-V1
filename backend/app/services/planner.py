@@ -213,13 +213,14 @@ def location_ops(campaign_ref: str, business: Business, fields: dict) -> list[di
                                       "address": {"street_address": business.address, "country_code": "US"}}}}]
 
 
-def build_campaign_payload(db: Session, task: Task, business: Business, account: GoogleAdsAccount, draft: dict) -> dict:
+def build_campaign_payload(db: Session, task: Task, business: Business, account: GoogleAdsAccount | None, draft: dict) -> dict:
     t = _Temp()
     fields = task.fields or {}
     monthly = float(fields.get("monthly_budget") or 0)
     daily_micros = to_micros(round(monthly / 30.4, 2))
     b_ref, c_ref = t.next(), t.next()
-    existing_names = {c.get("name") for c in registry.get("google_ads").list_campaigns(account.customer_id)}
+    # Preparation does not need an account. Without one, duplicate-name and shared-list checks happen when the draft is bound to one.
+    existing_names = {c.get("name") for c in registry.get("google_ads").list_campaigns(account.customer_id)} if account else set()
     name, n = draft["campaign_name"], 2
     while name in existing_names:  # Google Ads requires unique campaign names; renaming is recorded on the card
         name, n = f"{draft['campaign_name']} #{n}", n + 1
@@ -247,7 +248,7 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
                     "fields": {"campaign": f"temp:{c_ref}", "type": "KEYWORD", "negative": True,
                                "keyword": {"text": n.lower(), "match_type": "EXACT"}}})
     existing_list = [s for s in registry.get("google_ads").list_resources(account.customer_id, "shared_set")
-                     if s.get("name") == SHARED_LIST_NAME]
+                     if s.get("name") == SHARED_LIST_NAME] if account else []
     if existing_list:
         list_ref = existing_list[0]["resource_name"]
     else:
@@ -285,12 +286,13 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
         ops += [{"resource": "asset", "op": "create", "temp_id": a_ref, "fields": {"type": "CALLOUT", "callout_asset": {"callout_text": co[:25]}}},
                 {"resource": "campaign_asset", "op": "create",
                  "fields": {"campaign": f"temp:{c_ref}", "asset": f"temp:{a_ref}", "field_type": "CALLOUT"}}]
-    return {"kind": "BUILD_CAMPAIGN", "customer_id": account.customer_id, "operations": ops,
+    return {"kind": "BUILD_CAMPAIGN", "customer_id": account.customer_id if account else None, "operations": ops,
             "summary": {"campaign_name": draft["campaign_name"], "daily_budget": daily_micros / 1e6, "monthly_budget": monthly,
                         "bidding_strategy": draft["bidding_strategy"], "ad_groups": [g["name"] for g in draft["ad_groups"]],
                         "keywords": sum(len(g.get("keywords", [])) for g in draft["ad_groups"]),
                         "negatives": len(negs) + len(PATTERN_NEGATIVES), "status_on_create": "PAUSED",
                         "network": "Google Search only (Search Partners and Display off)", "geo_target_type": "PRESENCE",
+                        "deployment_account": account.customer_id if account else "not linked yet (draft only)",
                         "locations": fields.get("zip_codes") or f"{fields.get('radius_miles') or business.default_radius_miles} mile radius",
                         **({"renamed_to_avoid_duplicate": True} if renamed else {})},
             "internal": {"weekly_conversion_target": float(fields.get("weekly_target") or 0), "monthly_budget": monthly,

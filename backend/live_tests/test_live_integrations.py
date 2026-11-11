@@ -68,7 +68,7 @@ def test_google_ads_account_read_and_campaign_data(integration):
 
 
 @pytest.mark.parametrize("provider,target", [("groq", "primary"), ("groq", "challenger"), ("claude", "all"), ("places", "all"),
-                                              ("pagespeed", "all"), ("ga4", "all"), ("gbp", "all"), ("keyword_planner", "all"), ("smtp", "all"),
+                                              ("pagespeed", "all"), ("ga4", "all"), ("keyword_planner", "all"), ("smtp", "all"),
                                               ("database", "all"), ("redis", "all"), ("crawler", "all")])
 def test_provider_connection(integration, provider, target):
     res = integration(provider, target)

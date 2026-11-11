@@ -331,7 +331,7 @@ def test_only_super_admin_can_manage_integrations():
 def test_health_and_test_all_never_fake_success():
     sup = Api(SUPER)
     h = sup.get("/integrations/health").json()
-    assert {i["provider"] for i in h["items"]} >= {"google_ads", "ga4", "gbp", "keyword_planner", "groq", "claude", "pagespeed", "places", "crawler"}
+    assert {i["provider"] for i in h["items"]} >= {"google_ads", "ga4", "keyword_planner", "groq", "claude", "pagespeed", "places", "crawler"}
     assert all(i["status"] != "CONNECTED" for i in h["items"] if i["provider"] in ("google_ads", "groq", "claude", "ga4"))
     r = sup.post("/integrations/test-all").json()
     ads = next(x for x in r["results"] if x["provider"] == "google_ads")

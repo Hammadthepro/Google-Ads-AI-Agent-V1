@@ -51,7 +51,13 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
     ops = payload.get("operations", [])
     kind = payload.get("kind", "")
     internal_only = kind in ("CHANGE_TARGET",)
-    if not payload.get("customer_id"):
+    unbound_draft = not payload.get("customer_id") and kind in ("BUILD_CAMPAIGN", "ADD_AD_GROUP")
+    if unbound_draft:
+        # A draft prepared before any account is linked is validated locally. Google's validate-only check needs a customer, so it runs
+        # (and execution is allowed) only once the draft is bound to one; execution refuses an unbound payload.
+        warnings.append(_err("DEPLOYMENT_ACCOUNT_MISSING", "No Google Ads account is linked: this draft was validated locally only. "
+                             "Google's own validation and deployment need a linked account.", severity="warning"))
+    elif not payload.get("customer_id"):
         errors.append(_err("REQUIRED", "customer_id is required"))
     if not ops and not internal_only:
         errors.append(_err("REQUIRED", "No operations to validate"))
@@ -190,7 +196,7 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
                                  severity="warning"))
     # Google-side validate-only (validate_only=true asks Google to validate and creates nothing)
     adapter_result: dict = {}
-    if run_adapter and ops and not errors:
+    if run_adapter and ops and not errors and not unbound_draft:
         try:
             adapter_result = ads.mutate(payload["customer_id"], ops, validate_only=True)
         except AdapterError as exc:

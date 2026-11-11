@@ -58,6 +58,20 @@ def calculate(*, monthly_budget: float, weekly_target: float, cpc_range: tuple[f
     }
 
 
+LEARNING_CONVERSIONS_PER_MONTH = 30  # planning assumption: enough conversions for automated bidding to learn from (not a Google guarantee)
+
+
+def recommend_budget(expected_cpc: float, expected_cvr: float, weekly_target: float, weeks_per_month: float = 4.345) -> tuple[float, str]:
+    """Budget when none was supplied. Target-driven when a weekly target exists, otherwise the budget that would buy the learning-threshold
+    number of conversions at the expected cost per lead. Returns (monthly_budget, source). Estimates only."""
+    cpl = expected_cpc / expected_cvr if expected_cpc > 0 and expected_cvr > 0 else None
+    if not cpl:
+        return 0.0, "unavailable"
+    if weekly_target:
+        return float(recommended_budget(weekly_target * cpl * weeks_per_month) or 0), "recommended_from_weekly_target"
+    return float(recommended_budget(LEARNING_CONVERSIONS_PER_MONTH * cpl) or 0), "recommended_from_learning_threshold"
+
+
 def recommended_budget(needed_monthly: float | None) -> float | None:
     """Budget needed for the target at the expected CPL, rounded UP to the next $50 (estimate)."""
     if not needed_monthly:
@@ -127,9 +141,12 @@ def run(db: Session, business: Business, *, monthly_budget: float, weekly_target
     gbp = audits.get("gbp") or {}
     adj, review_info = review_adjustment(gbp.get("client"), gbp.get("competitors", []),
                                          float(settings_service.get_value("feasibility.review_adjust_max", 0.2, db)))
+    wpm = float(settings_service.get_value("feasibility.weeks_per_month", 4.345, db))
+    budget_source = "supplied"
+    if monthly_budget <= 0:
+        monthly_budget, budget_source = recommend_budget(cpc[1], cvr[1] * (1 - adj), weekly_target, wpm)
     result = calculate(monthly_budget=monthly_budget, weekly_target=weekly_target, cpc_range=cpc, cvr_range=cvr,
-                       review_adjustment=adj,
-                       weeks_per_month=float(settings_service.get_value("feasibility.weeks_per_month", 4.345, db)))
+                       review_adjustment=adj, weeks_per_month=wpm)
     bottlenecks = []
     if review_info and review_info.get("reviews_needed_to_reach_median", 0) > 0 and adj > 0:
         need = review_info["reviews_needed_to_reach_median"]
@@ -162,7 +179,8 @@ def run(db: Session, business: Business, *, monthly_budget: float, weekly_target
     row = FeasibilityResult(client_id=business.client_id, business_id=business.id, task_id=task_id, campaign_id=campaign_id,
                             inputs={"monthly_budget": monthly_budget, "weekly_target": weekly_target,
                                     "cpc_range": [round(x, 2) for x in cpc], "cvr_range": [round(x, 4) for x in cvr],
-                                    "basis": basis, "review_info": review_info, "business_type": business.business_type},
+                                    "basis": basis, "review_info": review_info, "business_type": business.business_type,
+                                    "budget_source": budget_source},
                             scenarios=result["scenarios"], summary={**{k: v for k, v in result.items() if k != "scenarios"},
                                                                     "effort_estimate": effort},
                             status=result["status"], bottlenecks=bottlenecks, source_type=source_type)

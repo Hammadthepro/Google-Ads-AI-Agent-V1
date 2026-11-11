@@ -8,19 +8,19 @@ import { Button, cx, ErrorBox, inputCls, Select, Spinner } from "../components/u
 type Competitor = { name: string; website: string; maps_url: string };
 type Profile = {
   name: string; category: string; phone: string; email: string; website: string; lead_form_url: string; thank_you_url: string; gtm_id: string;
-  has_gbp: boolean | null; services: string[]; selling_points: string[]; service_areas: string[]; states: string[];
+  has_gbp: boolean | null; gbp_url: string; weekly_conversion_target: string; services: string[]; selling_points: string[]; service_areas: string[]; states: string[];
   targeting_mode: "AREAS" | "RADIUS"; radius_miles: number; monthly_budget: string; competitors: Competitor[]; notes: string;
 };
-const EMPTY: Profile = { name: "", category: "", phone: "", email: "", website: "", lead_form_url: "", thank_you_url: "", gtm_id: "", has_gbp: null, services: [],
+const EMPTY: Profile = { name: "", category: "", phone: "", email: "", website: "", lead_form_url: "", thank_you_url: "", gtm_id: "", has_gbp: null, gbp_url: "", weekly_conversion_target: "", services: [],
   selling_points: [], service_areas: [], states: [], targeting_mode: "AREAS", radius_miles: 20, monthly_budget: "", competitors: [{ name: "", website: "", maps_url: "" }], notes: "" };
 
 const SECTIONS = [
   { id: "business", label: "Business", fields: ["name", "category", "phone"] },
   { id: "website", label: "Website", fields: ["website"] },
-  { id: "gbp", label: "Google profile", fields: ["has_gbp"] },
+  { id: "gbp", label: "Google profile", fields: ["has_gbp", "gbp_url"] },
   { id: "services", label: "Services", fields: ["services"] },
   { id: "locations", label: "Locations", fields: ["service_areas", "targeting_mode"] },
-  { id: "budget", label: "Budget", fields: ["monthly_budget"] },
+  { id: "targets", label: "Target", fields: ["weekly_conversion_target"] },
   { id: "competitors", label: "Competitors", fields: [] },
   { id: "notes", label: "Notes", fields: [] },
 ];
@@ -109,7 +109,7 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
     if (mode === "edit" && existing.data && !loaded.current) {
       loaded.current = true;
       const d = existing.data;
-      setP({ ...EMPTY, ...d, monthly_budget: d.monthly_budget ? String(d.monthly_budget) : "", competitors: d.competitors?.length ? d.competitors : EMPTY.competitors });
+      setP({ ...EMPTY, ...d, monthly_budget: d.monthly_budget ? String(d.monthly_budget) : "", weekly_conversion_target: d.weekly_conversion_target ? String(d.weekly_conversion_target) : "", gbp_url: d.gbp_url ?? "", competitors: d.competitors?.length ? d.competitors : EMPTY.competitors });
     }
   }, [existing.data, mode]);
   useEffect(() => { if (mode === "new") { loaded.current = false; setP(EMPTY); setTouched({}); setSubmitted(false); } }, [mode, id]);
@@ -135,6 +135,8 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
   const sectionDone = useMemo(() => SECTIONS.map((s) => {
     if (s.id === "competitors") return p.competitors.some((c) => c.name || c.website);
     if (s.id === "notes") return !!p.notes.trim();
+    if (s.id === "gbp") return p.has_gbp !== null && !errors.has_gbp && !errors.gbp_url && (p.has_gbp === false || !!p.gbp_url.trim());
+    if (s.id === "targets") return !errors.weekly_conversion_target;  // optional: complete unless something invalid was typed
     return s.fields.every((f) => !errors[f] && ((p as any)[f] !== "" && (p as any)[f] !== null && !(Array.isArray((p as any)[f]) && !(p as any)[f].length)));
   }), [p, errors]);
   const doneCount = sectionDone.filter(Boolean).length;
@@ -201,10 +203,16 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
             </div>
           </Card>
 
-          <Card id="gbp" title="Google Business Profile" hint="With a profile, its address, hours, phone and reviews are read from Google.">
-            <div><div className="mb-1 text-sm font-medium text-slate-800">Does the client have a Google Business Profile? <span className="text-rose-600">*</span></div>
-              <Toggle label="Has Google Business Profile" options={[{ value: true, label: "Yes" }, { value: false, label: "No" }]} value={p.has_gbp} onChange={(v) => { set("has_gbp", v); touch("has_gbp"); }} />
+          <Card id="gbp" title="Google Business Profile" hint="The public profile is used as a research input (reviews, services, location). No Google Business Profile API connection is needed.">
+            <div><div className="mb-1 text-sm font-medium text-slate-800">Does this business have a Google Business Profile? <span className="text-rose-600">*</span></div>
+              <Toggle label="Has Google Business Profile" options={[{ value: true, label: "Yes" }, { value: false, label: "No" }]} value={p.has_gbp}
+                onChange={(v) => { setP((x) => ({ ...x, has_gbp: v, gbp_url: v ? x.gbp_url : "" })); touch("has_gbp"); }} />
               {e("has_gbp") && <span role="alert" className="mt-1 block text-xs text-rose-700">{e("has_gbp")}</span>}</div>
+            {p.has_gbp === true && (
+              <Field label="Google Business Profile URL" required error={e("gbp_url")}>
+                <input className={inputCls} type="url" inputMode="url" placeholder="Paste the Google Maps or Google Business Profile link" value={p.gbp_url}
+                  onChange={(ev) => set("gbp_url", ev.target.value)} onBlur={() => touch("gbp_url")} />
+              </Field>)}
           </Card>
 
           <Card id="services" title="Services" hint="Every service becomes its own ad group. The key selling points are the only claims the ads may use.">
@@ -223,24 +231,24 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
                 <div className="mt-3 max-w-xs"><Field label="Radius (miles) around the first area" error={e("radius_miles")}><input className={inputCls} type="number" min={1} max={500} value={p.radius_miles} onChange={(ev) => set("radius_miles", Number(ev.target.value))} /></Field></div>)}</div>
           </Card>
 
-          <Card id="budget" title="Budget" hint="The analysis suggests the most suitable budget and the leads it should bring.">
-            <div className="max-w-sm"><Field label="Monthly ad budget (USD)" required error={e("monthly_budget")}>
-              <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-slate-500">$</span>
-                <input className={cx(inputCls, "pl-7")} inputMode="decimal" placeholder="1500 · 1,500 · 1.5k" value={p.monthly_budget} onChange={(ev) => set("monthly_budget", ev.target.value)} onBlur={() => touch("monthly_budget")} /></div></Field></div>
+          <Card id="targets" title="Weekly conversion target" hint="Optional. A conversion is whatever the client counts as a result: a qualified lead, call, purchase or booking. Leave it blank if unknown: the analysis recommends the daily and monthly budget from the evidence, so there is no budget to guess.">
+            <div className="max-w-sm"><Field label="Weekly conversion target" note="optional" error={e("weekly_conversion_target")}>
+              <input className={inputCls} inputMode="decimal" placeholder="e.g. 15 conversions per week" value={p.weekly_conversion_target}
+                onChange={(ev) => set("weekly_conversion_target", ev.target.value)} onBlur={() => touch("weekly_conversion_target")} /></Field></div>
           </Card>
 
-          <Card id="competitors" title="Competitors" hint="Up to 3. The name or the website is enough; the Google Maps link makes the review comparison exact.">
+          <Card id="competitors" title="Competitors" hint="Every competitor needs a name and a website: both feed the website crawl, service comparison and keyword research. The Google Maps link is optional.">
             {p.competitors.map((c, i) => (
               <div key={i} className="space-y-3 rounded-lg border border-slate-200 p-4">
                 <div className="flex items-center justify-between text-sm"><span className="font-medium text-slate-800">Competitor {i + 1}</span>
                   <button type="button" className="text-slate-500 hover:text-rose-700" onClick={() => set("competitors", p.competitors.length > 1 ? p.competitors.filter((_, j) => j !== i) : [{ name: "", website: "", maps_url: "" }])}>Remove</button></div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="Name" error={e(`competitors.${i}`)}><input className={inputCls} placeholder="e.g. Ace Plumbing" value={c.name} onChange={(ev) => setComp(i, { name: ev.target.value })} /></Field>
-                  <Field label="Website" error={e(`competitors.${i}.website`)}><input className={inputCls} placeholder="aceplumbing.com" value={c.website} onChange={(ev) => setComp(i, { website: ev.target.value })} /></Field>
+                  <Field label="Name" required error={e(`competitors.${i}`)}><input className={inputCls} placeholder="e.g. Ace Plumbing" value={c.name} onChange={(ev) => setComp(i, { name: ev.target.value })} /></Field>
+                  <Field label="Website" required error={e(`competitors.${i}.website`)}><input className={inputCls} placeholder="aceplumbing.com" value={c.website} onChange={(ev) => setComp(i, { website: ev.target.value })} /></Field>
                 </div>
                 <Field label="Google Maps link" note="optional" error={e(`competitors.${i}.maps_url`)}><input className={inputCls} placeholder="google.com/maps/place/…" value={c.maps_url} onChange={(ev) => setComp(i, { maps_url: ev.target.value })} /></Field>
               </div>))}
-            {p.competitors.length < 3 && <button type="button" onClick={() => set("competitors", [...p.competitors, { name: "", website: "", maps_url: "" }])}
+            {p.competitors.length < 10 && <button type="button" onClick={() => set("competitors", [...p.competitors, { name: "", website: "", maps_url: "" }])}
               className="w-full rounded-lg border border-dashed border-brand-300 py-2.5 text-sm font-medium text-brand-700 hover:bg-brand-50">+ Add competitor</button>}
             {e("competitors") && <span role="alert" className="block text-xs text-rose-700">{e("competitors")}</span>}
           </Card>
@@ -255,7 +263,7 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
           <span className={cx("text-sm font-medium", toFix ? "text-rose-700" : "text-emerald-700")} aria-live="polite">{toFix ? `${toFix} field(s) to fix` : "Ready to save"}</span>
           <div className="flex gap-2">
-            <Button onClick={() => { setP(mode === "edit" && existing.data ? { ...EMPTY, ...existing.data, monthly_budget: String(existing.data.monthly_budget ?? ""), competitors: existing.data.competitors?.length ? existing.data.competitors : EMPTY.competitors } : EMPTY); setTouched({}); setSubmitted(false); save.reset(); }}>{mode === "edit" ? "Reset" : "Clear"}</Button>
+            <Button onClick={() => { setP(mode === "edit" && existing.data ? { ...EMPTY, ...existing.data, monthly_budget: existing.data.monthly_budget ? String(existing.data.monthly_budget) : "", weekly_conversion_target: existing.data.weekly_conversion_target ? String(existing.data.weekly_conversion_target) : "", gbp_url: existing.data.gbp_url ?? "", competitors: existing.data.competitors?.length ? existing.data.competitors : EMPTY.competitors } : EMPTY); setTouched({}); setSubmitted(false); save.reset(); }}>{mode === "edit" ? "Reset" : "Clear"}</Button>
             <Button variant="primary" disabled={save.isPending} onClick={submit}>{save.isPending ? "Saving…" : mode === "new" ? "Save client" : "Save changes"}</Button>
           </div>
         </div>

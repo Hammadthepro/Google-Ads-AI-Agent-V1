@@ -41,7 +41,7 @@ def validate(db: Session, business: Business, client: Client, task_type: str, fi
                              "Neither a phone number nor a lead form URL is set, so leads cannot be measured."))
     if not business.address and not business.zip_codes:
         issues.append(_issue("NO_LOCATION", "BLOCKER", "address", "Neither an address nor ZIP codes are set, so targeting cannot be built."))
-    if not business.gbp_url:
+    if business.has_gbp is not False and not business.gbp_url:
         issues.append(_issue("NO_GBP", "WARNING", "gbp_url", "No Google Business Profile URL: review and competitor benchmarks will be missing."))
     if not business.business_hours:
         issues.append(_issue("NO_HOURS", "WARNING", "business_hours", "No business hours: the call asset cannot be limited to open hours."))
@@ -57,12 +57,17 @@ def validate(db: Session, business: Business, client: Client, task_type: str, fi
     account = db.get(GoogleAdsAccount, business.google_ads_account_id) if business.google_ads_account_id else None
     if account is None and client.id:
         account = db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client.id))
-    if task_type != "AUDIT_ONLY" and account is None:
-        issues.append(_issue("NO_ADS_ACCOUNT", "BLOCKER", "google_ads_account_id", "No Google Ads account is linked to this client."))
+    if account is None:
+        # Never a blocker for preparation (research, strategy, drafts, validation). The account is required only to read an account
+        # (audit-only) and to deploy; execution enforces it.
+        sev = "BLOCKER" if task_type == "AUDIT_ONLY" else "WARNING"
+        issues.append(_issue("NO_ADS_ACCOUNT", sev, "google_ads_account_id",
+                             "No Google Ads account is linked to this client." if sev == "BLOCKER" else
+                             "No Google Ads account is linked yet. Preparation continues; link an account before deployment."))
 
     if task_type == "BUILD_CAMPAIGN":
-        monthly = float(fields.get("monthly_budget") or 0)
-        target = float(fields.get("weekly_target") or 0)
+        monthly = float(fields.get("monthly_budget") or 0)  # optional: the analysis recommends a budget when it is absent
+        target = float(fields.get("weekly_target") or client.weekly_conversion_target or 0)
         wanted = [s for s in (fields.get("services") or []) if s]
         if not active:
             issues.append(_issue("NO_SERVICES", "BLOCKER", "services", "The business has no active services."))

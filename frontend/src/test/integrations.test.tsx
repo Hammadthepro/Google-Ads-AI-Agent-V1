@@ -26,8 +26,6 @@ const ITEMS = [
   { ...base, provider: "groq", label: "Groq (internal AI)", group: "AI", description: "Groq", settings: {}, secrets: {} },
   { ...base, provider: "crawler", label: "Website crawler", group: "Website research", description: "Crawler", settings: {}, secrets: {} },
   { ...base, provider: "database", label: "Database", group: "System", description: "DB", readonly: true, deployment_managed: true, settings: {}, secrets: {} },
-  { ...base, provider: "gbp", label: "Google Business Profile", group: "Google", description: "GBP", status: "REQUIRES_APPROVAL", settings: {}, secrets: {},
-    display: { config: "Configured", connection: "Requires approval", label: "Requires approval", testable: true } },
 ];
 const calls: { url: string; method: string; body?: any }[] = [];
 
@@ -88,10 +86,10 @@ describe("Integrations dashboard", () => {
     expect(screen.queryByText("Connected", { selector: "span" })).toBeNull();
   });
 
-  it("shows Requires approval for Business Profile with the exact approval instructions", async () => {
+  it("has no Google Business Profile card: the profile link is only a research input in client intake", async () => {
     setup();
-    expect((await screen.findAllByText("Requires approval")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Google must approve/)).toBeInTheDocument();
+    await screen.findAllByText("Deployment-managed");
+    expect(screen.queryByText(/Business Profile/i)).toBeNull();
   });
 
   it("marks infrastructure as deployment-managed with no editable fields", async () => {

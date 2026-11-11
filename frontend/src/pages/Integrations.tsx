@@ -190,7 +190,7 @@ function DependencyList({ item }: { item: any }) {
   );
 }
 
-/** Live, read-only discovery of the choices a user must pick (GA4 properties, Business Profile accounts/locations, Claude models). */
+/** Live, read-only discovery of the choices a user must pick (GA4 properties, Claude models). */
 function useOptions(provider: string, enabled: boolean) {
   return useQuery({ queryKey: ["integration-options", provider], enabled, retry: false, staleTime: 60_000, queryFn: () => api.get(`/integrations/${provider}/options`) });
 }
@@ -227,13 +227,11 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
   const testable = item.display.testable;
   const chatModels = ((item.discovered?.models as string[]) ?? []).filter((m) => !NOT_CHAT.test(m));
   const d = item.display;
-  const pickable = ["ga4", "gbp", "claude"].includes(item.provider) && !item.missing.filter((m: string) => m !== "property_id").length;
+  const pickable = ["ga4", "claude"].includes(item.provider) && !item.missing.filter((m: string) => m !== "property_id").length;
   const [discover, setDiscover] = useState(false);
   const opts = useOptions(item.provider, discover && pickable);
   const choices: Record<string, { value: string; label: string }[]> = {
     property_id: (opts.data?.properties ?? []).map((p: any) => ({ value: p.property, label: `${p.name || p.property} (${p.property}) — ${p.account}` })),
-    account_name: (opts.data?.accounts ?? []).map((a: any) => ({ value: a.name, label: `${a.account || a.name} (${a.name})` })),
-    location_name: (opts.data?.locations ?? []).map((l: any) => ({ value: l.name, label: `${l.title || l.name} (${l.name})` })),
     model: item.provider === "claude" ? (opts.data?.models ?? item.info?.models ?? []).map((m: string) => ({ value: m, label: m })) : [],
     security: item.provider === "smtp" ? [{ value: "starttls", label: "STARTTLS (port 587)" }, { value: "ssl", label: "SSL/TLS (port 465)" }, { value: "none", label: "None (not recommended)" }] : [],
   };
@@ -248,7 +246,6 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
         <div className="mt-3"><Notice tone="blue"><b>Deployment-managed.</b> This is infrastructure configuration set by whoever deploys the app; it is not editable here and its values are never shown.
           <ul className="mt-1 list-disc pl-5">{(DEPLOY_HELP[item.provider] ?? []).map((t) => <li key={t}>{t}</li>)}</ul></Notice></div>)}
       {open && <DependencyList item={item} />}
-      {open && item.provider === "gbp" && <div className="mt-3"><Notice tone="amber">Google must approve <b>Business Profile API access</b> for your Cloud project (quota 0 until approved). Enable the two Business Profile APIs, then <a className="underline" href="https://developers.google.com/my-business/content/prereqs#request-access" target="_blank" rel="noreferrer">request access</a>. This card stays “Requires approval” until accounts and locations can be listed. It is a different service from Places.</Notice></div>}
       {open && item.provider === "ga4" && <div className="mt-3"><Notice tone="blue">Needs the <b>Google Analytics Admin API</b> and the <b>Analytics Data API</b> enabled in your Cloud project, the analytics.readonly scope (use “Connect with Google” here) and Viewer access to the property. GA4 data is never mixed into Ads conversion counts.</Notice></div>}
       {open && item.provider === "places" && <div className="mt-3"><Notice tone="blue">Enable <b>Places API (New)</b> and billing in the key's Google Cloud project, and restrict the key to that API.</Notice></div>}
       {open && item.provider === "claude" && item.info?.usage && <p className="mt-3 text-xs text-slate-500">Last {item.info.usage.window_days} days: {item.info.usage.runs} runs, {item.info.usage.tokens_in.toLocaleString()} tokens in / {item.info.usage.tokens_out.toLocaleString()} out. {item.info.usage.cost_note} {item.info.independent}</p>}

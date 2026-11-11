@@ -239,6 +239,15 @@ def execute(db: Session, actor: User, approval_id: str) -> Operation:
     client = db.get(Client, a.client_id)
     account = db.get(GoogleAdsAccount, a.google_ads_account_id) if a.google_ads_account_id else None
     payload = a.payload
+    # Deployment boundary: a draft prepared without an account can be approved as a plan but never executed. The target customer must be
+    # named in the payload, linked to this approval and the same account: nothing is ever substituted.
+    if payload.get("operations"):
+        if not payload.get("customer_id") or account is None:
+            raise SafetyBlocked("This draft has no Google Ads account yet. Link the client's account, then prepare the task again for an approval bound to it.",
+                                details={"reasons": ["no target Google Ads account"]})
+        if str(payload["customer_id"]) != str(account.customer_id):
+            raise SafetyBlocked("The payload's customer does not match the approval's account",
+                                details={"reasons": ["target customer mismatch"]})
     adapter = registry.get("google_ads")
     try:
         safety.check(db, policy="APPROVAL", client=client, account=account, approval=a, actor=actor,

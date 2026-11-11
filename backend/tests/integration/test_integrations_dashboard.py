@@ -31,7 +31,7 @@ def by(items, key):
 def test_every_implemented_integration_is_listed_with_the_six_statuses():
     sup = Api(SUPER)
     items = sup.get("/integrations").json()["integrations"]
-    assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "gbp", "keyword_planner", "crawler",
+    assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "keyword_planner", "crawler",
                                                "smtp", "database", "redis", "google_login"}
     allowed = {"Configured", "Not configured", "Connected", "Connection failed", "Credentials present", "Configuration saved", "Blocked by dependency",
                "Requires approval", "Disabled"}

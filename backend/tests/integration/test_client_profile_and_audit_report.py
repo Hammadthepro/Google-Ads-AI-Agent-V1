@@ -8,7 +8,7 @@ from tests.conftest import ADMIN, ANALYST, MANAGER, Api
 
 GOOD = {"name": "Acme Plumbing Test", "category": "plumber", "phone": "(512) 555-0100", "email": "leads@acme-test.example",
         "website": "acme-test-plumbing.example", "lead_form_url": "/contact", "thank_you_url": "/thank-you", "gtm_id": "GTM-ABC1234",
-        "has_gbp": True, "services": ["Drain Cleaning", "Water Heater Repair"], "selling_points": ["Licensed & insured", "Same-day service", "Upfront pricing"],
+        "has_gbp": True, "gbp_url": "https://maps.app.goo.gl/AcmeTest123", "services": ["Drain Cleaning", "Water Heater Repair"], "selling_points": ["Licensed & insured", "Same-day service", "Upfront pricing"],
         "service_areas": ["Austin, TX 78701", "Round Rock"], "states": ["Texas"], "targeting_mode": "AREAS", "monthly_budget": "1.5k",
         "competitors": [{"name": "Ace Plumbing", "website": "aceplumbing.com", "maps_url": ""}], "notes": "Call after 5pm"}
 

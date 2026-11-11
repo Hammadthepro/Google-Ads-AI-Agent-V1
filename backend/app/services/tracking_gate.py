@@ -49,8 +49,11 @@ def evaluate(db: Session, business: Business, actor: User | None = None) -> Trac
     checks: list[dict] = []
     source = ads.source
     if not account:
-        checks.append(_check("account_linked", "Google Ads account linked", "FAIL", True, "No account linked to this client",
-                             "Link the client's Google Ads account."))
+        # Not critical: a campaign can be prepared without an account. Without one the tracking can never be VERIFIED (so never GREEN),
+        # and deployment requires an account anyway.
+        checks.append(_check("account_linked", "Google Ads account linked", "UNKNOWN", False,
+                             "No account linked: conversions cannot be verified in Google Ads yet",
+                             "Link the client's Google Ads account before deployment to verify conversion tracking."))
     else:
         try:
             cust = ads.get_customer(account.customer_id)
@@ -102,29 +105,37 @@ def evaluate(db: Session, business: Business, actor: User | None = None) -> Trac
     lead_actions = [a for a in actions if a.get("type") in LEAD_FORM_TYPES and a.get("primary_for_goal", True)]
     call_actions = [a for a in actions if a.get("type") in CALL_TYPES]
     ga_actions = [a for a in actions if a.get("type") in GA_TYPES and a.get("primary_for_goal")]
-    checks.append(_check("form_conversion", "Form conversion action exists", "PASS" if lead_actions else "FAIL", True,
-                         ", ".join(a["name"] for a in lead_actions) or "No primary website lead conversion",
-                         "" if lead_actions else "Create a primary 'Submit lead form' conversion action on the thank-you page."))
-    if business.phone:
-        checks.append(_check("call_conversion", "Call conversion action exists", "PASS" if call_actions else "FAIL", False,
-                             ", ".join(a["name"] for a in call_actions) or "No call conversion action",
-                             "" if call_actions else "Create a call conversion (calls from ads / website calls)."))
-        min_len = settings_service.get_value("tracking.call_min_seconds", 60, db)
-        bad_len = [a for a in call_actions if not a.get("phone_call_duration_seconds")
-                   or int(a["phone_call_duration_seconds"]) < int(min_len)]
-        if call_actions:
-            checks.append(_check("call_min_length", f"Minimum call length ≥ {min_len}s", "FAIL" if bad_len else "PASS", False,
-                                 ", ".join(f"{a['name']}: {a.get('phone_call_duration_seconds') or 'not set'}s" for a in call_actions),
-                                 f"Set call length to at least {min_len} seconds so short calls are not counted." if bad_len else ""))
-    many = [a for a in lead_actions + call_actions if a.get("counting_type") == "MANY_PER_CLICK"]
-    checks.append(_check("counted_once", "Leads counted once", "FAIL" if many else "PASS", True,
-                         ", ".join(f"{a['name']} counts every conversion" for a in many) or "All lead actions count one per click",
-                         "Change counting to 'One' for lead conversions." if many else ""))
-    dup = bool(ga_actions and lead_actions)
-    checks.append(_check("duplicates", "No duplicate lead counting", "FAIL" if dup else "PASS", True,
-                         (f"Imported {', '.join(a['name'] for a in ga_actions)} is primary alongside the Google Ads tag — same lead counted twice"
-                          if dup else "No duplicate primary lead actions"),
-                         "Set the imported Google Analytics conversion to secondary." if dup else ""))
+    if not account:
+        # Conversion actions live in the Google Ads account: with none linked they are unknown (never "passed", never a hard failure).
+        for key, label in (("form_conversion", "Form conversion action exists"), ("call_conversion", "Call conversion action exists"),
+                           ("counted_once", "Leads counted once"), ("duplicates", "No duplicate lead counting")):
+            if key == "call_conversion" and not business.phone:
+                continue
+            checks.append(_check(key, label, "UNKNOWN", False, "Conversion actions cannot be read until a Google Ads account is linked"))
+    else:
+        checks.append(_check("form_conversion", "Form conversion action exists", "PASS" if lead_actions else "FAIL", True,
+                             ", ".join(a["name"] for a in lead_actions) or "No primary website lead conversion",
+                             "" if lead_actions else "Create a primary 'Submit lead form' conversion action on the thank-you page."))
+        if business.phone:
+            checks.append(_check("call_conversion", "Call conversion action exists", "PASS" if call_actions else "FAIL", False,
+                                 ", ".join(a["name"] for a in call_actions) or "No call conversion action",
+                                 "" if call_actions else "Create a call conversion (calls from ads / website calls)."))
+            min_len = settings_service.get_value("tracking.call_min_seconds", 60, db)
+            bad_len = [a for a in call_actions if not a.get("phone_call_duration_seconds")
+                       or int(a["phone_call_duration_seconds"]) < int(min_len)]
+            if call_actions:
+                checks.append(_check("call_min_length", f"Minimum call length ≥ {min_len}s", "FAIL" if bad_len else "PASS", False,
+                                     ", ".join(f"{a['name']}: {a.get('phone_call_duration_seconds') or 'not set'}s" for a in call_actions),
+                                     f"Set call length to at least {min_len} seconds so short calls are not counted." if bad_len else ""))
+        many = [a for a in lead_actions + call_actions if a.get("counting_type") == "MANY_PER_CLICK"]
+        checks.append(_check("counted_once", "Leads counted once", "FAIL" if many else "PASS", True,
+                             ", ".join(f"{a['name']} counts every conversion" for a in many) or "All lead actions count one per click",
+                             "Change counting to 'One' for lead conversions." if many else ""))
+        dup = bool(ga_actions and lead_actions)
+        checks.append(_check("duplicates", "No duplicate lead counting", "FAIL" if dup else "PASS", True,
+                             (f"Imported {', '.join(a['name'] for a in ga_actions)} is primary alongside the Google Ads tag — same lead counted twice"
+                              if dup else "No duplicate primary lead actions"),
+                             "Set the imported Google Analytics conversion to secondary." if dup else ""))
 
     # --- recorded conversions (existing accounts)
     camps = list(db.scalars(select(Campaign).where(Campaign.business_id == business.id, Campaign.campaign_type == "SEARCH")))
