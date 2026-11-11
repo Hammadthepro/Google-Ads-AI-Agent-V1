@@ -7,7 +7,7 @@ Scope: Google Ads **Search** campaigns only (lead generation). No Meta / Faceboo
 ## 1. Gap analysis (state of V1 before this plan)
 | Vision section | V1 state | Gap |
 |---|---|---|
-| 2 Intake & validation | Business profile form; tracking gate; audits | No completeness/consistency audit of the intake; no "clarification needed" stage |
+| 2 Intake & validation | Business profile form; conversion measurement audit; audits | No completeness/consistency audit of the intake; no "clarification needed" stage |
 | 3 Conversion analysis & budget recommendation | Feasibility computes budget needed for a target | No explicit recommended budget, and no team confirmation step |
 | 4 Feasibility | FEASIBLE / STRETCH / UNREALISTIC with scenarios | Verdict wording (feasible / partially feasible / unrealistic) and adjustment recommendations need surfacing; acceptance step |
 | 5 Strategy | AI draft, keyword research, negatives, RSAs, bidding, allocation | Broad match only via an approved test (kept as a safety policy, see §3) |

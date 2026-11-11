@@ -1,6 +1,6 @@
 ---
 name: campaign-auditor
-description: Use when validating a Google Search campaign before approval or launch in this app — deterministic validation rules, ad policy checks, budget and targeting checks, conversion-tracking gate, landing pages, duplicates, and pre-launch verification / read-back. Also for adding a new validation rule.
+description: Use when validating a Google Search campaign before approval or launch in this app — deterministic validation rules, ad policy checks, budget and targeting checks, conversion-measurement warnings, landing pages, duplicates, and pre-launch verification / read-back. Also for adding a new validation rule.
 ---
 
 # Campaign auditor (pre-launch validation)
@@ -12,7 +12,7 @@ Validation passing ≠ approved ≠ launched. The flow is: validation → human 
 |---|---|
 | Deterministic rules | `backend/app/services/validation.py` (`validate`) |
 | Simplified Google editorial checks | `backend/app/adapters/google_ads/mock.py` (`policy_issues_for_text`) |
-| Conversion-tracking gate (GREEN/AMBER/RED) | `backend/app/services/tracking_gate.py` |
+| Conversion measurement audit (findings, no gate) | `backend/app/services/measurement.py` |
 | Write guard (modes, kill switches, approvals) | `backend/app/services/safety.py` |
 | Read-back verification & reconciliation | `backend/app/services/execution.py` |
 
@@ -40,7 +40,7 @@ Validation passing ≠ approved ≠ launched. The flow is: validation → human 
 
 **Landing pages & tracking**
 - [ ] Every final URL returns 2xx through the crawler (SSRF-guarded) [LANDING_PAGE]
-- [ ] Tracking gate not RED unless an admin override exists [TRACKING]. Override = AMBER, which means no conversion-based automation
+- [ ] Conversion bidding matches the measurement facts: warning `CONVERSION_BIDDING_WITHOUT_DATA` or `CONVERSION_BIDDING_UNVERIFIED` otherwise (warnings, never blockers)
 - [ ] Google-side `validate_only` mutate passes [ADAPTER_VALIDATION]
 
 **After execution**

@@ -21,7 +21,7 @@ export default function Weekly() {
   const s = r?.sections;
   return (
     <div className="space-y-6">
-      <PageHeader title="Weekly Review" subtitle="Rolling four weeks. Numbers come from application calculations; the AI only writes the summary."
+      <PageHeader title="Reports" subtitle="Rolling four weeks. Numbers come from application calculations; the AI only writes the summary."
         actions={<><div className="w-64"><Select value={clientId} onChange={(e) => setClientId(e.target.value)} options={clientOptions(clients.data)} /></div>
           {list.data?.length > 0 && <div className="w-56"><Select value={reportId} onChange={(e) => setReportId(e.target.value)} options={list.data.map((x: any) => ({ value: x.id, label: `Week ending ${x.week_end}` }))} /></div>}
           {can("monitor.run") && <Button variant="primary" onClick={() => gen.mutate({}, { onSuccess: (x: any) => setReportId(x.id) })} disabled={gen.isPending}>{gen.isPending ? "Generating…" : "Generate now"}</Button>}</>} />

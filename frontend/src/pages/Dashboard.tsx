@@ -15,7 +15,7 @@ export default function Dashboard() {
   const hasData = withData.length > 0;
   return (
     <div className="space-y-6">
-      <PageHeader title="Dashboard" subtitle={<>Last 7 days · as of {dt(data.now)}</>}
+      <PageHeader title="Overview" subtitle={<>Last 7 days · as of {dt(data.now)}</>}
         actions={hasData ? <DataSourceBadge source={data.data_source} /> : undefined} />
       {data.clients.length === 0 && <Notice tone="blue">Your first real campaign analysis will appear here after connecting Google Ads. Add a client, then configure Google Ads on the <Link className="underline" to="/integrations">Integrations page</Link>.</Notice>}
       {first && states.length === 1 && <DataStatusNotice status={first.data_status} />}
@@ -30,7 +30,6 @@ export default function Dashboard() {
       <Card title="Clients">
         <Table rows={data.clients} columns={[
           { key: "name", label: "Client", render: (c) => <Link className="font-medium text-brand-700 hover:underline" to={`/clients/${c.client_id}`}>{c.name}</Link> },
-          { key: "tracking", label: "Tracking", render: (c) => <div className="flex flex-wrap gap-1">{Object.entries(c.tracking).map(([b, s]) => <span key={b} title={b}><StatusBadge value={s as string} /></span>)}</div> },
           { key: "cost_7d", label: "Spend 7d", render: (c) => ["data_available", "historical"].includes(c.data_status?.state) ? money(c.cost_7d) : "—" },
           { key: "conversions_7d", label: "Conv. 7d", render: (c) => ["data_available", "historical"].includes(c.data_status?.state) ? c.conversions_7d : "—" },
           { key: "weekly_target", label: "Weekly target" },

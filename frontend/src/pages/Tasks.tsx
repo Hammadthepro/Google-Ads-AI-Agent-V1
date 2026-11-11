@@ -208,7 +208,7 @@ export function Tasks() {
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: () => api.get("/tasks"), refetchInterval: 5000 });
   return (
     <div className="space-y-6">
-      <PageHeader title="Tasks" subtitle="One form, one Run button. Results and proposals appear on Approvals, Monitor and the Weekly Review." />
+      <PageHeader title="Work queue" subtitle="One form, one Run button. Results and proposals appear on Approvals, Monitor and the Weekly Review." />
       {can("tasks.run") || can("audits.run") ? <TaskForm /> : <Notice>Your role is read-only.</Notice>}
       <Card title="Recent tasks">
         <Table rows={tasks.data ?? []} onRowClick={(t) => nav(`/tasks/${t.id}`)} columns={[

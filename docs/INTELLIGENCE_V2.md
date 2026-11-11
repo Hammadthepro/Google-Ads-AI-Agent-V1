@@ -31,16 +31,16 @@
 
 ## Monitoring and optimisation (`services/performance_insights.py`)
 - **Bound to the record**: baselines come from it (weekly target, recommended budget, maximum affordable CPC, tracking readiness, selected keywords and research negatives, research freshness). Synced account data feeds the account/keyword/finance stages, so those stages become stale and refresh when new data arrives.
-- **Anomalies**: last 7 days vs the 28 before (needs 4 and 14 days, otherwise "insufficient history" and nothing is concluded). Spend, CPC, CTR, conversions, cost per lead, not serving, budget-limited, tracking-suspect. Each flag lists what corroborates it; one metric alone is "a signal". Causes are labelled hypotheses with evidence and confidence.
+- **Anomalies**: last 7 days vs the 28 before (needs 4 and 14 days, otherwise "insufficient history" and nothing is concluded). Spend, CPC, CTR, conversions, cost per lead, not serving, budget-limited, conversions-stopped. Each flag lists what corroborates it; one metric alone is "a signal". Causes are labelled hypotheses with evidence and confidence.
 - **Pacing / shortfall**: month-to-date vs pro-rata budget with a labelled projection; last week vs target with a labelled cost-to-close estimate.
 - **Search terms**: irrelevant (research negatives, rules), relevant-but-not-converting, converting-but-not-keywords; a term that ever converted is never offered for exclusion.
 - **Ads and landing pages**: weak ads, and final-URL conversion rates (derived from ad-level data; stated as such).
-- **Recommendations** (existing table): impact estimates with low/expected/high from the account's measured CPC and conversion rate, enough-data gate (held while tracking is not GREEN), approval requirement, and whether they are executable (budget, keyword, negative: via approval) or advice (a person acts).
+- **Recommendations** (existing table): impact estimates with low/expected/high from the account's measured CPC and conversion rate, enough-data gate (held while conversion data is not reliable), approval requirement, and whether they are executable (budget, keyword, negative: via approval) or advice (a person acts).
 - **Outcomes**: before/after for changes live 8+ days, labelled correlational.
 - **Weekly report** now carries insights, optimisation, outcomes, outside-app changes and the intelligence it was judged against. A scheduled `insights_all` job (07:37) keeps the record and recommendations current; it never calls Google Ads.
 
 ## Not done / limits
-- No automatic execution of any recommendation; advice kinds (pacing, landing page, bid ceiling, tracking check, shortfall, negative review) are never executable.
+- No automatic execution of any recommendation; advice kinds (pacing, landing page, bid ceiling, measurement check, shortfall, negative review) are never executable.
 - Landing-page conversion rate is not reported by Google at that level here; asset, device and policy-status data are not synced.
 - Impact numbers are estimates; before/after is not causal proof.
 - The conversational AI is used only for tie-breaking intent; answers are not free-form generation.
@@ -48,17 +48,17 @@
 
 ---
 
-# Conversion tracking gate (evidence-based states)
+# Conversion measurement audit
 
-| State | Meaning | Stops preparation? | Live deployment |
-|---|---|---|---|
-| GREEN | verified: nothing failed or unknown, leads recorded in Google Ads | no | allowed |
-| YELLOW | exists, configuration or verification incomplete | no (warning + list of what to verify) | needs GREEN or an admin authorisation |
-| RED | evidence CONFIRMS it is broken/misconfigured (a check that could be read failed) | yes | blocked |
-| UNKNOWN | cannot be assessed: no linked account, integration not configured, account unreadable, never assessed, or assessed before the current account link | no (warning) | blocked unless an admin authorises |
+Conversion measurement is analysed, not graded. There is no overall tracking status, no gate, no override and no workflow stage. `services/measurement.py` writes a `measurement_audits` row holding **findings** and **facts**; the same findings appear in the intelligence record (module `measurement`), the agent's answers, the weekly report and the client page.
 
-- Missing evidence is never a negative finding: no account makes the account checks, the conversion-action checks and the tag check "unknown" (the AW- tag comes from the account's conversion action, so its absence is only a failure once an account exists). Recorded conversions prove the tag works whatever the crawl saw; Tag Manager without an AW- tag is a warning, not a failure.
-- Stored results are only trusted while current: rows from the old rules (no `assessable` flags) or taken under a different account link read as UNKNOWN ("reassess"), so a cached RED cannot leak. Linking or unlinking an account reassesses tracking at once.
-- The admin override (any state but GREEN, written reason, audited) is the explicit authorisation for deployment; it behaves like YELLOW and never enables conversion-based automation.
-- Deployment gate: `validation.validate(deployment=True)` on execution and a defence-in-depth check in `safety.check`. Account binding, approval, write protection and kill switches are unchanged.
-- Behaviour change to note: a new advertiser with no recorded leads is YELLOW and can no longer be deployed on an approval alone; it needs the audited admin authorisation until tracking is verified.
+Each finding states: what was inspected, the result (`ok`, `issue`, `attention`, `not_assessable`), the actual value, the evidence, severity, business impact, the recommended action, and whether that action is informational, needs approval, or needs a dependency (for example a linked account).
+
+What is inspected: whether conversion actions exist and are enabled, primary vs secondary, counting (one vs every), duplicate sources for the same lead, conversion values, attribution model and lookback, enhanced conversions, auto-tagging, the tag on the site, whether conversions are actually being recorded, signs they stopped, call-length settings, and whether volume is sufficient for conversion-based bidding.
+
+Rules that follow from it:
+- Missing evidence is `not_assessable`, never an issue. No linked account means the account-side checks cannot be read; nothing is inferred.
+- A stored audit is only used while current. One taken under a different account link, or in the pre-0010 format, is treated as absent and re-run. Linking or unlinking an account re-audits at once.
+- Nothing here stops research, preparation, approval or deployment. Deployment is still controlled by account binding, exact-version approval, write protection, kill switches and read-back verification.
+- Two decisions read the facts directly: bidding (`supports_conversion_bidding`: conversion-based bidding only when conversions are recorded; Maximize Clicks with a CPC cap when they are confirmed absent; a validation warning when unverified) and conversion-based automation (`conversion_data_reliable`: auto-negatives, broad-match experiments and the enough-data check need conversions that are recorded and counted once).
+- API: `GET /businesses/{id}/measurement`, `POST /businesses/{id}/measurement/run`. Daily job: `audit_measurement`.

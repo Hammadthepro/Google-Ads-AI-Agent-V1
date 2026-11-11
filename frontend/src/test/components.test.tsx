@@ -21,10 +21,10 @@ describe("DataSourceBadge", () => {
 });
 
 describe("StatusBadge", () => {
-  it("renders tracking states and humanises underscores", () => {
+  it("shows statuses in sentence case without underscores", () => {
     render(<><StatusBadge value="FAILED" /><StatusBadge value="PENDING_APPROVAL" /></>);
-    expect(screen.getByText("FAILED")).toBeInTheDocument();
-    expect(screen.getByText("PENDING APPROVAL")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Pending approval")).toBeInTheDocument();
   });
 });
 

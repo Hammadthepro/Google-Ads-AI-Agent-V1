@@ -1,6 +1,6 @@
 # Google Ads AI Agent — V1
 
-An AI-assisted, **safety-first** Google Ads management platform for marketing teams. It covers client onboarding, a conversion-tracking gate, website / Business Profile / competitor audits, keyword research, budget feasibility, AI campaign drafting with an independent AI challenger, deterministic validation, human approval of the exact payload, paused-first execution with read-back verification, monitoring, an emergency brake, weekly reviews, A/B experiments and a learning loop.
+An AI-assisted, **safety-first** Google Ads management platform for marketing teams. It covers client onboarding, a conversion measurement audit, website / Business Profile / competitor audits, keyword research, budget feasibility, AI campaign drafting with an independent AI challenger, deterministic validation, human approval of the exact payload, paused-first execution with read-back verification, monitoring, an emergency brake, weekly reviews, A/B experiments and a learning loop.
 
 > **Core rule:** nothing changes in Google Ads without approval, except safe negative keywords after every check passes. V1 runs those in shadow mode too. **Real Google Ads writes are disabled.**
 

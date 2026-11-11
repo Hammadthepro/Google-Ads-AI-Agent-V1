@@ -36,7 +36,7 @@ export default function Monitor() {
   const totals = (data?.campaigns ?? []).reduce((a: any, c: any) => ({ cost: a.cost + c.cost, conv: a.conv + c.conversions, clicks: a.clicks + c.clicks }), { cost: 0, conv: 0, clicks: 0 });
   return (
     <div className="space-y-6">
-      <PageHeader title="Campaign Monitor" subtitle="Daily sync re-downloads the last 30 days because leads are recorded days after the click."
+      <PageHeader title="Monitoring" subtitle="Daily sync re-downloads the last 30 days because leads are recorded days after the click."
         actions={<>
           <div className="w-64"><Select value={clientId} onChange={(e) => setClientId(e.target.value)} options={clientOptions(clients.data)} /></div>
           {can("monitor.run") && <Button onClick={() => sync.mutate({})} disabled={sync.isPending}>{sync.isPending ? "Syncing…" : "Sync now"}</Button>}

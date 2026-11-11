@@ -17,7 +17,7 @@ export default function Accounts() {
   const nameOf = (id: string) => clients.data?.find((c: any) => c.id === id)?.name;
   return (
     <div className="space-y-6">
-      <PageHeader title="Google Ads Accounts" subtitle="Client accounts discovered below your manager (MCC). Selecting or linking an account to a client never changes anything in Google Ads."
+      <PageHeader title="Google Ads accounts" subtitle="Client accounts discovered below your manager (MCC). Selecting or linking an account to a client never changes anything in Google Ads."
         />
       <Notice tone="blue">Accounts come from your connected Google Ads login (configure it on the <a className="underline" href="/integrations">Integrations page</a>). The app stays read-only until real writes are explicitly authorized.</Notice>
       <AccountSelector canRefresh={can("clients.edit")} />

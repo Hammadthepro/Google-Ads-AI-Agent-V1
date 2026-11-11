@@ -75,7 +75,7 @@ Last full run: 2026-11-07, mock mode, local PostgreSQL 16 + Redis 7, Python 3.13
 | 3 | Role permissions | `test_role_based_permissions_matrix` |
 | 4–5 | Create client / business | `test_create_client_and_business_with_validation` |
 | 6–9 | Website / GBP / competitor audits, keyword research | `test_website_gbp_competitor_and_keyword_audits`, `test_landing_page_outage_detected_by_website_audit` |
-| 10–12 | GREEN / AMBER / RED | `test_tracking_green_amber_red` |
+| 10–12 | Conversion measurement audit (replaces the retired gate) | `tests/integration/test_measurement.py` |
 | 13 | Admin override | `test_red_gate_blocks_build_and_admin_override_behaves_like_amber` |
 | 14 | Feasibility | `test_feasibility_*` (incl. PDF $1,500 / 50 leads ≈ $6.90 example) |
 | 15 | AI draft (Mock) | `test_mock_ai_draft_is_schema_valid_and_recorded` |

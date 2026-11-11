@@ -24,8 +24,7 @@ Build a working, testable, modular platform that lets a marketing team run Googl
 ## 3. End-to-end flow (from PDF, steps 1–14)
 
 ```
-1 Task form ─► 3 Tracking gate ─┬─ RED ─► 3r Fix tracking / 3o Admin override (behaves as AMBER)
-                                └─ GREEN/AMBER
+1 Task form ─► 3 Conversion measurement audit (findings only; never stops the workflow)
                                      ▼
             4 Audits in parallel: 4a Website · 4b Business Profile · 4c Competitors · 4d Keywords
                                      ▼

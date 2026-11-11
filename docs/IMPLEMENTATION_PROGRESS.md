@@ -10,7 +10,7 @@ Status: **V1 implemented and tested in mock mode.** Real integrations are implem
 | 3 | Mock integration framework | Done | Interfaces + mock + real for Google Ads, Keyword Planner, Places, PageSpeed, crawler, AI (Mock + Groq), auth, Ads OAuth, notifier; seeded failure injection |
 | 4 | Clients & businesses | Done | CRUD, services/excluded services, ≤3 competitors, claims, brand rules, hours, ZIPs |
 | 5 | Task management | Done | 10 task types, one Run button, workflow up to approval (Celery or thread) |
-| 6 | Tracking gate | Done | GREEN/AMBER/RED, per-business, override = AMBER, daily recheck, fix list |
+| 6 | Measurement audit | Done | Replaced the tracking gate (migration 0010): findings with evidence and actions, no status or override, daily re-audit |
 | 7 | Audit engine | Done | Website, GBP, competitor audits (parallel), 90-day account audit |
 | 8 | Keywords & feasibility | Done | Labelling (rules + AI), clusters, overlap check, three scenarios, review-adjusted forecast, fix tracker with auto-recheck |
 | 9 | AI planning | Done | Draft, independent challenger, human-plan comparison, playbook injection, prompt versions, AIRun records |

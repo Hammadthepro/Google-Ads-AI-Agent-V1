@@ -5,7 +5,7 @@ description: Use when working on post-launch optimisation of Google Search campa
 
 # Ads optimisation (this project)
 
-The principle: **only safe negative keywords may ever be automatic** (and only in ACTIVE mode with GREEN tracking). Everything else is an approval card. Nothing is deleted.
+The principle: **only safe negative keywords may ever be automatic** (and only in ACTIVE mode with reliable conversion data). Everything else is an approval card. Nothing is deleted.
 
 ## Code
 | Concern | File |
@@ -25,7 +25,7 @@ The principle: **only safe negative keywords may ever be automatic** (and only i
 6. SHADOW mode (default): record as proposal only. ACTIVE needs env `AUTO_NEGATIVES_MODE=active` **and** setting `negatives.mode=active`.
 
 ## Enough-data gate (all must pass)
-Volume (≥ `enough_data.min_clicks` or spend ≥ multiple × target CPL) · conversion delay passed · not in Google's learning phase (`bidding_strategy_system_status`) · ≥ 7 days since the last change to the item · tracking GREEN with no override. On HOLD, record the reason; it appears in the weekly review.
+Volume (≥ `enough_data.min_clicks` or spend ≥ multiple × target CPL) · conversion delay passed · not in Google's learning phase (`bidding_strategy_system_status`) · ≥ 7 days since the last change to the item · conversions recorded and counted once. On HOLD, record the reason; it appears in the weekly review.
 
 ## Big changes (always approval)
 | Signal | Proposal |

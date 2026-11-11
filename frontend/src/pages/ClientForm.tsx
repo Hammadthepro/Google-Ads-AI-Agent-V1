@@ -162,7 +162,7 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
           <span className={cx("rounded-full px-3 py-1 text-xs font-medium", mode === "edit" ? "bg-brand-600 text-white" : "text-slate-600")}>
             {mode === "edit" ? "Edit client" : <EditPicker clients={clients.data ?? []} onPick={(cid) => nav(`/clients/${cid}/edit`)} />}</span>
         </div>
-        <Link to="/" className="ml-auto text-brand-700">Dashboard</Link>
+        <Link to="/clients" className="ml-auto text-brand-700">All clients</Link>
       </div>
       <div className="mx-auto grid max-w-6xl gap-8 px-4 py-8 lg:grid-cols-[14rem_1fr]">
         <nav aria-label="Form sections" className="hidden lg:block">
@@ -194,7 +194,7 @@ export function ClientForm({ mode }: { mode: "new" | "edit" }) {
             </div>
           </Card>
 
-          <Card id="website" title="Website and tracking" hint="The thank-you page lets Google count form leads: without it the launch checklist fails.">
+          <Card id="website" title="Website and measurement" hint="The thank-you page lets Google count form leads; without it, form conversions are harder to measure.">
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Website" required error={e("website")}><input className={inputCls} placeholder="business.com" value={p.website} onChange={(ev) => set("website", ev.target.value)} onBlur={() => touch("website")} /></Field>
               <Field label="Lead form page" note="optional" error={e("lead_form_url")}><input className={inputCls} placeholder="/contact or the full link" value={p.lead_form_url} onChange={(ev) => set("lead_form_url", ev.target.value)} onBlur={() => touch("lead_form_url")} /></Field>

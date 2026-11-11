@@ -8,8 +8,8 @@ Previous status: Open. Each decision has a recommended default. Phases that depe
 
 | ID | Decision | Recommended default | Needed by |
 |---|---|---|---|
-| D-01 | Who may override a RED tracking gate? | Super Admin + Admin, by name, reason mandatory | Phase 6 |
-| D-02 | When does AMBER become GREEN? | ≥ 3 primary lead conversions recorded in the last 30 days, tag detected, no duplicates (configurable) | Phase 6 |
+| D-01 | Retired. The tracking gate and its override were removed (migration 0010); measurement is an audit with findings | n/a | n/a |
+| D-02 | When is conversion volume sufficient for conversion-based bidding? | ≥ 3 primary lead conversions recorded in the last 30 days (`measurement.min_conversions_30d`, configurable) | Phase 6 |
 | D-03 | Minimum call length for call conversions | 60 seconds default; per business type in playbook | Phase 6 |
 | D-04 | Approval timing: reminder, expiry, escalation | Reminder 24h, expire 72h, escalate to client backup owner | Phase 10 |
 | D-05 | Competitors left blank — what happens? | Proceed, mark competitor audit "skipped — no competitors provided"; suggest top 3 from mock/Places as *candidates* for human confirmation | Phase 7 |
@@ -21,11 +21,11 @@ Previous status: Open. Each decision has a recommended default. Phases that depe
 | D-11 | Combined "create paused + enable after verification" single approval card? | No — two approvals in V1 (Master Prompt). Revisit after shadow period | Phase 11 |
 | D-12 | Above-the-fold mobile check method | Deterministic Playwright DOM check; Groq vision only if a supported model is configured | Phase 7 |
 | D-13 | Feasibility default conversion-rate assumptions by business type (new accounts) | Configurable table; conservative/expected/optimistic e.g. 3% / 6% / 10% as **test values** | Phase 8 |
-| D-14 | Broad match test ad group in V1? | Not in V1 builds; allowed only as an approved experiment with GREEN tracking | Phase 9 |
+| D-14 | Broad match test ad group in V1? | Not in V1 builds; allowed only as an approved experiment with reliable conversion data | Phase 9 |
 | D-15 | Review-adjusted forecast size | Reduce expected CVR by up to 20% when rating < competitor median or reviews < 25% of median (test value) | Phase 8 |
 | D-16 | Wasted-spend window | Last 30 days, clicks ≥ 10 and 0 conversions (test value) | Phase 12 |
 | D-17 | Who can create playbook rules? | Super Admin + Admin | Phase 14 |
-| D-18 | Enough-data thresholds | ≥ 100 clicks or spend ≥ 2× target CPL; conversion delay 7 days; 7 days since last change; not learning; tracking GREEN (test values) | Phase 13 |
+| D-18 | Enough-data thresholds | ≥ 100 clicks or spend ≥ 2× target CPL; conversion delay 7 days; 7 days since last change; not learning; conversions recorded and counted once (test values) | Phase 13 |
 | D-19 | Emergency thresholds | Alert at today's spend > 1.5× avg daily budget before 18:00 account time; freeze at > 2× (Google can legitimately spend up to 2× daily budget on a single day) — test values | Phase 12 |
 | D-20 | "Change target" task | Internal weekly conversion target only — no Google Ads write | Phase 5 |
 | D-21 | Shadow mode exit criteria for auto-negatives | ≥ 4 weeks shadow, ≥ 95% of proposals approved by humans, written authorization | Phase 13 |
@@ -46,7 +46,7 @@ Previous status: Open. Each decision has a recommended default. Phases that depe
 | R-05 | Groq rate limits on lower tiers | Slow/failed drafts | Queue AI calls in Celery, backoff, show status |
 | R-06 | Prompt injection through crawled website text | Manipulated drafts | Content treated as data, strict schemas, validation + human approval |
 | R-07 | SSRF via crawler URLs | Internal network exposure | DNS/IP checks on every hop, port allowlist, no redirects to private ranges |
-| R-08 | Tag detection mistaken for working tracking | False GREEN | GREEN requires recorded conversions (D-02), not tag presence |
+| R-08 | Tag detection mistaken for working measurement | False confidence | A detected tag is reported as installation only; "recording" requires recorded conversions |
 | R-09 | Keyword Planner / Places costs or quotas | Budget overrun | Field masks, caching, per-run caps |
 | R-10 | Scope size (16 phases) | Schedule | Strict phase gates; MVP-critical path first |
 | R-11 | Docker daemon unavailable in this cloud container | Can't run compose here | Run Postgres/Redis natively for tests here; Compose verified on your machine/VPS |

@@ -33,15 +33,10 @@ Initial values: 1 = mock, 2 = false, 3 = false, 4 = false. Checked in `WriteGuar
 | Broad match not allowed in main ad groups | Validation error (unless separate approved test ad group, D-14) |
 | Mock operations never reported as real | `integration_mode` on every operation; UI badge |
 
-## 4. Tracking gate effects
-| State | Planning | Launch | Conversion-based automation |
-|---|---|---|---|
-| GREEN | Yes | With approval | Allowed if enough-data gate passes |
-| AMBER | Yes | With approval | No |
-| RED | Fix list shown; blocked | Blocked unless admin override | No |
-| Override | As AMBER | With approval | No |
+## 4. Conversion measurement
+There is no tracking gate. The measurement audit produces findings; it does not block planning, approval or launch. Conversion-based automation (auto-negatives, broad-match experiments, the enough-data check) runs only when conversions are recorded and counted once.
 
-Bidding default: Maximize Conversions. Exception (PDF 3o): Maximize Clicks with a CPC cap while tracking is RED + override — requires approval.
+Bidding default: Maximize Conversions. Maximize Clicks with a CPC cap when conversions are confirmed absent; a validation warning when measurement could not be verified. Both require approval like any plan.
 
 ## 5. Safe negative keyword checks (all must pass)
 1. Search term produced no conversion in the last **90 days** (configurable).
@@ -50,7 +45,7 @@ Bidding default: Maximize Conversions. Exception (PDF 3o): Maximize Clicks with 
 4. Enough-data gate passes for the item.
 5. Scoped to the correct campaign/ad group (ad-group-level when it fails in only one ad group).
 6. Daily cap per client not exceeded (default 25).
-7. Tracking GREEN (conversion-based decision).
+7. Conversion data reliable: recorded and counted once (conversion-based decision).
 8. Kill switches off; auto-negative policy mode = ACTIVE (default SHADOW → proposal only).
 Every proposed and applied negative is logged with the evidence used.
 

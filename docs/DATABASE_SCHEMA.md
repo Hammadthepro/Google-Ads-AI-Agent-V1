@@ -44,7 +44,7 @@ Money stored as integer **micros** (as Google Ads does) plus `currency_code`. No
 - **conversion_actions** — google_ads_account_id, name, type, origin, category, primary_for_goal, counting_type (ONE/MANY), call_min_duration_seconds, status, is_duplicate_suspect.
 
 ## Tracking, audits, research
-- **tracking_gate_results** — business_id, account_id, state (GREEN/AMBER/RED), checks JSON (each check: pass/fail/unknown + evidence), fix_list JSON, evaluated_at, next_check_at.
+- **measurement_audits** — business_id, google_ads_account_id, findings JSON (inspected, result, actual, evidence, severity, impact, action, action_type, dependency), facts JSON, evaluated_at, source_type. `legacy_checks` / `legacy_fix_list` keep pre-0010 rows readable. `retired_tracking_overrides` is the old override table, kept for history and unused.
 - **tracking_overrides** — business_id, admin_user_id, reason (required), created_at, cleared_at, cleared_reason.
 - **audits** — business_id, task_id, type (WEBSITE/GBP/COMPETITOR/KEYWORD/ACCOUNT), status, started/finished_at, result JSON, summary, source_type.
 - **crawl_pages** — audit_id, url, status_code, title, meta_description, h1–h3, phones, forms, schema JSON, tags_detected (GTAG/GTM ids), robots_allowed, depth.

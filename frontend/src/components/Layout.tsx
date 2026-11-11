@@ -1,38 +1,35 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { ROLE_LABEL, useAuth } from "../lib/auth";
+import { Icon } from "./icons";
 import { cx } from "./ui";
 
-const NAV: { to: string; label: string; icon: string }[] = [
-  { to: "/", label: "Dashboard", icon: "◧" },
-  { to: "/agent", label: "Agent", icon: "✦" },
-  { to: "/clients", label: "Clients", icon: "◎" },
-  { to: "/businesses", label: "Businesses", icon: "▣" },
-  { to: "/accounts", label: "Google Ads Accounts", icon: "◈" },
-  { to: "/tasks", label: "Tasks", icon: "▶" },
-  { to: "/audits", label: "Audits", icon: "⌕" },
-  { to: "/planner", label: "Campaign Planner", icon: "✎" },
-  { to: "/approvals", label: "Approvals", icon: "✓" },
-  { to: "/monitor", label: "Campaign Monitor", icon: "∿" },
-  { to: "/weekly", label: "Weekly Review", icon: "▤" },
-  { to: "/experiments", label: "Experiments", icon: "⚗" },
-  { to: "/learning", label: "Learning / Playbook", icon: "❖" },
-  { to: "/users", label: "Users & Roles", icon: "☺" },
-  { to: "/integrations", label: "Integrations", icon: "⇄" },
-  { to: "/settings", label: "System Settings", icon: "⚙" },
-  { to: "/activity", label: "Activity Logs", icon: "≣" },
+type Item = { to: string; label: string; icon: string; perm?: string };
+/** Product areas, not workflow steps. The agent is the home; everything else is a view onto the same shared record. */
+const NAV: { group: string; items: Item[] }[] = [
+  { group: "Workspace", items: [{ to: "/", label: "Agent", icon: "agent" }, { to: "/overview", label: "Overview", icon: "overview" }] },
+  { group: "Clients", items: [{ to: "/clients", label: "Clients", icon: "clients" }, { to: "/accounts", label: "Google Ads accounts", icon: "accounts" }] },
+  { group: "Campaigns", items: [{ to: "/planner", label: "Campaign plans", icon: "campaigns" }, { to: "/tasks", label: "Work queue", icon: "work" },
+    { to: "/approvals", label: "Approvals", icon: "approvals" }] },
+  { group: "Intelligence", items: [{ to: "/audits", label: "Research & audits", icon: "research" }, { to: "/monitor", label: "Monitoring", icon: "monitoring" },
+    { to: "/weekly", label: "Reports", icon: "reports" }, { to: "/experiments", label: "Experiments", icon: "experiments" }, { to: "/learning", label: "Playbook", icon: "playbook" }] },
+  { group: "Admin", items: [{ to: "/integrations", label: "Integrations", icon: "integrations" }, { to: "/users", label: "Users & roles", icon: "users", perm: "users.manage" },
+    { to: "/settings", label: "Settings", icon: "settings", perm: "settings.view" }, { to: "/activity", label: "Activity log", icon: "activity" }] },
 ];
 
+/** Write protection, stated once and quietly. It turns amber only when writes are actually possible. */
 export function SafetyBanner() {
   const { data } = useQuery({ queryKey: ["integration-banner"], queryFn: () => api.get("/integrations/mode"), staleTime: 30_000 });
   if (!data) return null;
-  const tone = data.mode === "read_only" ? "bg-sky-600 text-white" : "bg-amber-500 text-amber-950";
+  const writes = !!data.real_writes_possible;
   return (
-    <div role="status" className={cx("flex flex-wrap items-center gap-x-4 gap-y-1 px-6 py-1.5 text-xs font-medium", tone)}>
-      <span className="font-semibold uppercase tracking-wide">{data.label}</span>
-      <span>{data.mode === "read_only" ? "Real Google Ads data is read. Writes are impossible." : "Real reads and approved writes."}</span>
-      <span className="opacity-90">Real campaign writes: {data.real_writes_possible ? "POSSIBLE (approval required)" : "DISABLED"}</span>
+    <div role="status" title={data.label}
+      className={cx("inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-2xs font-medium ring-1 ring-inset",
+        writes ? "bg-amber-50 text-amber-900 ring-amber-300" : "bg-white text-slate-600 ring-slate-200")}>
+      <Icon name="shield" className="h-3.5 w-3.5" />
+      <span>{writes ? "Writes possible with approval" : "Read-only: Google Ads writes disabled"}</span>
     </div>
   );
 }
@@ -41,60 +38,95 @@ function SelectedAccountChip() {
   const { data } = useQuery({ queryKey: ["gads-selection"], queryFn: () => api.get("/google-ads/selection"), staleTime: 15_000, retry: false });
   const s = data?.selected;
   return (
-    <NavLink to="/accounts" className="mx-3 mb-2 block rounded-lg border border-slate-200 px-3 py-2 text-xs hover:bg-slate-50" title="Switch Google Ads account">
-      <div className="text-[10px] uppercase tracking-wide text-slate-400">Google Ads account</div>
-      <div className="truncate font-medium text-slate-800">{s ? (s.name || s.customer_id) : "None selected"}</div>
-      {s && <div className="font-mono text-slate-500">{s.customer_id_display ?? s.customer_id}</div>}
+    <NavLink to="/accounts" title="Switch Google Ads account"
+      className="mx-3 mb-3 block rounded-md border border-slate-200 bg-white px-3 py-2 text-xs transition hover:border-slate-300">
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-400">Google Ads account</div>
+      <div className="mt-0.5 truncate font-medium text-slate-800">{s ? (s.name || s.customer_id) : "None selected"}</div>
+      {s && <div className="font-mono text-2xs text-slate-500">{s.customer_id_display ?? s.customer_id}</div>}
     </NavLink>
   );
 }
 
-export default function Layout() {
-  const { user, logout } = useAuth();
+function Nav({ onNavigate }: { onNavigate?: () => void }) {
+  const { can } = useAuth();
   return (
-    <div className="flex min-h-screen flex-col">
-      <SafetyBanner />
-      <div className="flex flex-1">
-        <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
-          <div className="flex items-center gap-2 px-5 py-4">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">GA</div>
-            <div>
-              <div className="text-sm font-semibold leading-tight">Ads AI Agent</div>
-              <div className="text-[11px] text-slate-500">V1 · safety-first</div>
-            </div>
-          </div>
-          <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4">
-            {NAV.map((n) => (
-              <NavLink key={n.to} to={n.to} end={n.to === "/"}
-                className={({ isActive }) => cx("flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm",
-                  isActive ? "bg-brand-50 font-medium text-brand-700" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900")}>
-                <span className="w-4 text-center text-xs opacity-70">{n.icon}</span>{n.label}
-              </NavLink>
-            ))}
-          </nav>
-          <SelectedAccountChip />
-          {user && (
-            <div className="border-t border-slate-100 px-4 py-3 text-xs">
-              <div className="truncate font-medium text-slate-800">{user.name || user.email}</div>
-              <div className="truncate text-slate-500">{user.email}</div>
-              <div className="mt-1 flex items-center justify-between">
-                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{ROLE_LABEL[user.role]}</span>
-                <button onClick={logout} className="text-slate-500 hover:text-slate-800">Sign out</button>
-              </div>
-            </div>
-          )}
-        </aside>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <nav className="flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-4 py-2 lg:hidden">
-            {NAV.map((n) => (
-              <NavLink key={n.to} to={n.to} end={n.to === "/"}
-                className={({ isActive }) => cx("whitespace-nowrap rounded-md px-2 py-1 text-xs", isActive ? "bg-brand-50 text-brand-700" : "text-slate-600")}>
-                {n.label}
-              </NavLink>
-            ))}
-          </nav>
-          <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6"><Outlet /></main>
-        </div>
+    <nav aria-label="Main" className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      {NAV.map((g) => {
+        const items = g.items.filter((i) => !i.perm || can(i.perm));
+        if (!items.length) return null;
+        return (
+          <div key={g.group}>
+            <div className="px-2 pb-1 text-2xs font-medium uppercase tracking-wider text-slate-400">{g.group}</div>
+            <ul className="space-y-px">
+              {items.map((n) => (
+                <li key={n.to}>
+                  <NavLink to={n.to} end={n.to === "/"} onClick={onNavigate}
+                    className={({ isActive }) => cx("group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+                      isActive ? "bg-slate-900/[0.06] font-medium text-slate-900" : "text-slate-600 hover:bg-slate-900/[0.04] hover:text-slate-900")}>
+                    {({ isActive }) => (<><Icon name={n.icon} className={cx("h-4 w-4 shrink-0", isActive ? "text-brand-600" : "text-slate-400 group-hover:text-slate-600")} />{n.label}</>)}
+                  </NavLink>
+                </li>))}
+            </ul>
+          </div>);
+      })}
+    </nav>
+  );
+}
+
+function Brand() {
+  return (
+    <div className="flex h-12 items-center gap-2.5 border-b border-slate-200 px-4">
+      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-slate-900 text-white"><Icon name="agent" className="h-3.5 w-3.5" /></div>
+      <div className="text-[13px] font-semibold tracking-tight text-slate-900">Ads Agent</div>
+    </div>
+  );
+}
+
+function UserBox() {
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  return (
+    <div className="flex items-center gap-2.5 border-t border-slate-200 px-4 py-3">
+      <div aria-hidden className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-2xs font-semibold text-slate-700">{(user.name || user.email).slice(0, 2).toUpperCase()}</div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-medium text-slate-800">{user.name || user.email}</div>
+        <div className="truncate text-2xs text-slate-500">{ROLE_LABEL[user.role]}</div>
+      </div>
+      <button onClick={logout} className="rounded px-1.5 py-1 text-2xs text-slate-500 hover:bg-slate-100 hover:text-slate-800">Sign out</button>
+    </div>
+  );
+}
+
+export default function Layout() {
+  const [open, setOpen] = useState(false);
+  const loc = useLocation();
+  useEffect(() => setOpen(false), [loc.pathname]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const wide = loc.pathname === "/";  // the agent workspace uses the full width
+  return (
+    <div className="flex min-h-screen">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2 focus:text-sm">Skip to content</a>
+      <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-slate-200 bg-[#fbfbfc] lg:flex">
+        <Brand /><Nav /><SelectedAccountChip /><UserBox />
+      </aside>
+      {open && (
+        <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+          <div className="absolute inset-0 bg-slate-900/30" onClick={() => setOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 flex w-64 animate-fade-in flex-col border-r border-slate-200 bg-[#fbfbfc] shadow-pop">
+            <Brand /><Nav onNavigate={() => setOpen(false)} /><SelectedAccountChip /><UserBox />
+          </aside>
+        </div>)}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur">
+          <button className="-ml-1 rounded p-1.5 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Open navigation" aria-expanded={open} onClick={() => setOpen(true)}><Icon name="menu" /></button>
+          <div className="text-[13px] font-semibold tracking-tight text-slate-900 lg:hidden">Ads Agent</div>
+          <div className="ml-auto"><SafetyBanner /></div>
+        </header>
+        <main id="main" className={cx("w-full flex-1", wide ? "" : "mx-auto max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8")}><Outlet /></main>
       </div>
     </div>
   );

@@ -17,7 +17,7 @@ Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 | E2E | Playwright | Browser through full stack in mock mode |
 | AI regression | pytest over `regression_cases` | Prompt/rule changes |
 
-Coverage target: ≥ 85% for `safety`, `approvals`, `execution`, `feasibility`, `optimization`, `tracking_gate`.
+Coverage target: ≥ 85% for `safety`, `approvals`, `execution`, `feasibility`, `optimization`, `measurement`.
 
 ## 2. Required scenarios → phase
 | # | Scenario | Phase |
@@ -27,7 +27,7 @@ Coverage target: ≥ 85% for `safety`, `approvals`, `execution`, `feasibility`, 
 | 3 | Role-based permissions (full matrix) | 2 |
 | 4–5 | Create client / business | 4 |
 | 6–9 | Website, GBP, competitor audits; keyword research | 7–8 |
-| 10–13 | GREEN / AMBER / RED gate; admin override | 6 |
+| 10–13 | Conversion measurement audit: findings, not-assessable handling, no gate | 6 |
 | 14 | Feasibility calculations (incl. PDF example $1,500/mo, 50/wk ≈ $6.90/lead) | 8 |
 | 15–16 | AI draft via Mock; via Groq (skipped unless configured — reported as SKIPPED, never PASSED) | 9 |
 | 17–18 | Challenger disagreement; invalid AI JSON | 9 |

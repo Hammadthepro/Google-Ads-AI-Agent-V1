@@ -385,7 +385,7 @@ export default function Integrations() {
   const results: Record<string, any> = Object.fromEntries((testAll.data?.results ?? []).map((r: any) => [r.provider, r]));
   return (
     <div className="space-y-6">
-      <PageHeader title="API & Account Integrations" subtitle="Credentials come from .env or are saved here (encrypted, write-only). Connected appears only after a real request succeeds."
+      <PageHeader title="Integrations" subtitle="Credentials come from .env or are saved here (encrypted, write-only). Connected appears only after a real request succeeds."
         actions={canManage && <Button disabled={testAll.isPending} onClick={() => testAll.mutate({})}>{testAll.isPending ? "Testing all…" : "Test all connections"}</Button>} />
       {params.get("oauth") === "connected" && <Notice tone="green">Google authorization saved for: {params.get("providers")}. Now run Test Connection.</Notice>}
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}

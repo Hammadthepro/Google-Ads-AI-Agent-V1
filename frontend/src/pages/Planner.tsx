@@ -8,7 +8,7 @@ export function Planner() {
   const q = useQuery({ queryKey: ["plans"], queryFn: () => api.get("/plans") });
   return (
     <div className="space-y-6">
-      <PageHeader title="Campaign Planner" subtitle="AI drafts, the independent AI challenger, and comparisons with the team's own plan. Start a plan from Tasks."
+      <PageHeader title="Campaign plans" subtitle="AI drafts, the independent AI challenger, and comparisons with the team's own plan. Start a plan from Tasks."
         actions={<Link to="/tasks" className="text-sm font-medium text-brand-700">New plan → Tasks</Link>} />
       <Card>
         {q.isLoading ? <Spinner /> : (

@@ -16,7 +16,7 @@ export function Audits() {
   const run = useAction(() => api.post("/audits", { business_id: biz, audit_type: type }), [["audits"]]);
   return (
     <div className="space-y-6">
-      <PageHeader title="Audits" subtitle="Website, Google Business Profile and competitor audits run in parallel; keyword research uses their outputs." />
+      <PageHeader title="Research & audits" subtitle="Website, Google Business Profile and competitor audits run in parallel; keyword research uses their outputs." />
       {can("audits.run") && (
         <Card title="Run an audit">
           <div className="flex flex-wrap items-end gap-3">

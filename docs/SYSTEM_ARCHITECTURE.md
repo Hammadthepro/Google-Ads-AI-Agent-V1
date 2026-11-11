@@ -63,7 +63,7 @@ google-ads-ai-agent/
 │   │   │   └── notifications/{base.py, mock.py, email.py}
 │   │   ├── modules/
 │   │   │   ├── users/           ├── clients/        ├── businesses/
-│   │   │   ├── ads_accounts/    ├── tasks/          ├── tracking_gate/
+│   │   │   ├── ads_accounts/    ├── tasks/          ├── measurement/  
 │   │   │   ├── audits/          ├── keywords/       ├── feasibility/
 │   │   │   ├── fixes/           ├── planner/        ├── validation/
 │   │   │   ├── approvals/       ├── execution/      ├── monitoring/
@@ -140,7 +140,7 @@ approved payload
        2. approval exists, status APPROVED, payload_hash == hash(current payload), not expired
        3. requesting + approving users active and authorised
        4. kill switches: global, client, account → all off
-       5. tracking-gate requirement for this operation type
+       5. (retired: there is no tracking gate; measurement is an audit, not a write condition)
        6. if adapter is REAL: GOOGLE_ADS_WRITES_ENABLED=true AND db setting
           real_writes_authorized=true (Super Admin, audited) AND account.writes_allowed=true
        7. manual-change check (change_event since last read) → block if conflicting
@@ -168,7 +168,7 @@ The real adapter repeats check 6 internally (defence in depth), so even a bug in
 | Job | Frequency | Notes |
 |---|---|---|
 | `monitoring.daily_sync` | daily | Pull/simulate last 30 days (conversion lag) |
-| `tracking_gate.recheck_all` | daily | Updates GREEN/AMBER/RED; clears override warnings |
+| `audit_measurement` | daily | Re-runs the conversion measurement audit for every business |
 | `emergency.hourly_check` | hourly | Deterministic rules only |
 | `fixes.recheck_measurable` | daily | PageSpeed / review count rechecks |
 | `optimization.propose_negatives` | daily after sync | Shadow mode = proposals only |

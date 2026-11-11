@@ -14,7 +14,7 @@ Original plan: Prefix `/api/v1`. Every route except health and login requires a 
 | Ads accounts | `GET /ads-accounts`, `POST /ads-accounts/discover`, `GET /ads-accounts/{id}/campaigns|ad-groups|ads` | Analyst |
 | Ads OAuth | `GET /ads-oauth/start`, `GET /ads-oauth/callback`, `POST /ads-oauth/{id}/disconnect` | Super Admin |
 | Tasks | `POST /tasks` (Run), `GET /tasks`, `GET /tasks/{id}`, `GET /tasks/{id}/steps` | CM |
-| Tracking gate | `POST /businesses/{id}/tracking-gate/run`, `GET …/latest`, `POST …/override` | CM / Admin |
+| Measurement audit | `GET /businesses/{id}/measurement`, `POST /businesses/{id}/measurement/run` | CM / Admin |
 | Audits | `POST /audits` (type), `GET /audits/{id}` | Analyst |
 | Keywords | `POST /keyword-research`, `GET /keyword-research/{id}`, `POST /keyword-research/{id}/overlap-check` | CM |
 | Feasibility | `POST /feasibility`, `GET /feasibility/{id}` | CM |

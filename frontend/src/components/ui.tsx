@@ -6,10 +6,10 @@ export function cx(...c: (string | false | null | undefined)[]) {
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b border-slate-200 pb-4">
+      <div className="min-w-0">
+        <h1 className="truncate text-lg font-semibold tracking-tight text-slate-900">{title}</h1>
+        {subtitle && <p className="mt-0.5 max-w-3xl text-[13px] leading-5 text-slate-500">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -18,10 +18,10 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 
 export function Card({ title, actions, children, className }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cx("rounded-xl border border-slate-200 bg-white shadow-sm", className)}>
+    <section className={cx("rounded-lg border border-slate-200 bg-white shadow-card", className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-          <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+        <header className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-2.5">
+          <h2 className="text-[13px] font-semibold text-slate-900">{title}</h2>
           {actions}
         </header>
       )}
@@ -41,7 +41,7 @@ const tones: Record<string, string> = {
 
 export function Badge({ tone = "slate", children, title }: { tone?: keyof typeof tones | string; children: ReactNode; title?: string }) {
   return (
-    <span title={title} className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset", tones[tone] ?? tones.slate)}>
+    <span title={title} className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-2xs font-medium ring-1 ring-inset", tones[tone] ?? tones.slate)}>
       {children}
     </span>
   );
@@ -61,7 +61,8 @@ const STATUS_TONE: Record<string, string> = {
 
 export function StatusBadge({ value }: { value?: string | null }) {
   if (!value) return <span className="text-slate-400">—</span>;
-  return <Badge tone={STATUS_TONE[value] ?? "slate"}>{value.replace(/_/g, " ")}</Badge>;
+  const text = value.replace(/_/g, " ").toLowerCase();
+  return <Badge tone={STATUS_TONE[value] ?? "slate"}>{text.charAt(0).toUpperCase() + text.slice(1)}</Badge>;
 }
 
 /** Every result shows where its data came from. Only data retrieved from a real service is labelled LIVE. */
@@ -95,15 +96,15 @@ export function DataStatusNotice({ status }: { status?: DataStatus | null }) {
 type BtnProps = { children: ReactNode; onClick?: () => void; variant?: "primary" | "secondary" | "danger" | "ghost"; disabled?: boolean; type?: "button" | "submit"; title?: string; size?: "sm" | "md" };
 export function Button({ children, onClick, variant = "secondary", disabled, type = "button", title, size = "md" }: BtnProps) {
   const v = {
-    primary: "bg-brand-600 text-white hover:bg-brand-700 shadow-sm",
-    secondary: "bg-white text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50",
-    danger: "bg-rose-600 text-white hover:bg-rose-700 shadow-sm",
-    ghost: "text-slate-600 hover:bg-slate-100",
+    primary: "bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950",
+    secondary: "bg-white text-slate-800 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 active:bg-slate-100",
+    danger: "bg-rose-600 text-white hover:bg-rose-700",
+    ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
   }[variant];
   return (
     <button type={type} title={title} onClick={onClick} disabled={disabled}
-      className={cx("inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
-        size === "sm" ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm", v)}>
+      className={cx("inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-[13px]", v)}>
       {children}
     </button>
   );
@@ -112,7 +113,7 @@ export function Button({ children, onClick, variant = "secondary", disabled, typ
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-medium text-slate-700">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-slate-700">{label}</span>
       {children}
       {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
     </label>
@@ -130,7 +131,7 @@ export function FieldGroup({ label, hint, children }: { label: string; hint?: st
   );
 }
 
-export const inputCls = "block w-full rounded-lg border-0 px-3 py-2 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand-500";
+export const inputCls = "block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-[13px] leading-5 text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand-500 disabled:bg-slate-50 disabled:text-slate-500";
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(inputCls, props.className)} />;
@@ -153,14 +154,16 @@ export function Table({ columns, rows, empty = "Nothing here yet.", onRowClick }
   if (!rows?.length) return <EmptyState message={empty} />;
   return (
     <div className="-mx-5 overflow-x-auto">
-      <table className="min-w-full divide-y divide-slate-200 text-sm">
+      <table className="min-w-full text-[13px]">
         <thead>
-          <tr>{columns.map((c) => <th key={c.key} className={cx("whitespace-nowrap px-5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500", c.className)}>{c.label}</th>)}</tr>
+          <tr className="border-b border-slate-200">{columns.map((c) => <th key={c.key} scope="col" className={cx("whitespace-nowrap px-5 py-2 text-left text-2xs font-medium uppercase tracking-wider text-slate-500", c.className)}>{c.label}</th>)}</tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((r, i) => (
-            <tr key={r.id ?? i} onClick={onRowClick ? () => onRowClick(r) : undefined} className={cx(onRowClick && "cursor-pointer hover:bg-slate-50")}>
-              {columns.map((c) => <td key={c.key} className={cx("px-5 py-2.5 align-top text-slate-700", c.className)}>{c.render ? c.render(r) : fmt(r[c.key])}</td>)}
+            <tr key={r.id ?? i} onClick={onRowClick ? () => onRowClick(r) : undefined} tabIndex={onRowClick ? 0 : undefined}
+              onKeyDown={onRowClick ? (e) => { if (e.key === "Enter") onRowClick(r); } : undefined}
+              className={cx("transition-colors hover:bg-slate-50/70", onRowClick && "cursor-pointer")}>
+              {columns.map((c) => <td key={c.key} className={cx("px-5 py-2 align-top text-slate-700", c.className)}>{c.render ? c.render(r) : fmt(r[c.key])}</td>)}
             </tr>
           ))}
         </tbody>
@@ -181,7 +184,7 @@ export const pct = (v?: number | null) => (v === null || v === undefined ? "—"
 export const dt = (v?: string | null) => (v ? new Date(v).toLocaleString() : "—");
 
 export function EmptyState({ message }: { message: string }) {
-  return <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">{message}</div>;
+  return <div className="rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-[13px] text-slate-500">{message}</div>;
 }
 
 export function ErrorBox({ error }: { error: unknown }) {
@@ -191,7 +194,7 @@ export function ErrorBox({ error }: { error: unknown }) {
   const errs: any[] = (error as any)?.details?.errors ?? [];
   const notConfigured = (error as any)?.code === "integration_not_configured";
   return (
-    <div role="alert" className={cx("rounded-lg border px-4 py-3 text-sm", notConfigured ? "border-amber-200 bg-amber-50 text-amber-900" : "border-rose-200 bg-rose-50 text-rose-800")}>
+    <div role="alert" className={cx("rounded-md border px-3.5 py-2.5 text-[13px] leading-5", notConfigured ? "border-amber-200 bg-amber-50 text-amber-900" : "border-rose-200 bg-rose-50 text-rose-800")}>
       <div className="font-medium">{msg}</div>
       {notConfigured && <a className="mt-1 inline-block underline" href="/integrations">Open the Integrations page</a>}
       {reasons.length > 0 && <ul className="mt-1 list-disc pl-5">{reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
@@ -204,13 +207,13 @@ export function Notice({ tone = "blue", children }: { tone?: "blue" | "amber" | 
   const t = { blue: "border-brand-100 bg-brand-50 text-brand-700", amber: "border-amber-200 bg-amber-50 text-amber-900",
     violet: "border-violet-200 bg-violet-50 text-violet-800", green: "border-emerald-200 bg-emerald-50 text-emerald-800",
     red: "border-rose-200 bg-rose-50 text-rose-800" }[tone];
-  return <div className={cx("rounded-lg border px-4 py-3 text-sm", t)}>{children}</div>;
+  return <div className={cx("rounded-md border px-3.5 py-2.5 text-[13px] leading-5", t)}>{children}</div>;
 }
 
 export function Spinner({ label = "Loading…" }: { label?: string }) {
   return (
-    <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
+    <div role="status" className="flex items-center gap-2 py-6 text-[13px] text-slate-500">
+      <span aria-hidden className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
       {label}
     </div>
   );
@@ -218,9 +221,9 @@ export function Spinner({ label = "Loading…" }: { label?: string }) {
 
 export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-card">
+      <div className="text-2xs font-medium uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="tabular mt-1 text-xl font-semibold tracking-tight text-slate-900">{value}</div>
       {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
     </div>
   );
@@ -253,7 +256,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel = "Confirm", ton
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl">
+      <div className="w-full max-w-lg animate-fade-in rounded-lg bg-white p-5 shadow-pop">
         <h3 className="text-base font-semibold text-slate-900">{title}</h3>
         {body && <div className="mt-2 text-sm text-slate-600">{body}</div>}
         {children && <div className="mt-3">{children}</div>}

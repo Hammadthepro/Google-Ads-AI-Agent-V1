@@ -32,8 +32,8 @@ Honest list of what is NOT done, NOT verified, or deliberately limited in V1. No
 - ~~Keyword pause resource names~~ — fixed: the keyword mirror stores the adapter's resource name (migration 0003), which is the real `{adGroupId}~{criterionId}` form in real mode.
 - **Mobile above-the-fold check** is a deterministic DOM heuristic (phone link, form, H1), not a rendered-screenshot analysis (decision D-12).
 - **Emergency brake**: real Google Ads emergency writes are intentionally not executed. Pause/lower-budget actions are recorded as SIMULATED; freezing automation is applied internally.
-- **Auto-negatives** run in SHADOW mode. ACTIVE mode needs both `AUTO_NEGATIVES_MODE=active` and the `negatives.mode` setting, plus GREEN tracking and the enough-data gate. ACTIVE mode was tested only against the mock.
-- **Thresholds** (enough-data, emergency, budget approval, wasted spend, tracking GREEN criteria) are documented TEST VALUES from DECISIONS_REQUIRED.md, editable in System Settings. They are not final policy.
+- **Auto-negatives** run in SHADOW mode. ACTIVE mode needs both `AUTO_NEGATIVES_MODE=active` and the `negatives.mode` setting, plus reliable conversion data and the enough-data gate. ACTIVE mode was tested only against the mock.
+- **Thresholds** (enough-data, emergency, budget approval, wasted spend, minimum conversions for conversion-based bidding) are documented TEST VALUES from DECISIONS_REQUIRED.md, editable in System Settings. They are not final policy.
 - **Notifications** are stored as alerts (MOCK_DELIVERED). Real email needs `NOTIFIER_MODE=real` and SMTP variables.
 - **Mock simulator** is deterministic but simplified: conversion lag curve, calls, impression share jitter and experiment effects are modelled, not realistic forecasts.
 - **Mock validate-only** applies a subset of Google editorial policy (length, punctuation, capitalisation, phone numbers in text). Real policy review can still disapprove ads.

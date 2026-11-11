@@ -63,7 +63,7 @@ if (!/No clients yet|Your first real campaign analysis will appear here after co
 
 // 5. Integrations: every card present, no secret in the DOM, writes disabled
 await page.goto(`${BASE}/integrations`);
-await page.getByText("API & Account Integrations").waitFor();
+await page.getByRole("heading", { name: "Integrations" }).waitFor();
 for (const label of ["Google Ads API", "Google Analytics 4", "Google Business Profile", "Groq (internal AI)", "Claude (Anthropic)", "PageSpeed Insights"]) {
   if (!(await page.getByText(label).first().isVisible())) errors.push(`integration card missing: ${label}`);
 }

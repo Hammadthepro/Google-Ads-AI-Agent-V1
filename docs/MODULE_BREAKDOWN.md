@@ -16,7 +16,7 @@ Status: **Implemented in V1** (tests: see TEST_RESULTS.md).
 | 8 | `businesses` | Business profile, services, competitors (≤3), claims, brand rules | Max 3 competitors | clients | 4 |
 | 9 | `ads_accounts` | Linked Google Ads accounts, hierarchy, permission status | Login ≠ Ads authorization | Google Ads adapter | 4 |
 | 10 | `tasks` | Single task form, 10 task types, workflow orchestration up to approval | No mutation during task run | most modules | 5 |
-| 11 | `tracking_gate` | GREEN / AMBER / RED, fix list, admin override, daily recheck | Override = AMBER; no conversion-based automation | Google Ads, crawler | 6 |
+| 11 | `measurement` | Conversion measurement audit: findings with evidence, severity, impact and action; daily re-audit | No status, gate or override; conversion-based automation needs reliable conversion data | Google Ads, crawler | 6 |
 | 12 | `audits` | Website, Business Profile, competitor audits (parallel) | Tag detected ≠ conversion verified; competitor ads never "live" without source | crawler, places, pagespeed, AI | 7 |
 | 13 | `keywords` | Keyword research, labelling, clustering, overlap check, negative ideas | Exact + phrase default; no broad in main ad groups | keyword adapter, AI | 8 |
 | 14 | `feasibility` | Budget math, 3 scenarios, bottlenecks, review-adjusted forecast | All numbers computed, labelled ESTIMATE | keywords, audits | 8 |

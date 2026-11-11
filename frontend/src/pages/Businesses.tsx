@@ -12,7 +12,7 @@ export function Businesses() {
   const nav = useNavigate();
   return (
     <div className="space-y-6">
-      <PageHeader title="Businesses" subtitle="Business profiles feed every audit, the tracking gate, keyword research and validation." />
+      <PageHeader title="Businesses" subtitle="Business profiles feed every audit, keyword research, strategy and validation." />
       <Card>
         {isLoading ? <Spinner /> : (
           <Table rows={data ?? []} onRowClick={(b) => nav(`/businesses/${b.id}`)} columns={[

@@ -75,7 +75,7 @@ export function ClientDetail() {
           <p className="mt-1 text-sm text-emerald-800">{params.get("report") ? "The analysis has started. Watch it run, or come back to the results here." : "The profile is saved. Run an audit when you are ready."}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {params.get("report") && <Link to={`/audit-reports/${params.get("report")}`}><Button variant="primary">Watch the analysis live</Button></Link>}
-            <Link to="/"><Button>Open the dashboard</Button></Link>
+            <Link to={`/?client=${c.id}`}><Button>Ask the agent about this client</Button></Link>
             <Link to="/clients/new"><Button>Add another client</Button></Link>
           </div>
         </div>)}
@@ -84,7 +84,7 @@ export function ClientDetail() {
         {can("clients.edit") && <Link to={`/clients/${c.id}/edit`}><Button>Edit client information</Button></Link>}
         {c.automation_frozen && <Badge tone="red">automation frozen by emergency brake</Badge>}
         {c.automation_frozen && can("killswitch.client") && <Button size="sm" onClick={() => unfreeze.mutate({})}>Unfreeze automation</Button>}
-        <Link to={`/agent?client=${c.id}`}><Button variant="primary">Ask the agent</Button></Link>
+        <Link to={`/?client=${c.id}`}><Button variant="primary">Ask the agent</Button></Link>
         <Link to={`/tasks?client=${c.id}`}><Button>Run a task</Button></Link></>} />
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="Contacts">

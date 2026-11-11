@@ -23,6 +23,11 @@ import Integrations from "./pages/Integrations";
 import Settings from "./pages/Settings";
 import Activity from "./pages/Activity";
 
+function AgentRedirect() {
+  const loc = useLocation();
+  return <Navigate to={{ pathname: "/", search: loc.search }} replace />;
+}
+
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
   const loc = useLocation();
@@ -37,8 +42,9 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<Protected><Layout /></Protected>}>
-          <Route index element={<Dashboard />} />
-          <Route path="agent" element={<Agent />} />
+          <Route index element={<Agent />} />
+          <Route path="agent" element={<AgentRedirect />} />
+          <Route path="overview" element={<Dashboard />} />
           <Route path="clients" element={<Clients />} />
           <Route path="clients/new" element={<NewClient />} />
           <Route path="clients/:id" element={<ClientDetail />} />

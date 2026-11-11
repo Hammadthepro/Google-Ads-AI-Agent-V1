@@ -27,13 +27,13 @@ export default function Settings() {
   const authorize = useAction((b) => api.patch("/settings", b), [["settings"]]);
   const [authOpen, setAuthOpen] = useState(false);
   const [authReason, setAuthReason] = useState("");
-  if (!can("settings.view")) return <div><PageHeader title="System Settings" /><Notice>Admins and Super Admins only.</Notice></div>;
+  if (!can("settings.view")) return <div><PageHeader title="Settings" /><Notice>Admins and Super Admins only.</Notice></div>;
   const kill = (scope: string, id = "") => (ks.data ?? []).find((k: any) => k.scope === scope && k.scope_id === id)?.is_on;
   const cfg = q.data?.config;
   const realAuth = q.data?.settings.find((s: any) => s.key === "real_writes_authorized")?.value;
   return (
     <div className="space-y-6">
-      <PageHeader title="System Settings" subtitle="Thresholds are configurable TEST VALUES from docs/DECISIONS_REQUIRED.md — not final production policy." />
+      <PageHeader title="Settings" subtitle="Thresholds are configurable TEST VALUES from docs/DECISIONS_REQUIRED.md — not final production policy." />
       <Card title="Kill switches">
         <div className="space-y-3">
           <div className="flex items-center justify-between rounded-lg border border-slate-200 p-3">

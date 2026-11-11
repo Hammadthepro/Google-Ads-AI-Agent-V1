@@ -11,7 +11,7 @@ export default function Activity() {
   const runs = useQuery({ queryKey: ["ai-runs"], queryFn: () => api.get("/ai-runs") });
   return (
     <div className="space-y-6">
-      <PageHeader title="Activity Logs" subtitle="Who requested, who approved, which adapter executed, the response and whether read-back passed." />
+      <PageHeader title="Activity log" subtitle="Who requested, who approved, which adapter executed, the response and whether read-back passed." />
       <Tabs tabs={[
         { key: "log", label: "Activity", content: (
           <Card actions={<div className="w-64"><Input placeholder="Filter by action prefix, e.g. approval." value={action} onChange={(e) => setAction(e.target.value)} /></div>}>

@@ -20,10 +20,10 @@ export default function Users() {
   const [f, setF] = useState({ email: "", name: "", role: "ANALYST" });
   const create = useAction((b) => api.post("/users", b), [["users"]]);
   const patch = useAction(({ id, ...b }) => api.patch(`/users/${id}`, b), [["users"]]);
-  if (!can("users.manage")) return <div className="space-y-6"><PageHeader title="Users & Roles" /><Notice>Only Admins and Super Admins can manage users.</Notice><Card title="Role permissions"><Matrix /></Card></div>;
+  if (!can("users.manage")) return <div className="space-y-6"><PageHeader title="Users & roles" /><Notice>Only Admins and Super Admins can manage users.</Notice><Card title="Role permissions"><Matrix /></Card></div>;
   return (
     <div className="space-y-6">
-      <PageHeader title="Users & Roles" subtitle="Users must be invited before they can sign in. Permissions are enforced by the backend on every request." />
+      <PageHeader title="Users & roles" subtitle="Users must be invited before they can sign in. Permissions are enforced by the backend on every request." />
       <Card title="Invite user">
         <div className="grid gap-3 md:grid-cols-4">
           <Field label="Email"><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>

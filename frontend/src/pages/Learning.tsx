@@ -18,7 +18,7 @@ export default function Learning() {
   const run = useAction(() => api.post("/learning/regression-cases/run"), [["cases"]]);
   return (
     <div className="space-y-6">
-      <PageHeader title="Learning / Playbook" subtitle="People turn repeated edits and rejections into plain-language rules. AI never rewrites production rules." />
+      <PageHeader title="Playbook" subtitle="People turn repeated edits and rejections into plain-language rules. AI never rewrites production rules." />
       <Card title="Playbook rules" actions={<span className="text-xs text-slate-500">Used by the drafting AI on every new plan</span>}>
         {rules.isLoading ? <Spinner /> : <Table rows={rules.data ?? []} columns={[{ key: "text", label: "Rule" }, { key: "scope", label: "Scope" }, { key: "version", label: "Ver." },
           { key: "is_active", label: "Active", render: (r) => <Badge tone={r.is_active ? "green" : "slate"}>{r.is_active ? "active" : "off"}</Badge> },
