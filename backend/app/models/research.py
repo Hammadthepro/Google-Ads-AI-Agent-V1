@@ -20,9 +20,11 @@ from app.models.base import Base, IdMixin, utcnow
 class ResearchEvent(IdMixin, Base):
     __tablename__ = "research_events"
     audit_report_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)     # one research run (= report id for report runs)
+    audit_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)   # the individual audit the event came from
     client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     business_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    seq: Mapped[int] = mapped_column(Integer)
+    seq: Mapped[int] = mapped_column(Integer)  # order within the run
     kind: Mapped[str] = mapped_column(String(40))          # audit_started, stage_started, url_crawling, page_extracted, ...
     stage: Mapped[str] = mapped_column(String(32), default="")
     level: Mapped[str] = mapped_column(String(8), default="info")   # info | warn | error

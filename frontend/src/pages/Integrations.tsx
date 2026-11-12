@@ -14,8 +14,9 @@ const MODES: { value: string; label: string; text: string }[] = [
 ];
 
 const LABEL_TONE: Record<string, string> = {
-  Connected: "green", "Connection failed": "red", "Credentials present": "blue", "Configuration saved": "blue", "Not configured": "slate", Disabled: "slate",
+  Connected: "green", "Connection failed": "red", "Not tested": "blue", "Not configured": "slate", Disabled: "slate",
   Configured: "blue", "Blocked by dependency": "amber", "Requires approval": "amber", Testing: "violet",
+  "Verified by signing in": "green", "Not verified — sign in with Google to verify": "slate",
 };
 const SOURCE_TONE: Record<string, string> = { saved: "green", environment: "blue", default: "slate", missing: "red" };
 const SOURCE_LABEL: Record<string, string> = { saved: "saved here", environment: "from deployment (.env)", default: "default", missing: "missing" };
@@ -28,11 +29,30 @@ export function StatusPills({ item }: { item: any }) {
   const d = item.display;
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      <Badge tone={d.config === "Configured" ? "green" : "slate"} title="Are all required settings present (from .env or saved here)?">{d.config}</Badge>
-      {d.testable && d.label !== "Not configured" && <Badge tone={LABEL_TONE[d.label]} title="Connection status from the last REAL request">{d.label}</Badge>}
-      {!d.testable && <Badge tone="slate" title="No automatic test exists">Verified by signing in</Badge>}
+      <Badge tone={d.config === "Not configured" ? "slate" : "green"} title="Are all required settings present (from .env or saved here)?">{d.config}</Badge>
+      {d.label !== "Not configured" && <Badge tone={LABEL_TONE[d.label] ?? "slate"} title={d.testable ? "Connection status from the last REAL request" : "There is no automatic test: only a real sign-in proves it, and that is not a health check"}>{d.label}</Badge>}
       {item.deployment_managed && <Badge tone="violet" title="Set by whoever deploys the application; cannot be edited on this page">Deployment-managed</Badge>}
     </span>
+  );
+}
+
+const yesNo = (v: boolean | null | undefined, yes: string, no: string) => (v === true ? yes : v === false ? no : "not determined");
+
+/** What the last test really established. A test without credentials is never run, so it never appears here as a test. */
+export function TestFacts({ item }: { item: any }) {
+  const t = item.test;
+  if (!item.display?.testable) return null;
+  if (!t) return <p className="mt-2 text-xs text-slate-500">Never tested{item.missing?.length ? " — add the missing settings first; a test needs them" : ""}.</p>;
+  return (
+    <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-slate-600 sm:grid-cols-3" aria-label="Last test">
+      <div><dt className="inline text-slate-400">Last test </dt><dd className="inline">{dt(t.at || item.last_test_at)}</dd></div>
+      <div><dt className="inline text-slate-400">Last success </dt><dd className="inline">{item.last_success_at ? dt(item.last_success_at) : "never"}</dd></div>
+      <div><dt className="inline text-slate-400">Credentials </dt><dd className="inline">{t.credentials_present ? "present" : "missing"}</dd></div>
+      <div><dt className="inline text-slate-400">Provider contacted </dt><dd className="inline">{t.contacted ? "yes" : "no"}</dd></div>
+      <div><dt className="inline text-slate-400">Authentication </dt><dd className="inline">{yesNo(t.authenticated, "succeeded", "failed")}</dd></div>
+      <div><dt className="inline text-slate-400">Capability </dt><dd className="inline">{yesNo(t.capability_available, "available", "not available")}</dd></div>
+      {t.failure_reason && <div className="col-span-full text-rose-700">Failure: {t.failure_reason}</div>}
+    </dl>
   );
 }
 
@@ -255,6 +275,7 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
     <Card title={<span id={`card-${item.provider}`} className="flex flex-wrap items-center gap-2">{item.label}<StatusPills item={item} />{item.enabled && <Badge tone="green">Enabled in app</Badge>}</span>}
       actions={<Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide details" : "Details"}</Button>}>
       <p className="text-sm text-slate-600">{item.description}</p>
+      <TestFacts item={item} />
       {item.last_error && d.label === "Connection failed" && <div className="mt-3"><Notice tone="red"><b>Last error:</b> {item.last_error}</Notice></div>}
       {item.credentials_unreadable && <div className="mt-3"><Notice tone="red"><b>Saved credentials cannot be decrypted.</b> TOKEN_ENCRYPTION_KEY has changed since they were saved, so they are treated as missing. Re-enter them (or restore the previous key).</Notice></div>}
       {open && item.deployment_managed && (
@@ -406,7 +427,7 @@ export default function Integrations() {
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="Integration health">
-        {["Connected", "Connection failed", "Credentials present", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0) + (s === "Credentials present" ? (counts["Configuration saved"] ?? 0) : 0)} />)}
+        {["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0)} />)}
       </div>
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />

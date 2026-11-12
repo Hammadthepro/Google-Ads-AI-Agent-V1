@@ -225,8 +225,27 @@ def post_message(db: Session, user: User, conv_id: str, text: str, *, choice: di
             return _answer_text(db, conv, "This client has no business profile yet, so there is nothing to research. Edit the client to add one.", um)
         conv.context = {**(conv.context or {}), "business_id": bid}
         flag_modified(conv, "context")
+    # --- keyword research never starts new external research by itself: ask whether to reuse what exists or run it fresh
+    choice = (conv.context or {}).get("research_choice")
+    if reading["intent"] == "keyword_research" and choice is None:
+        ra, rr = research_decision(db, db.get(Business, bid), client, False)
+        if ra == "run":
+            from app.services import audit_jobs
+            src = audit_jobs.keyword_sources(db, db.get(Business, bid))
+            have = [x["label"] for x in src["sources"] if x["state"] in ("usable", "outdated")]
+            return _ask(db, conv, user, original_text, reading["intent"], "research_choice",
+                        f"Before keyword research: {rr}. {src['summary']} Use the research that already exists"
+                        + (f" ({', '.join(have)})" if have else " (some sources are missing, so results may be incomplete)")
+                        + ", or run fresh website, Business Profile and competitor research first? Nothing starts until you choose.",
+                        [{"label": "Use the available data", "value": "reuse", "context": {"research_choice": "reuse"}},
+                         {"label": "Run fresh research first (website, Business Profile, competitors)", "value": "fresh",
+                          "context": {"research_choice": "fresh"}}], um)
+    if choice is not None:
+        conv.context = {k: v for k, v in (conv.context or {}).items() if k != "research_choice"}  # one answer covers one request
+        flag_modified(conv, "context")
     run = AgentRun(conversation_id=conv.id, client_id=client.id, user_id=user.id, request_text=original_text, intent=reading["intent"],
-                   interpreted_by=reading["by"], params={"business_id": bid, "alternatives": reading["alternatives"]}, status="PLANNED",
+                   interpreted_by=reading["by"], params={"business_id": bid, "alternatives": reading["alternatives"],
+                                                         **({"research_choice": choice} if choice else {})}, status="PLANNED",
                    heartbeat_at=clock.now())
     db.add(run)
     db.flush()
@@ -427,7 +446,12 @@ def modules_decision(db: Session, biz: Business, client: Client, wanted: list[st
 
 
 def _steps_for_research(c: Ctx, wanted: list[str], force: bool = False) -> list[dict]:
-    ra, rr = research_decision(c.db, c.business, c.client, force or bool(c.params.get("force")))
+    choice = c.params.get("research_choice")
+    ra, rr = research_decision(c.db, c.business, c.client, force or bool(c.params.get("force")) or choice == "fresh")
+    if choice == "fresh":
+        rr = "You chose fresh research"
+    elif choice == "reuse" and ra == "run":
+        ra, rr = "skip", f"You chose to use the available data ({rr[0].lower() + rr[1:]}); results may be incomplete"
     ma, mr, todo = modules_decision(c.db, c.business, c.client, wanted, ra == "run")
     return [{"key": "research", "label": "External research (website, competitors, keywords)", "action": ra, "reason": rr},
             {"key": "modules", "label": "Update the intelligence record", "action": ma, "reason": mr, "modules": todo, "wanted": wanted}]

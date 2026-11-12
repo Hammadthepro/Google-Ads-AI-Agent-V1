@@ -95,3 +95,59 @@ export function describe(e: ResearchEvent): string {
     default: return e.title;
   }
 }
+
+/* ------------------------------------------------------------------------------------------------ live findings stream */
+export const STAGE_TITLE: Record<string, string> = {
+  client: "Client & business", website: "Website & landing pages", gbp: "Business presence", geo: "Local market",
+  competitors: "Competitors", keywords: "Keyword research & search intent", report: "Scoring & recommendations", "": "Research",
+};
+export type StreamItem = { key: string; type: "activity" | "finding" | "warning" | "note"; text: string; detail?: string; url?: string;
+  chips?: string[]; state?: "working" | "done" | "failed"; seq: number; at: string };
+export type StreamStage = { stage: string; title: string; state: "running" | "done" | "failed" | "skipped" | "waiting"; summary?: string; items: StreamItem[]; firstSeq: number };
+
+/** Groups the real events into readable sections: one line per page (opening → read), findings as they arrive, warnings in place. */
+export function buildStream(events: ResearchEvent[]): StreamStage[] {
+  const stages = new Map<string, StreamStage>();
+  const get = (stage: string, seq: number) => {
+    const key = stage || "";
+    if (!stages.has(key)) stages.set(key, { stage: key, title: STAGE_TITLE[key] ?? key, state: "running", items: [], firstSeq: seq });
+    return stages.get(key)!;
+  };
+  for (const e of events) {
+    if (["audit_started", "audit_completed", "audit_failed"].includes(e.kind)) continue;
+    const s = get(e.stage, e.seq);
+    const d = e.data ?? {};
+    const push = (it: Omit<StreamItem, "seq" | "at">) => s.items.push({ ...it, seq: e.seq, at: e.at });
+    switch (e.kind) {
+      case "stage_started": s.state = "running"; break;
+      case "stage_completed": s.state = "done"; s.summary = d.summary; break;
+      case "stage_failed": s.state = "failed"; s.summary = d.summary; break;
+      case "stage_skipped": s.state = "skipped"; s.summary = d.summary || e.title; break;
+      case "url_crawling": push({ key: `p:${d.url}`, type: "activity", text: `Reading ${hostOf(d.url)}${pathOf(d.url) === "/" ? "" : pathOf(d.url)}`, url: d.url, state: "working" }); break;
+      case "page_extracted": {
+        const existing = s.items.find((i) => i.key === `p:${d.url}`);
+        const text = `Read “${d.page_title || pathOf(d.url)}”`;
+        const detail = [d.words ? `${d.words} words` : "", d.h1 ? `heading: ${d.h1}` : ""].filter(Boolean).join(" · ");
+        if (existing) Object.assign(existing, { text, detail, state: "done" });
+        else push({ key: `p:${d.url}`, type: "activity", text, detail, url: d.url, state: "done" });
+        break;
+      }
+      case "page_failed": case "crawl_blocked": {
+        const existing = s.items.find((i) => i.key === `p:${d.url}`);
+        const text = e.kind === "crawl_blocked" ? `Skipped ${pathOf(d.url)}: not allowed by the site's robots.txt` : `Could not open ${pathOf(d.url)}${d.status ? ` (HTTP ${d.status})` : ""}`;
+        if (existing) Object.assign(existing, { text, state: "failed", type: "warning" });
+        else push({ key: `p:${d.url}`, type: "warning", text, url: d.url, state: "failed" });
+        break;
+      }
+      case "competitor_identified": push({ key: `c:${e.seq}`, type: "finding", text: e.title, detail: [d.basis, d.distance_km !== undefined ? `${d.distance_km} km away` : "", providerLabel(d.provider)].filter(Boolean).join(" · "), url: d.url }); break;
+      case "keyword_discovery": push({ key: `k:${e.seq}`, type: "finding", text: e.title, detail: providerLabel(d.provider), chips: d.examples ?? [] }); break;
+      case "location_identified": push({ key: `l:${e.seq}`, type: "finding", text: `Located: ${e.title}`, detail: providerLabel(d.provider) }); break;
+      case "web_result": push({ key: `w:${e.seq}`, type: "activity", text: e.title || hostOf(d.url), detail: hostOf(d.url), url: d.url, state: "done" }); break;
+      case "source_discovered": push({ key: `q:${e.seq}`, type: "activity", text: e.title, detail: providerLabel(d.provider), state: "done" }); break;
+      case "research_stored": case "evidence_validated": push({ key: `r:${e.seq}`, type: "finding", text: e.title }); break;
+      case "provider_unavailable": case "provider_failed": push({ key: `x:${e.seq}`, type: "warning", text: e.title, detail: d.error_kind ? `reason: ${d.error_kind.replace(/_/g, " ")}` : undefined }); break;
+      default: push({ key: `n:${e.seq}`, type: e.level === "info" ? "note" : "warning", text: e.title });
+    }
+  }
+  return [...stages.values()].sort((a, b) => a.firstSeq - b.firstSeq);
+}

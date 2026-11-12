@@ -205,33 +205,48 @@ def get_measurement(business_id: str, user: User = Depends(require("clients.view
 class AuditIn(BaseModel):
     business_id: str
     audit_type: str  # WEBSITE / GBP / COMPETITOR / KEYWORD / ACCOUNT / ALL
+    # keyword research only: "reuse" the existing source audits, or "refresh" the sources listed in `refresh` (needs `confirm`)
+    keyword_mode: str | None = None
+    refresh: list[str] = []
+    confirm: bool = False
+    background: bool = False  # True: return at once with QUEUED audits and follow them on the detail page
 
 
 @router.post("/audits", tags=["audits"])
 def run_audit(body: AuditIn, user: User = Depends(require("audits.run")), db: Session = Depends(get_db)):
+    from app.services import audit_jobs
     b = clients_service.get_business(db, user, body.business_id)
     if user.role == "ANALYST" and body.audit_type not in auth_service.ANALYST_AUDITS | {"ALL"}:
         raise ValidationFailed("Analysts can run website, business profile, competitor and keyword audits")
     t = body.audit_type
     if t == "ACCOUNT":
         rows = [audits.account_audit(db, b, None, user.id)]
-    elif t == "KEYWORD":
-        par = audits.run_parallel(db, b, task_id=None, actor_id=user.id)
-        kw = audits.keyword_research(db, par["context"], par["website"], par["competitor"], None)
-        rows = [audits.save_keyword_audit(db, b, None, user.id, kw)]
-    elif t in ("WEBSITE", "GBP", "COMPETITOR", "ALL"):
-        par = audits.run_parallel(db, b, task_id=None, actor_id=user.id)
-        rows = [db.get(Audit, i) for k, i in par["audit_ids"].items() if t == "ALL" or k == t]
+    elif t in ("WEBSITE", "GBP", "COMPETITOR", "ALL", "KEYWORD"):
+        types = ["WEBSITE", "GBP", "COMPETITOR"] if t == "ALL" else [t]  # only what was asked for is started
+        rows = audit_jobs.start(db, b, user.id, types=types, keyword_mode=body.keyword_mode, refresh=body.refresh, confirm=body.confirm,
+                                background=body.background)
     else:
         raise ValidationFailed("Unknown audit type")
-    activity.log(db, "audit.run", actor=user, entity="business", entity_id=b.id, client_id=b.client_id, details={"type": t})
+    activity.log(db, "audit.run", actor=user, entity="business", entity_id=b.id, client_id=b.client_id,
+                 details={"type": t, "keyword_mode": body.keyword_mode, "refresh": body.refresh, "audits": [r.id for r in rows]})
     db.commit()
     return [audits.serialize(r) for r in rows]
+
+
+@router.get("/businesses/{business_id}/keyword-research/sources", tags=["audits"])
+def keyword_research_sources(business_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """What keyword research could reuse, and what is missing or outdated. Read-only: nothing is started."""
+    from app.services import audit_jobs
+    b = clients_service.get_business(db, user, business_id)
+    audit_jobs.recover_stale(db)
+    return audit_jobs.keyword_sources(db, b)
 
 
 @router.get("/audits", tags=["audits"])
 def list_audits(business_id: str | None = None, client_id: str | None = None, user: User = Depends(require("clients.view")),
                 db: Session = Depends(get_db)):
+    from app.services import audit_jobs
+    audit_jobs.recover_stale(db)  # never show an abandoned job as running
     ids = auth_service.accessible_client_ids(db, user)
     q = select(Audit).order_by(Audit.started_at.desc()).limit(200)
     if business_id:
@@ -243,11 +258,30 @@ def list_audits(business_id: str | None = None, client_id: str | None = None, us
 
 @router.get("/audits/{audit_id}", tags=["audits"])
 def get_audit(audit_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    from app.services import audit_jobs
+    audit_jobs.recover_stale(db)
     a = db.get(Audit, audit_id)
     if not a:
         raise NotFound("Audit not found")
     auth_service.require_client_access(db, user, a.client_id)
-    return audits.serialize(a)
+    from app.models import Business
+    b = db.get(Business, a.business_id)
+    return {**audits.serialize(a), "business": {"id": b.id, "name": b.name, "website_url": b.website_url} if b else None,
+            "retryable": a.status in ("FAILED", "CANCELLED") and a.audit_type != "ACCOUNT"}
+
+
+@router.get("/audits/{audit_id}/events", tags=["audits"])
+def audit_events(audit_id: str, after: int = 0, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The live activity of one audit, in order. Poll with `after` = the last `seq` received; `done` once the audit is no longer active."""
+    from app.services import audit_jobs, research_events
+    audit_jobs.recover_stale(db)
+    a = db.get(Audit, audit_id)
+    if not a:
+        raise NotFound("Audit not found")
+    auth_service.require_client_access(db, user, a.client_id)
+    events = research_events.list_events(db, audit_id=a.id, after=after)
+    return {"audit_id": a.id, "status": a.status, "done": a.status not in audit_jobs.ACTIVE, "events": events,
+            "last_seq": events[-1]["seq"] if events else after}
 
 
 # ------------------------------------------------------------------ fixes & feasibility

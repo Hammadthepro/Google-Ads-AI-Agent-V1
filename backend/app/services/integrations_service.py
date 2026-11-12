@@ -469,6 +469,8 @@ class Steps:
 
     def __init__(self):
         self.items: list[dict] = []
+        self.requests = 0       # HTTP requests actually sent to the provider during this test
+        self.contacted = False  # set by testers that reach a provider without HTTP (database, Redis, SMTP, crawler)
         self.failed = False
         self.auth_expired = False
         self.needs_approval = False  # the provider requires an access application/approval before the API works
@@ -1231,6 +1233,13 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
         raise ValidationFailed(f"{spec['label']} has no connection test: it can only be verified by signing in")
     if target != "all" and target not in spec.get("targets", {}):
         raise ValidationFailed(f"Unknown test target '{target}' for {provider}")
+    miss = _missing_for_test(db, provider)
+    if miss:  # nothing to test: do not contact the provider and do not record a test, so no timestamp suggests one happened
+        return {"provider": provider, "target": target, "ok": False, "connected": False, "attempted": False, "status": serialize(db, provider)["status"],
+                "steps": [{"name": "Credentials present", "status": "SKIPPED", "detail": f"Not configured — missing: {', '.join(miss)}",
+                           "hint": _missing_hint(provider, miss)}],
+                "summary": {"credentials_present": False, "contacted": False, "authenticated": None, "capability_available": None,
+                            "failure_reason": f"Not configured: missing {', '.join(miss)}"}, "tested_at": None}
     row = _row(db, provider, create=True)
     steps = Steps()
     started = datetime.now(timezone.utc)
@@ -1244,9 +1253,14 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
         vals.setdefault("client_secret", ads_vals.get("client_secret", ""))
     own = http is None
     client = http or httpx.Client(timeout=20)
+
+    def _count(_request):
+        steps.requests += 1
+    client.event_hooks["request"] = [*client.event_hooks.get("request", []), _count]
     try:
         discovered = _TESTERS[provider](vals, client, steps, row, target) or {}
     finally:
+        client.event_hooks["request"] = [h for h in client.event_hooks.get("request", []) if h is not _count]
         if own:
             client.close()
     row.last_test_at = started
@@ -1260,6 +1274,7 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
     else:
         subs, connected = {}, (not steps.failed)
     row.last_test_ok = connected
+    row.discovered = {**(row.discovered or {}), "test_summary": {**_summarize(steps, connected), "at": started.isoformat()}}
     if steps.failed:
         failed = next(s for s in steps.items if s["status"] == "FAILED")
         row.last_error = f"{failed['name']}: {failed['detail']}"
@@ -1280,7 +1295,48 @@ def test_connection(db: Session, provider: str, *, http: httpx.Client | None = N
     db.flush()
     invalidate()
     return {"provider": provider, "target": target, "ok": not steps.failed, "connected": bool(connected), "status": row.status, "steps": steps.items,
-            "subtests": subs, "tested_at": started.isoformat()}
+            "subtests": subs, "tested_at": started.isoformat(), "attempted": True, "summary": row.discovered["test_summary"]}
+
+
+_AUTH_FAIL = re.compile(r"auth_failure|permission_denied|\b401\b|\b403\b|invalid[_ ]api[_ ]?key|unauthori[sz]ed|invalid_grant|expired|revoked|rejected", re.I)
+_LOCAL_STEPS = {"Credentials present", "SSRF guard", "Sources", "Research customer configured"}
+
+
+def _summarize(steps: Steps, connected: bool | None) -> dict:
+    """What a person needs to know about one test: were credentials there, was the provider really contacted, did authentication work,
+    is the needed capability available, and why it failed."""
+    remote = [i for i in steps.items if i["name"] not in _LOCAL_STEPS and i["status"] in ("PASSED", "FAILED")]
+    contacted = steps.requests > 0 or steps.contacted or bool(remote)
+    failed = next((i for i in steps.items if i["status"] == "FAILED"), None)
+    auth_failed = steps.auth_expired or any(i["status"] == "FAILED" and _AUTH_FAIL.search(i.get("detail", "")) for i in steps.items)
+    return {"credentials_present": not any(i["name"] == "Credentials present" and i["status"] == "FAILED" for i in steps.items),
+            "contacted": contacted, "requests": steps.requests,
+            "authenticated": (None if not contacted else False if auth_failed else True if (connected or any(i["status"] == "PASSED" for i in remote)) else None),
+            "capability_available": None if not contacted else bool(connected) if connected is not None else None,
+            "failure_reason": f"{failed['name']}: {failed['detail']}" if failed else ""}
+
+
+def _missing_hint(provider: str, miss: list[str]) -> str:
+    if provider == "keyword_planner" and miss == ["research_customer_id"]:
+        return ("Keyword Planner requests need a Google Ads customer ID. Enter the account to use for research on this card. It is separate from any "
+                "client's deployment account and is never chosen automatically.")
+    spec = PROVIDERS[provider]
+    names = {**spec.get("settings", {}), **spec.get("secrets", {})}
+    env = [_ENV.get(provider, {}).get(k) for k in miss if _ENV.get(provider, {}).get(k)]
+    return (f"Enter {', '.join(names.get(k, k) for k in miss)} on this card and save" +
+            (f", or set {', '.join(env)} in the backend's environment (the .env file used by Docker Compose) and restart the backend" if env else "") + ".")
+
+
+def _missing_for_test(db: Session, provider: str) -> list[str]:
+    spec = PROVIDERS[provider]
+    if spec.get("readonly"):
+        return readonly_missing(provider)
+    row = _row(db, provider)
+    miss = missing(provider, row)
+    if provider == "keyword_planner":
+        ads_vals = effective("google_ads", _row(db, "google_ads"))
+        miss = [k for k in ("client_id", "client_secret", "refresh_token") if not ads_vals.get(k)] + miss
+    return miss
 
 
 def set_enabled(db: Session, provider: str, enabled: bool, user_id: str | None) -> IntegrationConfig:
@@ -1449,9 +1505,10 @@ def dependencies(db: Session, provider: str) -> list[dict]:
 def _display(provider: str, row: IntegrationConfig | None, miss: list[str], blocked: list[dict] | None = None, any_saved: bool = False) -> dict:
     """The status a person sees. Connected is shown ONLY after a real successful request AND with every dependency satisfied."""
     spec = PROVIDERS[provider]
-    config = "Not configured" if miss else "Configured"
-    if spec.get("testable") is False:
-        return {"config": config, "connection": config, "label": config, "testable": False}
+    config = "Not configured" if miss else "No credentials needed" if not spec["required"] and not spec.get("secrets") and not spec.get("readonly") else "Configured"
+    if spec.get("testable") is False:  # e.g. Google sign-in: only a real sign-in proves it, and that is not a health check of anything else
+        label = "Not configured" if miss else ("Verified by signing in" if _signed_in_with(provider) else "Not verified — sign in with Google to verify")
+        return {"config": config, "connection": label, "label": label, "testable": False}
     if row and row.status == "DISABLED":
         label = "Disabled"
     elif miss:
@@ -1465,8 +1522,17 @@ def _display(provider: str, row: IntegrationConfig | None, miss: list[str], bloc
     elif row and row.last_test_ok is False:
         label = "Connection failed"
     else:
-        label = "Configuration saved" if any_saved else "Credentials present"
+        label = "Not tested"  # credentials or settings exist, but no real request has succeeded or failed yet
     return {"config": config, "connection": label, "label": label, "testable": True}
+
+
+def _signed_in_with(provider: str) -> bool:
+    if provider != "google_login":
+        return False
+    from app.models import ActivityLog
+    with session_scope() as db:
+        return db.scalar(select(ActivityLog.id).where(ActivityLog.action == "auth.login", ActivityLog.details["provider"].as_string().ilike("%google%"))
+                         .limit(1)) is not None
 
 
 def _readonly_info(provider: str) -> dict:
@@ -1508,6 +1574,11 @@ def serialize(db: Session, provider: str) -> dict:
                 for k, lbl in spec.get("subtests", [])]
     discovered = dict((row.discovered or {}) if row else {})
     discovered.pop("subtests", None)
+    summary = discovered.pop("test_summary", None)
+    if summary is None and row and row.last_test_at:
+        legacy = Steps()
+        legacy.items = row.last_test_steps or []
+        summary = {**_summarize(legacy, row.last_test_ok), "at": row.last_test_at.isoformat(), "inferred": True}
     info = _readonly_info(provider) if spec.get("readonly") else {}
     if provider == "google_ads":
         disc = discovered or {}
@@ -1574,7 +1645,7 @@ def serialize(db: Session, provider: str) -> dict:
         "last_test_ok": row.last_test_ok if row else None, "last_test_steps": row.last_test_steps if row else [],
         "last_success_at": row.last_success_at.isoformat() if row and row.last_success_at else None,
         "last_sync_at": row.last_sync_at.isoformat() if row and row.last_sync_at else None,
-        "last_error": row.last_error if row else "", "discovered": discovered,
+        "last_error": row.last_error if row else "", "discovered": discovered, "test": summary,
     }
 
 

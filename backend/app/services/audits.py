@@ -413,49 +413,124 @@ def build_context(db: Session, business: Business) -> dict:
             "lead_form_url": business.lead_form_url, "thank_you_url": business.thank_you_url}
 
 
+STAGE_OF = {"WEBSITE": "website", "GBP": "gbp", "COMPETITOR": "competitors", "KEYWORD": "keywords"}
+STAGE_TITLE = {"WEBSITE": "Website & landing pages", "GBP": "Business presence & local market", "COMPETITOR": "Competitor analysis",
+               "KEYWORD": "Keyword research & search intent"}
+
+
+def outcome(kind: str, r: dict) -> tuple[str, str]:
+    """COMPLETED only when the audit actually collected data. 'Could not collect data' is FAILED with the reason (and can be retried);
+    a valid audit that simply found nothing is still COMPLETED; an audit with nothing to do is SKIPPED."""
+    if r.get("error"):
+        return "FAILED", str(r["error"])
+    if kind == "WEBSITE" and not r.get("page_inventory"):
+        return "FAILED", "No page of the website could be read."
+    if kind == "GBP" and r.get("places_available") is False and not (r.get("geo") or {}).get("available"):
+        return "FAILED", ("No business-presence data could be collected: Google Places is not configured and the map sources gave no result ("
+                          + ((r.get("geo") or {}).get("reason") or "no reason given") + ").")
+    if kind == "COMPETITOR" and r.get("skipped"):
+        return ("COMPLETED", "") if r.get("web_candidates") else ("SKIPPED", "")
+    if kind == "KEYWORD" and not r.get("keywords"):
+        errs = "; ".join(e.get("error", "") for e in r.get("errors", [])[:3])
+        return "FAILED", "No keyword could be collected from any source" + (f": {errs}" if errs else ".")
+    return "COMPLETED", ""
+
+
+def mark_running(audit_id: str) -> None:
+    """Persisted immediately in its own transaction, so the status survives whatever the caller does next."""
+    with session_scope() as s:
+        a = s.get(Audit, audit_id)
+        if a is not None and a.status in ("QUEUED", "RUNNING"):
+            a.status, a.started_at = "RUNNING", clock.real_now()
+
+
+def finish(audit_id: str, kind: str, result: dict) -> tuple[str, str]:
+    """Store the final state in its own transaction (never lost to a caller rollback) and emit the matching event."""
+    status, error = outcome(kind, result)
+    summary = _summary(kind, result) if status != "FAILED" or result.get("error") is None else ""
+    with session_scope() as s:
+        a = s.get(Audit, audit_id)
+        a.status, a.error, a.result = status, error, result
+        a.source_type = result.get("source", "NONE") if status != "FAILED" else (result.get("source") or "NONE")
+        a.summary = (f"Failed: {error}" if status == "FAILED" else _summary(kind, result) if status == "COMPLETED" else
+                     result.get("reason") or "Nothing to audit")[:2000]
+        a.finished_at = clock.real_now()
+    kinds = {"COMPLETED": ("stage_completed", "info"), "FAILED": ("stage_failed", "error"), "SKIPPED": ("stage_skipped", "warn")}
+    ek, lvl = kinds[status]
+    with research_events.for_audit(audit_id):
+        research_events.emit(ek, STAGE_TITLE[kind], stage=STAGE_OF[kind], level=lvl, summary=(error or summary or "")[:300] or None)
+    return status, error
+
+
+def fail_unfinished(audit_ids, reason: str) -> list[str]:
+    """Any audit of a run that is still queued or running when the run ends did not finish: record that, never leave it running."""
+    hit = []
+    with session_scope() as s:
+        for aid in audit_ids:
+            a = s.get(Audit, aid)
+            if a is not None and a.status in ("QUEUED", "RUNNING"):
+                a.status, a.error, a.finished_at = "FAILED", reason[:2000], clock.real_now()
+                a.summary = f"Failed: {reason}"[:2000]
+                hit.append(aid)
+    return hit
+
+
+def run_jobs(ctx: dict, ids: dict[str, str], *, task_id: str | None, on_done=None) -> dict[str, dict]:
+    """Run website / presence / competitor audits concurrently for already-created audit rows. Each row moves QUEUED -> RUNNING -> final
+    in its own transaction and records its own live events."""
+    jobs = {"WEBSITE": lambda: website_audit(ctx, task_id), "GBP": lambda: gbp_audit(ctx), "COMPETITOR": lambda: competitor_audit(ctx, task_id)}
+
+    def runner(kind: str):
+        def go():
+            mark_running(ids[kind])
+            research_events.emit("stage_started", STAGE_TITLE[kind], stage=STAGE_OF[kind])
+            return jobs[kind]()
+        return research_events.in_stage(STAGE_OF[kind], go, audit_id=ids[kind])
+    results = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {k: pool.submit(runner(k)) for k in ids if k in jobs}
+        for k, f in futures.items():
+            try:
+                results[k] = f.result()
+            except IntegrationNotConfigured as exc:  # a missing integration is a clear, actionable message, not a crash
+                results[k] = {"error": exc.message, "not_configured": exc.provider, "source": SourceType.NONE}
+            except Exception as exc:  # noqa: BLE001 — one failing audit must not stop the others
+                logger.exception("audit %s failed", k)
+                results[k] = {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "source": SourceType.NONE}
+            finish(ids[k], k, results[k])
+            if on_done:
+                with session_scope() as s:
+                    summary = s.get(Audit, ids[k]).summary
+                on_done(k, results[k], summary)
+    return results
+
+
 def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_id: str | None,
                  focus_service: str | None = None, on_done=None) -> dict:
     ctx = build_context(db, business)
     if focus_service:
         ctx["focus_service"] = focus_service
     rows = {t: Audit(client_id=business.client_id, business_id=business.id, task_id=task_id, audit_type=t,
-                     status="RUNNING", created_by_id=actor_id) for t in ("WEBSITE", "GBP", "COMPETITOR")}
+                     status="QUEUED", created_by_id=actor_id, started_at=clock.real_now()) for t in ("WEBSITE", "GBP", "COMPETITOR")}
     for r in rows.values():
         db.add(r)
-    db.commit()  # audits visible as RUNNING while they execute
-    jobs = {"WEBSITE": research_events.in_stage("website", lambda: website_audit(ctx, task_id)),
-            "GBP": research_events.in_stage("gbp", lambda: gbp_audit(ctx)),
-            "COMPETITOR": research_events.in_stage("competitors", lambda: competitor_audit(ctx, task_id))}
-    results = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = {k: pool.submit(fn) for k, fn in jobs.items()}
-        for k, f in futures.items():
-            try:
-                results[k] = f.result()
-                rows[k].status = "FAILED" if results[k].get("error") else "COMPLETED"
-                rows[k].error = results[k].get("error", "")
-            except IntegrationNotConfigured as exc:  # a missing integration is a clear, actionable message, not a crash
-                results[k] = {"error": exc.message, "not_configured": exc.provider, "source": SourceType.NONE}
-                rows[k].status, rows[k].error = "FAILED", exc.message
-            except Exception as exc:  # noqa: BLE001 — one failing audit must not stop the others
-                logger.exception("audit %s failed", k)
-                results[k] = {"error": f"{type(exc).__name__}: {str(exc)[:300]}", "source": SourceType.NONE}
-                rows[k].status, rows[k].error = "FAILED", results[k]["error"]
-            rows[k].result = results[k]
-            rows[k].source_type = results[k].get("source", "NONE")
-            rows[k].finished_at = clock.now()
-            rows[k].summary = _summary(k, results[k])
-            if on_done:
-                on_done(k, results[k], rows[k].summary)
-    db.flush()
-    return {"context": ctx, "website": results["WEBSITE"], "gbp": results["GBP"], "competitor": results["COMPETITOR"],
-            "audit_ids": {k: r.id for k, r in rows.items()}}
+    db.commit()  # visible as queued; each one is then persisted as it starts and finishes
+    ids = {k: r.id for k, r in rows.items()}
+    try:
+        results = run_jobs(ctx, ids, task_id=task_id, on_done=on_done)
+    finally:
+        fail_unfinished(ids.values(), "The audit run stopped before this audit finished.")
+    for r in rows.values():
+        db.refresh(r)
+    return {"context": ctx, "website": results.get("WEBSITE", {}), "gbp": results.get("GBP", {}), "competitor": results.get("COMPETITOR", {}),
+            "audit_ids": ids}
 
 
 def save_keyword_audit(db: Session, business: Business, task_id: str | None, actor_id: str | None, result: dict) -> Audit:
+    status, error = outcome("KEYWORD", result)
     row = Audit(client_id=business.client_id, business_id=business.id, task_id=task_id, audit_type="KEYWORD",
-                status="COMPLETED", result=result, summary=_summary("KEYWORD", result), finished_at=clock.now(),
-                created_by_id=actor_id, source_type=result.get("source", "NONE"))
+                status=status, error=error, result=result, summary=_summary("KEYWORD", result) if status == "COMPLETED" else f"Failed: {error}",
+                finished_at=clock.real_now(), created_by_id=actor_id, source_type=result.get("source", "NONE"))
     db.add(row)
     db.flush()
     return row

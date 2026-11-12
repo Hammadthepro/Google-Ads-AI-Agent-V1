@@ -13,16 +13,8 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 }
 
-/* ---- live research canvas: motion only when the user has not asked for reduced motion ---- */
-.research-tilt { transform: perspective(1100px) rotateX(14deg); transform-origin: 50% 60%; }
+/* ---- live findings: one gentle entrance for new lines; nothing moves for users who ask for reduced motion ---- */
 @media (prefers-reduced-motion: no-preference) {
-  .rc-flow { animation: rc-dash 1.6s linear infinite; }
-  .rc-pulse { animation: rc-pulse 1.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-  .rc-pop { animation: rc-pop 520ms cubic-bezier(.2,.9,.3,1.3) both; transform-box: fill-box; transform-origin: center; }
-  .rc-breathe { animation: rc-breathe 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .lf-enter { animation: lf-enter 220ms ease-out both; }
 }
-@media (prefers-reduced-motion: reduce) { .research-tilt { transform: none; } }
-@keyframes rc-dash { to { stroke-dashoffset: -16; } }
-@keyframes rc-pulse { 50% { transform: scale(1.6); opacity: .5; } }
-@keyframes rc-pop { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: none; } }
-@keyframes rc-breathe { 50% { transform: scale(1.06); } }
+@keyframes lf-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }

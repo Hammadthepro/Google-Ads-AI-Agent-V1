@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAction } from "../lib/hooks";
-import { LiveResearch } from "../components/research/LiveResearch";
+import { LiveFindings } from "../components/research/LiveFindings";
 import { Badge, Button, Card, cx, dt, EmptyState, ErrorBox, Notice, PageHeader, Spinner, Stat, Tabs } from "../components/ui";
 
 const EVIDENCE: Record<string, { label: string; tone: string; tip: string }> = {
@@ -124,11 +124,11 @@ export function AuditReportPage() {
       <ErrorBox error={rerun.error} />
       {r.profile_changed_since && <Notice tone="amber">The client profile was edited after this audit. These findings reflect the earlier information — run a new audit to refresh them.</Notice>}
       {r.status === "FAILED" && <Notice tone="red">{r.error}</Notice>}
-      {(running || r.status === "FAILED") && <LiveResearch reportId={r.id} running={running} />}
+      {(running || r.status === "FAILED") && <LiveFindings url={`/audit-reports/${r.id}/events`} active={running} steps={r.steps} title={running ? "Live findings" : "Research activity"} />}
       {r.status === "COMPLETED" && (
         <details className="rounded-lg border border-slate-200 bg-white">
-          <summary className="cursor-pointer px-4 py-2.5 text-sm font-medium text-slate-800">How this research was done: replay every step, source and limitation</summary>
-          <div className="border-t border-slate-100 p-4"><LiveResearch reportId={r.id} running={false} /></div>
+          <summary className="cursor-pointer px-4 py-2.5 text-sm font-medium text-slate-800">How this research was done: every step, source and limitation</summary>
+          <div className="p-3"><LiveFindings url={`/audit-reports/${r.id}/events`} active={false} steps={r.steps} /></div>
         </details>)}
       {r.status === "COMPLETED" && (<>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-6">

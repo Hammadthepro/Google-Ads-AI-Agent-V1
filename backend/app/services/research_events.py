@@ -40,9 +40,13 @@ _lock = threading.Lock()
 _next: dict[str, int] = {}
 
 
+_audit: contextvars.ContextVar[str | None] = contextvars.ContextVar("research_audit", default=None)
+
+
 @contextmanager
-def bind(report_id: str, *, client_id: str | None = None, business_id: str | None = None):
-    token = _binding.set({"report_id": report_id, "client_id": client_id, "business_id": business_id})
+def bind(report_id: str | None, *, client_id: str | None = None, business_id: str | None = None, run_id: str | None = None):
+    """Bind events to a run. Report runs pass the report id (it is also the run id); standalone audit runs pass `run_id` only."""
+    token = _binding.set({"report_id": report_id, "run_id": run_id or report_id, "client_id": client_id, "business_id": business_id})
     try:
         yield
     finally:
@@ -59,17 +63,28 @@ def staged(stage: str):
         _stage.reset(token)
 
 
-def in_stage(stage: str, fn: Callable) -> Callable:
-    """A callable that runs `fn` inside `staged(stage)` with the caller's binding (for worker threads)."""
+@contextmanager
+def for_audit(audit_id: str | None):
+    """Events emitted inside this block belong to one audit row (shown on that audit's detail page)."""
+    token = _audit.set(audit_id)
+    try:
+        yield
+    finally:
+        _audit.reset(token)
+
+
+def in_stage(stage: str, fn: Callable, audit_id: str | None = None) -> Callable:
+    """A callable that runs `fn` inside `staged(stage)` (and `for_audit(audit_id)`) with the caller's binding (for worker threads)."""
     def run(*a, **kw):
-        with staged(stage):
+        with staged(stage), for_audit(audit_id):
             return fn(*a, **kw)
     return propagate(run)
 
 
 def current_report_id() -> str | None:
+    """The run the current code belongs to (report id for report runs). Used for per-run provider budgets."""
     b = _binding.get()
-    return b["report_id"] if b else None
+    return b["run_id"] if b else None
 
 
 def propagate(fn: Callable) -> Callable:
@@ -78,12 +93,12 @@ def propagate(fn: Callable) -> Callable:
     return lambda *a, **kw: ctx.run(fn, *a, **kw)
 
 
-def _seq(db: Session, report_id: str) -> int:
+def _seq(db: Session, run_id: str) -> int:
     with _lock:
-        if report_id not in _next:
-            _next[report_id] = (db.scalar(select(func.max(ResearchEvent.seq)).where(ResearchEvent.audit_report_id == report_id)) or 0) + 1
-        n = _next[report_id]
-        _next[report_id] = n + 1
+        if run_id not in _next:
+            _next[run_id] = (db.scalar(select(func.max(ResearchEvent.seq)).where(ResearchEvent.run_id == run_id)) or 0) + 1
+        n = _next[run_id]
+        _next[run_id] = n + 1
         return n
 
 
@@ -100,13 +115,13 @@ def emit(kind: str, title: str, *, stage: str = "", level: str = "info", **data:
     for attempt in range(3):
         try:
             with session_scope() as db:
-                db.add(ResearchEvent(audit_report_id=b["report_id"], client_id=b["client_id"], business_id=b["business_id"],
-                                     seq=_seq(db, b["report_id"]), kind=kind, stage=stage, level=level, title=title[:300],
-                                     data=payload, created_at=clock.now()))
+                db.add(ResearchEvent(audit_report_id=b["report_id"], run_id=b["run_id"], audit_id=_audit.get(), client_id=b["client_id"],
+                                     business_id=b["business_id"], seq=_seq(db, b["run_id"]), kind=kind, stage=stage, level=level,
+                                     title=title[:300], data=payload, created_at=clock.real_now()))
             return
         except IntegrityError:  # another process wrote the same sequence number: resynchronise and try again
             with _lock:
-                _next.pop(b["report_id"], None)
+                _next.pop(b["run_id"], None)
         except Exception:  # noqa: BLE001
             logger.exception("research event not recorded (%s)", kind)
             return
@@ -123,7 +138,18 @@ def serialize(e: ResearchEvent) -> dict:
             "at": e.created_at.isoformat()}
 
 
-def list_events(db: Session, report_id: str, *, after: int = 0, limit: int = 500) -> list[dict]:
-    rows = db.scalars(select(ResearchEvent).where(ResearchEvent.audit_report_id == report_id, ResearchEvent.seq > after)
-                      .order_by(ResearchEvent.seq).limit(max(1, min(limit, 2000))))
-    return [serialize(e) for e in rows]
+def list_events(db: Session, report_id: str | None = None, *, after: int = 0, limit: int = 500, audit_id: str | None = None,
+                run_id: str | None = None) -> list[dict]:
+    """Events of a report, of one run, or of one audit, in order. `after` is the last seq the caller already has."""
+    q = select(ResearchEvent).where(ResearchEvent.seq > after)
+    if audit_id:
+        q = q.where(ResearchEvent.audit_id == audit_id)
+    elif run_id:
+        q = q.where(ResearchEvent.run_id == run_id)
+    else:
+        q = q.where(ResearchEvent.audit_report_id == report_id)
+    return [serialize(e) for e in db.scalars(q.order_by(ResearchEvent.seq).limit(max(1, min(limit, 2000))))]
+
+
+def last_activity(db: Session, audit_id: str):
+    return db.scalar(select(func.max(ResearchEvent.created_at)).where(ResearchEvent.audit_id == audit_id))

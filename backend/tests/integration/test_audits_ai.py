@@ -40,7 +40,7 @@ def test_website_gbp_competitor_and_keyword_audits():
     assert all("—" not in s and "Rapid Rooter" not in s for s in rapid["services"])  # brand headings are not services
     assert comp["pasted_ads_analysis"]["verification"].startswith("Pasted by the team")
     assert any("$49" in o for o in comp["pasted_ads_analysis"]["offers"])
-    kw = ana.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD"}).json()[0]["result"]
+    kw = ana.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD", "keyword_mode": "refresh", "refresh": ["WEBSITE", "GBP", "COMPETITOR"], "confirm": True}).json()[-1]["result"]
     labels = {k["keyword"]: k["label"] for k in kw["keywords"]}
     assert labels.get("drain cleaning jobs") == "IRRELEVANT" and labels.get("drain cleaning near me") == "SERVICE"
     assert all(set(k["match_types"]) <= {"EXACT", "PHRASE"} for k in kw["keywords"])
@@ -160,7 +160,7 @@ def test_integration_failures_are_handled_and_never_faked():
     web = admin.post("/audits", {"business_id": plumb["id"], "audit_type": "WEBSITE"}).json()[0]["result"]
     assert web["pagespeed"]["mobile"]["error"] == "rate_limited"
     inject("keyword_research", "empty", times=-1)
-    kw = admin.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD"}).json()[0]["result"]
+    kw = admin.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD", "keyword_mode": "refresh", "refresh": ["WEBSITE", "GBP", "COMPETITOR"], "confirm": True}).json()[-1]["result"]
     # Keyword Planner returned nothing: other sources still contribute, but no keyword carries a volume or bid it did not observe
     assert not any(k["sources"][0]["source"] == "keyword_planner" for k in kw["keywords"])
     assert all(k["avg_monthly_searches"] is None and k["high_top_of_page_bid_micros"] is None for k in kw["keywords"])

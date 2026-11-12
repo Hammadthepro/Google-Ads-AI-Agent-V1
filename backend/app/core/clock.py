@@ -10,3 +10,8 @@ def now() -> datetime:
 
 def today() -> date:
     return now().date()
+
+
+def real_now() -> datetime:
+    """Wall-clock time for job lifecycles (started/finished/heartbeat). Never patched by tests, so stale-job detection compares like with like."""
+    return datetime.now(timezone.utc)

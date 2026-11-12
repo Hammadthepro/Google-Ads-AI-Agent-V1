@@ -1,8 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { buildModel, describe as describeEvent, type ResearchEvent } from "../components/research/model";
-import { LiveResearch } from "../components/research/LiveResearch";
+import { buildModel, buildStream, describe as describeEvent, type ResearchEvent } from "../components/research/model";
+import { LiveFindings } from "../components/research/LiveFindings";
 import { WriteReadiness } from "../components/WriteReadiness";
 
 let seq = 0;
@@ -49,20 +49,32 @@ function mount(node: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>{node}</MemoryRouter></QueryClientProvider>);
 }
 
-describe("LiveResearch", () => {
+describe("buildStream", () => {
+  it("shows one line per page that moves from reading to read, and keeps failures in place", () => {
+    const st = buildStream(EVENTS);
+    const web = st.find((s) => s.stage === "website")!;
+    expect(web.items.map((i) => [i.text, i.state])).toEqual([
+      ["Read “Northside Plumbing”", "done"], ["Reading northside.example/drains", "working"], ["Could not open /old (HTTP 404)", "failed"]]);
+    expect(st.map((s) => s.stage)).toEqual(["website", "competitors", "geo", "keywords"]);
+    expect(st.find((s) => s.stage === "keywords")!.items.find((i) => i.type === "finding" && i.chips?.length)!.chips).toEqual(["drain cleaning near me"]);
+  });
+});
+
+describe("LiveFindings", () => {
   const steps = [{ key: "website", name: "2 · Website & landing pages", status: "RUNNING" }, { key: "keywords", name: "5 · Keyword research", status: "PENDING" }];
-  it("shows the real URLs, competitors, failures and an honest status, with no percentage", async () => {
+  it("shows real activity, findings, sources and failures as readable text, with no percentage and no graphics", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ events: EVENTS, steps, done: false, last_seq: EVENTS.length }))) as any;
-    const { container } = mount(<LiveResearch reportId="r1" running />);
-    expect(await screen.findByText("Opening https://northside.example/drains")).toBeInTheDocument();
-    expect(screen.getAllByText(/Rival Plumbing/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Could not open https:\/\/northside.example\/old/, { selector: "li" })).toBeInTheDocument();
+    const { container } = mount(<LiveFindings url="/audit-reports/r1/events" active />);
+    expect(await screen.findByText("Reading northside.example/drains")).toBeInTheDocument();
+    expect(screen.getByText("Read “Northside Plumbing”")).toBeInTheDocument();
+    expect(screen.getAllByText("Rival Plumbing").length).toBeGreaterThan(0);
+    expect(screen.getByText("Could not open /old (HTTP 404)")).toBeInTheDocument();
     expect(screen.getAllByText(/Keyword Planner is not available/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("img", { name: /Research map: 3 page\(s\) read, 2 competitor\(s\)/ })).toBeInTheDocument();
-    expect(screen.getByText("Crawling the website and extracting services and landing pages")).toBeInTheDocument();
-    expect(container.textContent).not.toMatch(/\d+\s?%/);
-    const sources = screen.getByText(/Sources and evidence/).parentElement!;
+    expect(screen.getByRole("status")).toHaveTextContent(/last update/);
+    const sources = screen.getByText("Sources").parentElement!;
     expect(within(sources).getByRole("link", { name: "Northside Plumbing" })).toHaveAttribute("href", "https://northside.example/");
+    expect(container.querySelector("svg")).toBeNull();          // no decorative scene
+    expect(container.textContent).not.toMatch(/\d+\s?%/);       // no invented progress
   });
   it("asks only for new events after the first load", async () => {
     const calls: string[] = [];
@@ -70,18 +82,21 @@ describe("LiveResearch", () => {
     globalThis.fetch = vi.fn(async (url: any) => { calls.push(String(url)); n++;
       return new Response(JSON.stringify(n === 1 ? { events: EVENTS.slice(0, 3), steps, done: false, last_seq: 3 } : { events: [], steps, done: true, last_seq: 3 })); }) as any;
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    mount(<LiveResearch reportId="r2" running />);
+    mount(<LiveFindings url="/audits/a2/events" active />);
     await waitFor(() => expect(calls.length).toBeGreaterThan(0));
     await vi.advanceTimersByTimeAsync(1600);
-    await waitFor(() => expect(calls.some((c) => c.endsWith("after=3"))).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.endsWith("/audits/a2/events?after=3"))).toBe(true));
     expect(calls[0]).toMatch(/after=0$/);
     vi.useRealTimers();
   });
-  it("says it is waiting when the worker has recorded nothing yet", async () => {
+  it("says it is waiting when nothing has been recorded, and never pretends to work when nothing runs", async () => {
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ events: [], steps, done: false, last_seq: 0 }))) as any;
-    mount(<LiveResearch reportId="r3" running />);
-    expect(await screen.findByText(/waiting for the research worker to record its first step/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Waiting for the research worker to start/).length).toBeGreaterThan(0);
+    const r1 = mount(<LiveFindings url="/audits/a3/events" active />);
+    expect(await screen.findByText(/Waiting for the research worker to record its first step/)).toBeInTheDocument();
+    r1.unmount();
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ events: [], status: "FAILED", done: true, last_seq: 0 }))) as any;
+    mount(<LiveFindings url="/audits/a4/events" active={false} />);
+    expect(await screen.findByText("No activity was recorded for this run.")).toBeInTheDocument();
   });
 });
 

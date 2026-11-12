@@ -33,10 +33,10 @@ def test_every_implemented_integration_is_listed_with_the_six_statuses():
     items = sup.get("/integrations").json()["integrations"]
     assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "keyword_planner", "crawler",
                                                "smtp", "database", "redis", "google_login"}
-    allowed = {"Configured", "Not configured", "Connected", "Connection failed", "Credentials present", "Configuration saved", "Blocked by dependency",
-               "Requires approval", "Disabled"}
+    allowed = {"Not configured", "Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Disabled",
+               "Verified by signing in", "Not verified — sign in with Google to verify"}
     for i in items:
-        assert i["display"]["config"] in {"Configured", "Not configured"} and i["display"]["label"] in allowed, i["provider"]
+        assert i["display"]["config"] in {"Configured", "Not configured", "No credentials needed"} and i["display"]["label"] in allowed, i["provider"]
     assert by(items, "google_ads")["display"]["label"] == "Not configured" and by(items, "groq")["display"]["label"] == "Not configured"
 
 
@@ -47,7 +47,7 @@ def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
     try:
         sup = Api(SUPER)
         ps = by(sup.get("/integrations").json()["integrations"], "pagespeed")
-        assert ps["display"] == {"config": "Configured", "connection": "Credentials present", "label": "Credentials present", "testable": True}  # a key exists ≠ connected
+        assert ps["display"] == {"config": "Configured", "connection": "Not tested", "label": "Not tested", "testable": True}  # a key exists ≠ connected
         assert ps["secrets"]["api_key"]["saved"] and "AIza" not in json.dumps(ps)
         with session_scope() as db:
             ok = svc.test_connection(db, "pagespeed", http=_client(lambda r: httpx.Response(200, json={"lighthouseResult": {"categories": {"performance": {"score": 0.73}}}})))
@@ -138,7 +138,7 @@ def test_keyword_planner_runs_a_real_readonly_request_and_explains_access_errors
     with session_scope() as db:
         _save_ads(db)
         no_rc = svc.test_connection(db, "keyword_planner", http=_client(handler))  # nothing is borrowed from any client account
-        assert not no_rc["connected"] and no_rc["steps"][-1]["name"] == "Research customer configured" and "never chosen automatically" in no_rc["steps"][-1]["hint"]
+        assert not no_rc["connected"] and no_rc["attempted"] is False and no_rc["steps"][-1]["status"] == "SKIPPED" and "never chosen automatically" in no_rc["steps"][-1]["hint"]
         assert urls == []  # no Google request was made without a research customer
         svc.save(db, "keyword_planner", settings={"research_customer_id": "999-888-7777"}, secrets={}, user_id=None)
         res = svc.test_connection(db, "keyword_planner", http=_client(handler))
