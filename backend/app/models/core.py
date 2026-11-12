@@ -121,7 +121,7 @@ class Workspace(TimestampMixin, Base):
     google_ads_manager_customer_id: Mapped[str] = mapped_column(String(20), default="")  # the selected MCC (digits only)
     google_ads_manager_name: Mapped[str] = mapped_column(String(200), default="")
     accounts_discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    discovery_status: Mapped[str] = mapped_column(String(20), default="NEVER_RUN")  # NEVER_RUN / OK / PARTIAL / FAILED
+    discovery_status: Mapped[str] = mapped_column(String(20), default="NEVER_RUN")  # NEVER_RUN / OK / NO_CLIENTS / PARTIAL / FAILED
     discovery_message: Mapped[str] = mapped_column(String(500), default="")
 
 

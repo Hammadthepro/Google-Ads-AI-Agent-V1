@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
-from app.core.errors import IntegrationNotConfigured, NotFound
+from app.core.errors import IntegrationNotConfigured, NotFound, ValidationFailed
 from app.models import Ad, AdGroup, Business, Campaign, ConversionAction, GoogleAdsAccount, Keyword, NegativeKeyword, User
 from app.services import activity, auth_service
 
@@ -43,6 +43,8 @@ def link(db: Session, user: User, account_id: str, client_id: str | None) -> Goo
     a = db.get(GoogleAdsAccount, account_id)
     if not a:
         raise NotFound("Account not found")
+    if a.is_manager and client_id:
+        raise ValidationFailed("A manager (MCC) account holds no campaigns and cannot be linked to a client. Link one of its client accounts.")
     a.client_id = client_id
     activity.log(db, "ads_account.linked", actor=user, entity="google_ads_account", entity_id=a.id, client_id=client_id)
     reaudit_measurement(db, user, client_id)

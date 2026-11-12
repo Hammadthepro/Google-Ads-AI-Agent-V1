@@ -18,6 +18,9 @@ export default function AccountSelector({ canRefresh }: { canRefresh: boolean })
   const select = useAction((customer_id: string) => api.put("/google-ads/selection", { customer_id }), KEYS);
   const sel = status_.data?.selected;
   const ws = list.data ?? status_.data;
+  const managers: any[] = ws?.manager_accounts ?? [];
+  const noClients = !!ws?.manager_customer_id && ws.client_accounts === 0 && !!ws.accounts_discovered_at;
+  const done = refresh.data;
   return (
     <Card title="Client accounts" actions={canRefresh && <Button variant="primary" onClick={() => refresh.mutate({})} disabled={refresh.isPending}>{refresh.isPending ? "Refreshing…" : "Refresh accounts"}</Button>}>
       <div className="space-y-4">
@@ -26,9 +29,29 @@ export default function AccountSelector({ canRefresh }: { canRefresh: boolean })
         {ws?.manager_customer_id && (
           <div className="text-xs text-slate-500">Manager: <b>{ws.manager_name || ws.manager_customer_id}</b> ({ws.manager_customer_id}) · {ws.client_accounts} client account(s) ·{" "}
             {ws.accounts_discovered_at ? `last refreshed ${dt(ws.accounts_discovered_at)}` : "never refreshed"}{ws.discovery_status === "PARTIAL" && <Badge tone="amber"> partial: {ws.discovery_message}</Badge>}
-            {ws.discovery_status === "FAILED" && <Badge tone="red"> last refresh failed</Badge>}</div>
+            {ws.discovery_status === "FAILED" && <Badge tone="red"> last refresh failed</Badge>}
+            {ws.manager_source === "integration_setting" && <span> · from the manager ID saved on the Google Ads integration</span>}</div>
         )}
-        {refresh.data && <Notice tone={refresh.data.errors?.length ? "amber" : "green"}>{refresh.data.found} account(s) found{refresh.data.errors?.length ? `; ${refresh.data.errors.length} branch(es) could not be read (${refresh.data.errors.map((e: any) => e.code).join(", ")})` : ""}. Your selection was kept.</Notice>}
+        {ws?.discovery_status === "FAILED" && ws.discovery_message && <Notice tone="red">{ws.discovery_message}</Notice>}
+        {done && (done.client_accounts_found > 0
+          ? <Notice tone={done.errors?.length ? "amber" : "green"}>{done.client_accounts_found} client account(s) found{done.sub_managers_found ? ` and ${done.sub_managers_found} sub-manager account(s)` : ""}{done.errors?.length ? `; ${done.errors.length} branch(es) could not be read (${done.errors.map((e: any) => e.code).join(", ")})` : ""}. Your selection was kept.</Notice>
+          : <Notice tone="amber">No client accounts were found. {done.no_clients_reason}</Notice>)}
+        {!done && noClients && ws.discovery_status !== "FAILED" && <Notice tone="amber">{ws.discovery_message || "The last refresh found no client accounts below this manager."}</Notice>}
+        {managers.length > 0 && (
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-600">Manager accounts</div>
+            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200" aria-label="Google Ads manager accounts">
+              {managers.map((m) => (
+                <li key={m.customer_id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm">
+                  <div className="min-w-0"><span className="font-medium text-slate-900">{m.name || "(unnamed manager)"}</span>{" "}
+                    <span className="font-mono text-xs text-slate-500">{m.customer_id_display}</span>
+                    <span className="text-xs text-slate-500">{m.customer_id === ws?.manager_customer_id ? " · selected manager" : m.parent_customer_id ? ` · sub-manager under ${m.parent_customer_id}` : ""}</span></div>
+                  <div className="flex items-center gap-2"><Badge tone="blue">Manager</Badge><Badge tone={STATUS_TONE[m.status] ?? "slate"}>{m.status}</Badge></div>
+                </li>))}
+            </ul>
+            <div className="mt-1 text-xs text-slate-400">Manager accounts hold no campaigns and cannot be selected or linked to a client.</div>
+          </div>
+        )}
         {sel && (
           <div className="rounded-lg border border-brand-100 bg-brand-50 px-4 py-3 text-sm" aria-label="Selected account">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -61,10 +84,11 @@ export default function AccountSelector({ canRefresh }: { canRefresh: boolean })
                 </div>
               </li>
             ))}
-            {(list.data?.items ?? []).length === 0 && <li className="px-4 py-6 text-center text-sm text-slate-500">{q || status ? "No accounts match this search." : "No client accounts yet. Choose a manager account and refresh accounts."}</li>}
+            {(list.data?.items ?? []).length === 0 && <li className="px-4 py-6 text-center text-sm text-slate-500">{q || status ? "No accounts match this search." : !ws?.manager_customer_id ? "No client accounts yet. Choose a manager account and refresh accounts."
+              : !ws.accounts_discovered_at ? "Accounts have not been read yet. Use Refresh accounts." : "No client accounts below this manager."}</li>}
           </ul>
         )}
-        {list.data && <div className="text-xs text-slate-400">{list.data.total} account(s) shown</div>}
+        {list.data && <div className="text-xs text-slate-400">{list.data.total} client account(s) shown</div>}
       </div>
     </Card>
   );

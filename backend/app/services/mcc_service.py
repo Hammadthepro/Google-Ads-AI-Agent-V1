@@ -69,20 +69,35 @@ def serialize_account(a: GoogleAdsAccount) -> dict:
             "client_id": a.client_id, "last_discovered_at": a.last_discovered_at.isoformat() if a.last_discovered_at else None}
 
 
+# ------------------------------------------------------------------ the one answer to "which manager is selected?"
+def effective_manager(db: Session) -> dict:
+    """The manager every part of the app uses. The workspace's explicit choice wins; otherwise the manager ID saved on the Google Ads
+    integration (settings or GOOGLE_ADS_LOGIN_CUSTOMER_ID) counts as the selection. `source` says which one answered."""
+    ws = default_workspace(db)
+    if ws.google_ads_manager_customer_id:
+        return {"customer_id": ws.google_ads_manager_customer_id, "name": ws.google_ads_manager_name, "source": "workspace"}
+    saved = re.sub(r"[\s-]", "", integrations_service.resolve("google_ads").get("login_customer_id") or "")
+    if saved.isdigit() and len(saved) == 10:
+        name = db.scalar(select(GoogleAdsAccount.descriptive_name).where(GoogleAdsAccount.customer_id == saved)) or ""
+        return {"customer_id": saved, "name": name, "source": "integration_setting"}
+    return {"customer_id": "", "name": "", "source": ""}
+
+
 # ------------------------------------------------------------------ step 1: choose the manager
 def manager_candidates(db: Session) -> dict:
     """Accounts this Google user can reach directly; managers are the possible MCCs. Needs the OAuth connection."""
     ads = registry.get("google_ads")  # IntegrationNotConfigured -> "configure Google Ads on the Integrations page"
     ws = default_workspace(db)
+    chosen = effective_manager(db)["customer_id"]
     items = ads.list_manager_candidates()
     for i in items:
         i["customer_id_display"] = format_customer_id(i["customer_id"])
-        i["selected"] = i["customer_id"] == ws.google_ads_manager_customer_id
+        i["selected"] = i["customer_id"] == chosen
         i["selectable"] = bool(i["is_manager"]) and i["status"] == "ENABLED" and not i["error"]
         i["note"] = ("Closed, canceled or suspended" if i["is_manager"] and i["status"] != "ENABLED" else
                      "Regular account (not a manager)" if i["is_manager"] is False else
                      f"Could not be read ({i['error']})" if i["error"] else "")
-    return {"workspace_id": ws.id, "selected_manager": ws.google_ads_manager_customer_id or None,
+    return {"workspace_id": ws.id, "selected_manager": chosen or None,
             "candidates": items, "managers": [i for i in items if i["selectable"]]}
 
 
@@ -108,10 +123,28 @@ def select_manager(db: Session, user: User, customer_id: str) -> dict:
 
 def workspace_summary(db: Session) -> dict:
     ws = default_workspace(db)
-    total = db.scalar(select(func.count(GoogleAdsAccount.id)).where(GoogleAdsAccount.workspace_id == ws.id, GoogleAdsAccount.is_manager.is_(False))) or 0
-    return {"workspace": {"id": ws.id, "name": ws.name, "slug": ws.slug}, "manager_customer_id": ws.google_ads_manager_customer_id or None,
-            "manager_name": ws.google_ads_manager_name, "accounts_discovered_at": ws.accounts_discovered_at.isoformat() if ws.accounts_discovered_at else None,
-            "discovery_status": ws.discovery_status, "discovery_message": ws.discovery_message, "client_accounts": total}
+    mgr = effective_manager(db)
+    in_ws = GoogleAdsAccount.workspace_id == ws.id
+    total = db.scalar(select(func.count(GoogleAdsAccount.id)).where(in_ws, GoogleAdsAccount.is_manager.is_(False))) or 0
+    managers = [serialize_account(a) for a in db.scalars(select(GoogleAdsAccount).where(in_ws, GoogleAdsAccount.is_manager.is_(True))
+                                                         .order_by(GoogleAdsAccount.level, GoogleAdsAccount.customer_id))]
+    return {"workspace": {"id": ws.id, "name": ws.name, "slug": ws.slug}, "manager_customer_id": mgr["customer_id"] or None,
+            "manager_name": mgr["name"], "manager_source": mgr["source"] or None,
+            "accounts_discovered_at": ws.accounts_discovered_at.isoformat() if ws.accounts_discovered_at else None,
+            "discovery_status": ws.discovery_status, "discovery_message": ws.discovery_message, "client_accounts": total,
+            "manager_accounts": managers}
+
+
+def _no_clients_reason(manager: str, sub_managers: list[dict], errors: list[dict]) -> str:
+    """Why a completed read produced no client accounts, from what Google Ads actually returned."""
+    if errors:
+        return (f"No client accounts could be read below manager {manager}: {len(errors)} branch(es) failed ("
+                + ", ".join(sorted({e['code'] for e in errors})) + ").")
+    if not sub_managers:
+        return f"Manager {manager} has no accounts linked to it in Google Ads."
+    names = ", ".join(f"{m.get('descriptive_name') or 'unnamed'} ({m['customer_id']})" for m in sub_managers[:5])
+    return (f"Manager {manager} has no client accounts. The only account(s) linked to it are manager account(s): {names}, with no client "
+            "accounts below. Link a client account to one of these managers in Google Ads, or choose a different manager.")
 
 
 # ------------------------------------------------------------------ step 2: discover the hierarchy
@@ -120,7 +153,7 @@ def discover(db: Session, user: User | None = None) -> dict:
     if user is not None:
         auth_service.require(user, "clients.edit")
     ws = default_workspace(db)
-    manager = ws.google_ads_manager_customer_id or (integrations_service.resolve("google_ads").get("login_customer_id") or "")
+    manager = effective_manager(db)["customer_id"]
     if not manager:
         raise ValidationFailed("Select a manager (MCC) account first: Integrations > Google Ads > Choose manager account.")
     manager = normalize_customer_id(manager)
@@ -131,6 +164,22 @@ def discover(db: Session, user: User | None = None) -> dict:
         ws.discovery_status, ws.discovery_message = "FAILED", exc.message[:500]
         db.commit()  # the failure is recorded even though the request errors; previously discovered accounts are untouched
         raise
+    root = next((a for a in res["accounts"] if normalize_customer_id(a["customer_id"]) == manager), None)
+    root_unreadable = any(e["customer_id"] == manager for e in res.get("errors", []))  # reported below as a partial read with its error code
+    problem = ("" if root_unreadable else
+               f"Google Ads returned no record for manager {manager}. Check that the connected Google user can still access it." if root is None
+               else f"{manager} is a regular Google Ads account, not a manager (MCC), so it has no client accounts. Choose a manager account."
+               if not root.get("is_manager") else "")
+    if problem:
+        ws.discovery_status, ws.discovery_message = "FAILED", problem
+        db.commit()
+        raise ValidationFailed(problem)
+    if ws.google_ads_manager_customer_id != manager:  # the saved integration setting was used: make it the workspace's stored selection
+        ws.google_ads_manager_customer_id = manager
+        activity.log(db, "google_ads.manager_selected", actor=user, entity="workspace", entity_id=ws.id,
+                     details={"manager_customer_id": manager, "source": "integration_setting"})
+        integrations_service.invalidate()
+    ws.google_ads_manager_name = (root or {}).get("descriptive_name") or ws.google_ads_manager_name
     now = clock.now()
     seen: set[str] = set()
     for a in res["accounts"]:
@@ -165,12 +214,19 @@ def discover(db: Session, user: User | None = None) -> dict:
     ws.accounts_discovered_at = now
     ws.discovery_status = "PARTIAL" if errors else "OK"
     counts = {s: sum(1 for a in res["accounts"] if _status(a.get("status")) == s) for s in STATUSES}
-    ws.discovery_message = (f"{len(res['accounts'])} account(s) found" + (f"; {len(errors)} branch(es) could not be read ("
-                            + ", ".join(sorted({e['code'] for e in errors})) + ")" if errors else ""))[:500]
+    clients = [a for a in res["accounts"] if not a.get("is_manager")]
+    sub_managers = [a for a in res["accounts"] if a.get("is_manager") and normalize_customer_id(a["customer_id"]) != manager]
+    reason = "" if clients else _no_clients_reason(manager, sub_managers, errors)
+    if reason and not errors:
+        ws.discovery_status = "NO_CLIENTS"
+    ws.discovery_message = (reason or f"{len(clients)} client account(s) and {len(sub_managers)} sub-manager account(s) found"
+                            + (f"; {len(errors)} branch(es) could not be read (" + ", ".join(sorted({e['code'] for e in errors})) + ")" if errors else ""))[:500]
     activity.log(db, "google_ads.accounts_discovered", actor=user, entity="workspace", entity_id=ws.id,
-                 details={"manager": manager, "found": len(res["accounts"]), "by_status": counts, "branch_errors": errors[:20]})
+                 details={"manager": manager, "found": len(res["accounts"]), "client_accounts": len(clients), "sub_managers": len(sub_managers),
+                          "by_status": counts, "branch_errors": errors[:20]})
     db.flush()
-    return {**workspace_summary(db), "found": len(res["accounts"]), "by_status": counts, "errors": errors}
+    return {**workspace_summary(db), "found": len(res["accounts"]), "client_accounts_found": len(clients), "sub_managers_found": len(sub_managers),
+            "no_clients_reason": reason, "by_status": counts, "errors": errors}
 
 
 def adapter_mode_label(ads) -> str:

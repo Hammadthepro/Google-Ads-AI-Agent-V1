@@ -167,7 +167,8 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
         ai_text, run_id = "(AI summary unavailable — figures above are complete.)", None
     report = WeeklyReport(client_id=client.id, week_start=week_start, week_end=week_end,
                           metrics={"totals": totals, "campaigns": campaigns}, diagnosis={"order": ORDER},
-                          sections=sections, ai_summary=ai_text, ai_run_id=run_id, source_type=source)
+                          sections=sections, ai_summary=ai_text, ai_run_id=run_id, source_type=source,
+                          created_at=clock.now())  # same clock as the data timestamps it is compared with when deciding reuse
     db.add(report)
     db.flush()
     return report

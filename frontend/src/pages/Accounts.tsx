@@ -14,6 +14,7 @@ export default function Accounts() {
   const sync = useAction((id) => api.post(`/ads-accounts/${id}/sync`), [["accounts"]]);
   const [clientId, setClientId] = useState("");
   const structure = useQuery({ queryKey: ["structure", clientId], enabled: !!clientId, queryFn: () => api.get(`/clients/${clientId}/structure`) });
+  const linkable = (accounts.data ?? []).filter((a: any) => !a.is_manager);  // manager accounts hold no campaigns and are listed separately above
   const nameOf = (id: string) => clients.data?.find((c: any) => c.id === id)?.name;
   return (
     <div className="space-y-6">
@@ -24,11 +25,11 @@ export default function Accounts() {
       <ErrorBox error={link.error || sync.error} />
       <Card title="Link accounts to clients">
         {accounts.isLoading ? <Spinner /> : (
-          <Table rows={accounts.data ?? []} columns={[
+          <Table rows={linkable} empty="No client accounts to link yet. Manager accounts cannot be linked to a client." columns={[
             { key: "customer_id", label: "Customer ID", render: (a) => <span className="font-mono text-xs">{a.customer_id_display ?? a.customer_id}</span> },
             { key: "status", label: "Status", render: (a) => <StatusBadge value={a.status} /> },
-            { key: "descriptive_name", label: "Name", render: (a) => <>{a.descriptive_name} {a.is_manager && <Badge tone="blue">MCC</Badge>}</> },
-            { key: "client_id", label: "Client", render: (a) => a.is_manager ? "—" : can("clients.edit") ? (
+            { key: "descriptive_name", label: "Name", render: (a) => a.descriptive_name },
+            { key: "client_id", label: "Client", render: (a) => can("clients.edit") ? (
               <Select value={a.client_id ?? ""} onChange={(e) => link.mutate({ id: a.id, client_id: e.target.value })}
                 options={[{ value: "", label: "— not linked —" }, ...clientOptions(clients.data)]} />) : nameOf(a.client_id) },
             { key: "auto_tagging_enabled", label: "Auto-tagging" },

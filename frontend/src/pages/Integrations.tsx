@@ -146,7 +146,9 @@ function ManagerPicker({ canManage }: { canManage: boolean }) {
         {st?.manager_customer_id && <Button size="sm" variant="primary" onClick={() => refresh.mutate({})} disabled={refresh.isPending}>{refresh.isPending ? "Discovering…" : "Discover client accounts"}</Button>}
       </div>}
       <ErrorBox error={managers.error || choose.error || refresh.error} />
-      {refresh.data && <Notice tone={refresh.data.errors?.length ? "amber" : "green"}>{refresh.data.found} account(s) found. <a className="underline" href="/accounts">Open the account selector</a>.</Notice>}
+      {refresh.data && (refresh.data.client_accounts_found > 0
+        ? <Notice tone={refresh.data.errors?.length ? "amber" : "green"}>{refresh.data.client_accounts_found} client account(s) found. <a className="underline" href="/accounts">Open the account selector</a>.</Notice>
+        : <Notice tone="amber">No client accounts were found. {refresh.data.no_clients_reason}</Notice>)}
       {managers.data && (
         <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200" aria-label="Accessible accounts">
           {managers.data.candidates.map((m: any) => (

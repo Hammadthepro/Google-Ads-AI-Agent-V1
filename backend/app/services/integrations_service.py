@@ -199,6 +199,7 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
         _require_safe_encryption_key()
     row = _row(db, provider, create=True)
     cur = dict(row.settings or {})
+    previous_manager = cur.get("login_customer_id") or ""
     for k, v in (settings or {}).items():
         if k not in spec["settings"]:
             raise ValidationFailed(f"Unknown setting '{k}' for {provider}")
@@ -220,6 +221,13 @@ def save(db: Session, provider: str, *, settings: dict | None, secrets: dict | N
             if not digits.isdigit() or len(digits) != 10:
                 raise ValidationFailed(f"{spec['settings'][k]} must be a 10-digit number")
             cur[k] = digits
+    if provider == "google_ads" and cur.get("login_customer_id") and cur["login_customer_id"] != previous_manager:
+        # A newly saved manager ID is a manager selection: store it where the rest of the app reads it, so the two can never disagree.
+        from app.models import Workspace
+        ws = db.scalar(select(Workspace).where(Workspace.slug == "default"))
+        if ws is not None and ws.google_ads_manager_customer_id != cur["login_customer_id"]:
+            ws.google_ads_manager_customer_id, ws.google_ads_manager_name = cur["login_customer_id"], ""
+            ws.discovery_status, ws.discovery_message = "NEVER_RUN", ""
     row.settings = cur
     store = _secrets(row)
     for k, v in (secrets or {}).items():
@@ -637,9 +645,12 @@ def _test_google_ads(vals: dict, http: httpx.Client, steps: Steps, row: Integrat
                     steps.fail("Client accounts: read the hierarchy (customer_client)", _http_error(r), hint=hint, sub="hierarchy")
                 else:
                     kids = [x["customerClient"] for x in r.json().get("results", []) if x.get("customerClient", {}).get("id") != mcc]
-                    disc["hierarchy_preview"] = {"manager": mcc, "direct_children": len(kids)}
-                    steps.ok("Client accounts: read the hierarchy (customer_client)", f"{len(kids)} account(s) directly under manager {mcc} (the full tree is read when you refresh accounts)",
-                             sub="hierarchy", direct_children=len(kids))
+                    sub_mgrs = sum(1 for k in kids if k.get("manager"))
+                    disc["hierarchy_preview"] = {"manager": mcc, "direct_children": len(kids), "client_accounts": len(kids) - sub_mgrs, "sub_managers": sub_mgrs}
+                    steps.ok("Client accounts: read the hierarchy (customer_client)",
+                             f"{len(kids)} account(s) directly under manager {mcc}: {len(kids) - sub_mgrs} client account(s), {sub_mgrs} manager account(s) "
+                             "(the full tree is read when you refresh accounts)", sub="hierarchy", direct_children=len(kids),
+                             client_accounts=len(kids) - sub_mgrs, sub_managers=sub_mgrs)
     return disc
 
 
@@ -802,7 +813,7 @@ def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, tar
     steps.ok("Research customer configured", f"Research customer {customer} (separate from client deployment accounts)")
     from app.services import mcc_service
     with session_scope() as db_:
-        login = mcc_service.default_workspace(db_).google_ads_manager_customer_id
+        login = mcc_service.effective_manager(db_)["customer_id"]
     token = refresh_access_token(vals, http, steps, "OAuth authentication")
     if not token:
         return {}
