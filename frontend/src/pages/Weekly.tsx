@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
-import { Badge, Button, Card, DataSourceBadge, ErrorBox, money, Notice, PageHeader, Select, Spinner, Stat, StatusBadge, Table } from "../components/ui";
+import { Badge, Button, Card, DataSourceBadge, ErrorBox, money, Notice, PageHeader, Select, Spinner, MetricStrip, StatusBadge, Table } from "../components/ui";
 
 export default function Weekly() {
   const clients = useClients();
@@ -29,12 +29,13 @@ export default function Weekly() {
       {!r ? (list.isLoading || rep.isLoading ? <Spinner /> : <Notice>No report yet — generate one.</Notice>) : (
         <>
           <div className="flex items-center gap-2 text-sm text-slate-500">Week {r.week_start} → {r.week_end} <DataSourceBadge source={r.source_type} /></div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-            <Stat label="Campaign targets (sum)" value={t.target} sub={t.client_target ? `Client target ${t.client_target}${t.client_gap !== null && t.client_gap !== undefined ? ` · ${t.client_gap < 0 ? Math.abs(t.client_gap) + " short" : "on target"}` : ""}` : "No client-level target set"} /><Stat label="Actual conversions" value={t.conversions} />
-            <Stat label="Gap" value={<span className={t.gap < 0 ? "text-rose-600" : "text-emerald-600"}>{t.gap < 0 ? `${Math.abs(t.gap)} short` : `+${t.gap}`}</span>} />
-            <Stat label="Forms / calls" value={`${t.forms} / ${t.calls}`} /><Stat label="Spend" value={money(t.cost)} /><Stat label="Wasted spend (30d)" value={money(t.wasted_spend)} />
-          </div>
-          <Card title="Summary (AI-written, figures from the app)"><p className="whitespace-pre-wrap text-sm text-slate-700">{r.ai_summary}</p></Card>
+          <MetricStrip items={[
+            { label: "Campaign targets (sum)", value: t.target, sub: t.client_target ? `Client target ${t.client_target}${t.client_gap !== null && t.client_gap !== undefined ? ` · ${t.client_gap < 0 ? Math.abs(t.client_gap) + " short" : "on target"}` : ""}` : "No client-level target set" },
+            { label: "Actual conversions", value: t.conversions, emphasis: true },
+            { label: "Gap", value: <span className={t.gap < 0 ? "text-rose-600" : "text-emerald-600"}>{t.gap < 0 ? `${Math.abs(t.gap)} short` : `+${t.gap}`}</span>, emphasis: true },
+            { label: "Forms / calls", value: `${t.forms} / ${t.calls}` }, { label: "Spend", value: money(t.cost) }, { label: "Wasted spend (30d)", value: money(t.wasted_spend) },
+          ]} />
+          <Card title="Summary (AI-written, figures from the app)"><p className="max-w-read whitespace-pre-wrap text-sm leading-6 text-slate-700">{r.ai_summary}</p></Card>
           {(s.warnings ?? []).length > 0 && <Notice tone="amber"><b>Warnings:</b> {s.warnings.join(" · ")}</Notice>}
           {r.metrics.campaigns.map((c: any) => (
             <Card key={c.campaign_id} title={<span className="flex items-center gap-2">{c.name}</span>}

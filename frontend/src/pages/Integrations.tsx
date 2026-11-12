@@ -6,7 +6,7 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/hooks";
 import { checkAuthorizationUrl } from "../lib/oauth";
-import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, Stat, Textarea } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, MetricStrip, Notice, PageHeader, Select, Spinner, Textarea } from "../components/ui";
 
 const MODES: { value: string; label: string; text: string }[] = [
   { value: "read_only", label: "Real account — read-only", text: "Real Google Ads data is read. No campaign write is possible in this mode. This is the default." },
@@ -84,7 +84,7 @@ function SubtestRows({ item, run, canManage, busy }: { item: any; run: (target: 
   if (!item.subtests?.length) return null;
   return (
     <div className="mt-3" aria-label="Individual checks">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Individual checks</div>
+      <div className="mb-1.5 text-xs font-medium text-slate-500">Individual checks</div>
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
         {item.subtests.map((t: any) => {
           const target = Object.keys(item.targets || {}).find((k) => k === t.key);
@@ -212,7 +212,7 @@ function DependencyList({ item }: { item: any }) {
   if (!item.dependencies?.length) return null;
   return (
     <div className="mt-3" aria-label="Dependencies">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Depends on</div>
+      <div className="mb-1.5 text-xs font-medium text-slate-500">Depends on</div>
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 text-sm">
         {item.dependencies.map((d: any) => (
           <li key={d.key} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
@@ -384,14 +384,14 @@ function Overview({ items, canManage }: { items: any[]; canManage: boolean }) {
   const test = useAction((p: string) => api.post(`/integrations/${p}/test`), inv);
   const [busy, setBusy] = useState("");
   return (
-    <Card title="Overview">
+    <Card title="Status" description="Connected appears only after a real request succeeds">
       <div className="-mx-5 overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm" aria-label="Integration overview">
-          <thead><tr>{["Integration", "Configuration", "Connection", "Last test", "Last success", ""].map((h) => <th key={h} className="whitespace-nowrap px-5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>)}</tr></thead>
+        <table className="min-w-full divide-y divide-slate-200 text-[13px]" aria-label="Integration overview">
+          <thead className="bg-slate-50/70"><tr>{["Integration", "Configuration", "Connection", "Last test", "Last success", ""].map((h) => <th key={h} scope="col" className="whitespace-nowrap px-5 py-2 text-left text-xs font-medium text-slate-500">{h}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-100">
             {items.map((i) => (
               <tr key={i.provider} data-provider={i.provider}>
-                <td className="px-5 py-2.5"><a href={`#card-${i.provider}`} className="font-medium text-slate-900 hover:underline">{i.label}</a><div className="text-xs text-slate-500">{i.group}</div></td>
+                <td className="px-5 py-2.5"><a href={`#card-${i.provider}`} className="font-medium text-slate-900 hover:text-brand-700 hover:underline">{i.label}</a><div className="text-xs text-slate-500">{i.group}</div></td>
                 <td className="px-5 py-2.5"><Badge tone={i.display.config === "Configured" ? "green" : "slate"}>{i.display.config}</Badge></td>
                 <td className="px-5 py-2.5">{i.display.testable ? <Badge tone={LABEL_TONE[i.display.label]}>{i.display.label}</Badge> : <span className="text-xs text-slate-500">Verified by signing in</span>}</td>
                 <td className="px-5 py-2.5 text-xs text-slate-600">{dt(i.last_test_at)}</td>
@@ -407,6 +407,9 @@ function Overview({ items, canManage }: { items: any[]; canManage: boolean }) {
     </Card>
   );
 }
+
+const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]];
+const DOT_TONE: Record<string, string> = { green: "bg-emerald-500", red: "bg-rose-500", amber: "bg-amber-500", blue: "bg-brand-500", slate: "bg-slate-300", violet: "bg-plum-500" };
 
 export default function Integrations() {
   const { can } = useAuth();
@@ -426,25 +429,48 @@ export default function Integrations() {
       {params.get("oauth") === "connected" && <Notice tone="green">Google authorization saved for: {params.get("providers")}. Now run Test Connection.</Notice>}
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="Integration health">
-        {["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0)} />)}
+      <div aria-label="Integration health">
+        <MetricStrip items={["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => ({ label: s,
+          value: <span className={(counts[s] ?? 0) && s === "Connected" ? "text-emerald-700" : (counts[s] ?? 0) && s === "Connection failed" ? "text-rose-700" : ""}>{counts[s] ?? 0}</span> }))} />
       </div>
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
       <WriteReadiness />
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
-        ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code>{q.data.redirect_uri}</code></Notice>
-        : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
-      {[["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]].map(([g, title]) => {
-        const list = items.filter((i) => i.group === g);
-        if (!list.length) return null;
-        return (
-          <section key={g} className="space-y-4" aria-label={title}>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
-            {g === "System" && <p className="text-xs text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
-            <div className="grid gap-4 xl:grid-cols-2">{list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
-          </section>);
-      })}
+        ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code className="break-all font-mono text-xs">{q.data.redirect_uri}</code></Notice>
+        : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code className="break-all font-mono text-xs">{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
+      <div className="grid gap-8 pt-2 xl:grid-cols-[200px_minmax(0,1fr)]">
+        <nav aria-label="Providers" className="hidden xl:block">
+          <div className="sticky top-[76px] space-y-5 text-[13px]">
+            {GROUPS.map(([g, title]) => {
+              const list = items.filter((i) => i.group === g);
+              if (!list.length) return null;
+              return (
+                <div key={g}>
+                  <div className="mb-1.5 text-xs font-medium text-slate-500">{title}</div>
+                  <ul className="space-y-px">{list.map((i) => (
+                    <li key={i.provider}><a href={`#card-${i.provider}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-slate-700 hover:bg-white hover:text-slate-900">
+                      <span aria-hidden className={cx("h-1.5 w-1.5 shrink-0 rounded-full", DOT_TONE[LABEL_TONE[i.display.label] ?? "slate"] ?? "bg-slate-300")} />
+                      <span className="truncate">{i.label}</span></a></li>))}</ul>
+                </div>);
+            })}
+          </div>
+        </nav>
+        <div className="min-w-0 space-y-10">
+          {GROUPS.map(([g, title]) => {
+            const list = items.filter((i) => i.group === g);
+            if (!list.length) return null;
+            return (
+              <section key={g} className="space-y-4" aria-label={title}>
+                <div className="border-b border-slate-200 pb-2">
+                  <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+                  {g === "System" && <p className="mt-1 text-xs text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
+                </div>
+                <div className="grid items-start gap-4 2xl:grid-cols-2">{list.map((i) => <div key={i.provider} className="min-w-0 scroll-mt-20"><IntegrationCard item={i} canManage={canManage} resultOf={results[i.provider]} /></div>)}</div>
+              </section>);
+          })}
+        </div>
+      </div>
     </div>
   );
 }

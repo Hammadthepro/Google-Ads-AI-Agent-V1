@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
-import { Badge, Button, Card, DataSourceBadge, DataStatusNotice, dt, ErrorBox, money, Notice, PageHeader, pct, Select, Spinner, Stat, StatusBadge, Table, Tabs } from "../components/ui";
+import { Badge, Button, Card, DataSourceBadge, DataStatusNotice, dt, ErrorBox, money, Notice, PageHeader, pct, Select, Spinner, MetricStrip, StatusBadge, Table, Tabs } from "../components/ui";
 
 function Spark({ points }: { points: number[] }) {
   if (points.length < 2) return null;
@@ -48,12 +48,12 @@ export default function Monitor() {
       {!data ? <Spinner /> : (
         <>
           <DataStatusNotice status={data.data_status} />
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="Spend (30d)" value={money(totals.cost)} />
-            <Stat label="Conversions (30d)" value={totals.conv.toFixed(1)} />
-            <Stat label="Wasted spend (30d)" value={money(data.wasted_spend.total)} sub={`terms with ≥${data.wasted_spend.min_clicks} clicks, 0 conv.`} />
-            <Stat label="Calls (30d)" value={data.calls.calls} sub={`${data.calls.missed} missed · ${data.calls.short} under ${data.calls.min_seconds}s`} />
-          </div>
+          <MetricStrip items={[
+            { label: "Spend (30d)", value: money(totals.cost), emphasis: true },
+            { label: "Conversions (30d)", value: totals.conv.toFixed(1), emphasis: true },
+            { label: "Wasted spend (30d)", value: money(data.wasted_spend.total), sub: `terms with ≥${data.wasted_spend.min_clicks} clicks, 0 conv.` },
+            { label: "Calls (30d)", value: data.calls.calls, sub: `${data.calls.missed} missed · ${data.calls.short} under ${data.calls.min_seconds}s` },
+          ]} />
           <Card title="Campaigns (30 days)">
             <Table rows={data.campaigns} columns={[
               { key: "name", label: "Campaign", render: (c) => <span className="font-medium">{c.name} {c.read_only && <Badge>read-only</Badge>}</span> },
