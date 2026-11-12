@@ -4,8 +4,10 @@
 #   docker compose exec backend python -m app.cli create-super-admin you@example.com
 # To use Supabase instead of the bundled Postgres, set COMPOSE_DATABASE_URL in .env to the Supabase
 # Session Pooler URL (postgresql+psycopg://...?sslmode=require). The bundled postgres then stays unused.
+# backend, worker and beat run the same image: one Dockerfile, one tag, so dependencies are installed once and reused.
 x-backend: &backend
   build: ./backend
+  image: google-ads-ai-agent-backend:local
   env_file: .env
   environment:
     # COMPOSE_DATABASE_URL (not DATABASE_URL, which .env sets for non-Docker runs) selects the database for containers.
