@@ -1,10 +1,21 @@
 # Google Ads AI Agent V1 — common commands
-.PHONY: up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint live-tests
+.PHONY: lock wheelhouse up down migrate purge-demo-data dev-backend dev-worker dev-beat dev-frontend test test-backend test-frontend e2e lint live-tests
+
+# CPU architecture of the Docker image (override with WHEEL_ARCH=aarch64 or x86_64 if your Docker runs a different one than this computer).
+WHEEL_ARCH ?= $(shell uname -m | sed -e 's/arm64/aarch64/' -e 's/amd64/x86_64/')
 
 up:            ## build and start everything with Docker Compose 
 	docker compose up --build -d
 down:
 	docker compose down
+lock:          ## regenerate backend/requirements.lock after changing dependencies in backend/pyproject.toml (needs uv)
+	cd backend && uv pip compile pyproject.toml docker/build-requirements.in --extra dev --python-platform linux --python-version 3.12 \
+		--generate-hashes --no-header -q -o requirements.lock
+	cd backend && sed -i.bak '1i # Locked dependencies for the Docker image (Linux, Python 3.12): runtime + dev + the build backend, with hashes.\n# Generated from pyproject.toml. Do not edit by hand; run `make lock` after changing dependencies in pyproject.toml.' requirements.lock && rm -f requirements.lock.bak
+wheelhouse:    ## download every locked wheel into backend/wheelhouse with THIS computer's connection; the next image build then needs no package index
+	python3 -m pip download --prefer-binary --require-hashes --no-deps --python-version 3.12 --implementation cp --abi cp312 --abi abi3 --abi none \
+		$(foreach p,manylinux_2_34 manylinux_2_28 manylinux_2_27 manylinux_2_26 manylinux_2_24 manylinux_2_17 manylinux_2_12 manylinux_2_5 manylinux2014 manylinux2010 manylinux1,--platform $(p)_$(WHEEL_ARCH)) \
+		--timeout 30 --retries 3 -r backend/requirements.lock -d backend/wheelhouse
 migrate:
 	cd backend && .venv/bin/alembic upgrade head
 purge-demo-data: ## list leftover demo data from older versions (add ARGS=--apply to delete it)

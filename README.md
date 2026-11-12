@@ -19,6 +19,15 @@ If the automatic start did not run, or you stopped it, start it manually in the 
 bash scripts/start.sh
 ```
 
+### If the image build cannot download Python packages
+The backend image installs exact, hash-checked versions from `backend/requirements.lock` (one image, shared by backend, worker and beat).
+Downloads are kept in Docker's build cache, so running the build again resumes where it stopped. If the package index is slow or blocked:
+```bash
+PIP_INDEX_URL=https://<your-mirror>/simple docker compose up -d --build   # use a reachable mirror (hashes are still checked)
+make wheelhouse && docker compose up -d --build                           # or download with this computer's connection, then build offline
+```
+After changing dependencies in `backend/pyproject.toml`, run `make lock` (needs `uv`); the build fails if the lock no longer matches.
+
 ### Sign-in
 Local development uses an email-only sign-in for users that already exist (`AUTH_PROVIDER=dev`; refused when `APP_ENV=production`, where Google sign-in is required). Invite teammates from **Users**; roles are Super Admin, Admin, Campaign Manager and Analyst. Approving your own request is blocked.
 

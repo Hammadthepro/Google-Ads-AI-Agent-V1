@@ -1,0 +1,2 @@
+# The build backend declared in pyproject.toml [build-system].requires. Locked with the dependencies so the image build never fetches it separately.
+setuptools>=68

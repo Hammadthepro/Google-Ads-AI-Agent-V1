@@ -4,9 +4,9 @@
 #   docker compose exec backend python -m app.cli create-super-admin you@example.com
 # To use Supabase instead of the bundled Postgres, set COMPOSE_DATABASE_URL in .env to the Supabase
 # Session Pooler URL (postgresql+psycopg://...?sslmode=require). The bundled postgres then stays unused.
-# backend, worker and beat run the same image: one Dockerfile, one tag, so dependencies are installed once and reused.
+# backend, worker and beat run ONE image. Only the backend service builds it; worker and beat reuse that image and never build
+# or pull their own, so Python dependencies are installed exactly once per build.
 x-backend: &backend
-  build: ./backend
   image: google-ads-ai-agent-backend:local
   env_file: .env
   environment:
@@ -29,12 +29,21 @@ services:
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 20 }
   backend:
     <<: *backend
+    build:
+      context: ./backend
+      args:
+        # Package index for the image build. Set PIP_INDEX_URL (shell or .env) to a reachable mirror if PyPI is slow or blocked.
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     ports: ["8000:8000"]
   worker:
     <<: *backend
+    pull_policy: never          # the image comes from the backend build above
+    healthcheck: { disable: true }   # the image's health check probes the API port, which only the backend serves
     command: celery -A app.workers.celery_app worker -l info --concurrency 2
   beat:
     <<: *backend
+    pull_policy: never
+    healthcheck: { disable: true }
     command: celery -A app.workers.celery_app beat -l info --schedule /tmp/celerybeat-schedule
   frontend:
     build: ./frontend
