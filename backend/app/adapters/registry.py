@@ -80,8 +80,38 @@ def notifier():
     return EmailNotifier() if v.get("host") and v.get("from_email") and not v.get("_disabled") else InAppNotifier()
 
 
+@lru_cache
+def tavily():
+    vals = integrations_service.ensure_configured("tavily")
+    from app.adapters.research.tavily import TavilyAdapter
+    return TavilyAdapter(vals["api_key"], depth=vals.get("search_depth", "basic"))
+
+
+@lru_cache
+def search_suggestions():
+    vals = integrations_service.ensure_configured("search_suggestions")  # needs no credentials; raises only when switched off
+    from app.adapters.research.suggest import SuggestionAdapter
+    return SuggestionAdapter(enabled=tuple(x.strip() for x in (vals.get("sources") or "").split(",") if x.strip()))
+
+
+@lru_cache
+def openstreetmap():
+    vals = integrations_service.ensure_configured("openstreetmap")
+    from app.adapters.research.geo import OSMAdapter
+    return OSMAdapter(nominatim_url=vals.get("nominatim_url") or "https://nominatim.openstreetmap.org",
+                      overpass_url=vals.get("overpass_url") or "https://overpass-api.de/api/interpreter", contact_email=vals.get("contact_email", ""))
+
+
+@lru_cache
+def geoapify():
+    vals = integrations_service.ensure_configured("geoapify")
+    from app.adapters.research.geo import GeoapifyAdapter
+    return GeoapifyAdapter(vals["api_key"])
+
+
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
-       "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier}
+       "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier,
+       "tavily": tavily, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 
 def reset() -> None:

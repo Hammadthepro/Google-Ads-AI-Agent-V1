@@ -1,4 +1,5 @@
 import { ReactNode, useState } from "react";
+import { WriteReadiness } from "../components/WriteReadiness";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -86,6 +87,18 @@ function SubtestRows({ item, run, canManage, busy }: { item: any; run: (target: 
 
 function ProviderFacts({ item }: { item: any }) {
   const i = item.info || {};
+  if (i.usage_30d) {
+    const rows = Object.entries(i.usage_30d as Record<string, any>);
+    return (
+      <dl className="mt-3">
+        {rows.map(([name, u]) => (
+          <Row key={name} label={rows.length > 1 ? `Usage, 30 days (${name.replace("suggest_", "")})` : "Usage, 30 days"}>
+            {u.requests_sent} request(s) sent · {u.served_from_cache} served from cache{u.failed ? ` · ${u.failed} failed` : ""}
+            {u.cost_units ? ` · ${u.cost_units} credit(s)` : ""}
+            {u.last_error && <div className="text-2xs text-amber-800">Last failure: {u.last_error.kind} — {u.last_error.message}</div>}
+          </Row>))}
+      </dl>);
+  }
   if (item.provider === "google_ads") {
     const a = i.api_access || {};
     return (
@@ -397,6 +410,7 @@ export default function Integrations() {
       </div>
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
+      <WriteReadiness />
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
         ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code>{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}

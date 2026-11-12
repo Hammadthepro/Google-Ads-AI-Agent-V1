@@ -87,6 +87,7 @@ React + TypeScript + Vite + Tailwind → FastAPI (modular monolith) → PostgreS
 |---|---|
 | [PROJECT_OVERVIEW](docs/PROJECT_OVERVIEW.md) | Scope, flow, conflicts resolved |
 | [SYSTEM_ARCHITECTURE](docs/SYSTEM_ARCHITECTURE.md) | Components, adapters, write-safety chain |
+| [RESEARCH_AND_PUBLISHING](docs/RESEARCH_AND_PUBLISHING.md) | Live research view, free keyword and geo providers, Tavily, failure classes, publishing authorization |
 | [MODULE_BREAKDOWN](docs/MODULE_BREAKDOWN.md) | Modules and task-type flows |
 | [DATABASE_SCHEMA](docs/DATABASE_SCHEMA.md) | Entities |
 | [API_ENDPOINTS](docs/API_ENDPOINTS.md) | REST API (OpenAPI at `/api/docs`) |

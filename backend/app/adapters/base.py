@@ -63,6 +63,26 @@ class WritesDisabled(AdapterError):
     kind = "writes_disabled"
 
 
+class QuotaExceeded(AdapterError):
+    """The provider's plan or credit allowance is used up (distinct from a short-term rate limit)."""
+    kind = "quota_exceeded"
+
+
+class InvalidResponse(AdapterError):
+    """The provider answered, but not with the documented format. Nothing is guessed from it."""
+    kind = "invalid_response"
+
+
+class Unsupported(AdapterError):
+    """The provider does not offer this functionality (or returned no content for it)."""
+    kind = "unsupported"
+
+
+class BudgetExhausted(AdapterError):
+    """This app's own per-audit budget for a metered provider is spent; the provider itself was not called."""
+    kind = "budget_exhausted"
+
+
 FAILURE_CLASSES: dict[str, type[AdapterError]] = {
     "auth_failure": AuthError,
     "permission_denied": PermissionDenied,
@@ -72,6 +92,10 @@ FAILURE_CLASSES: dict[str, type[AdapterError]] = {
     "missing_data": NotFoundError,
     "invalid_input": InvalidInput,
     "outage": ServiceUnavailable,
+    "quota_exceeded": QuotaExceeded,
+    "invalid_response": InvalidResponse,
+    "unsupported": Unsupported,
+    "budget_exhausted": BudgetExhausted,
 }
 
 

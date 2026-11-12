@@ -89,9 +89,47 @@ PROVIDERS: dict[str, dict] = {
     },
     "places": {
         "label": "Google Places API", "group": "Website research",
-        "description": "Competitor and Business Profile research (Places API New).",
+        "description": "Optional, paid: Google Business Profile ratings, reviews and hours (Places API New). Not required: without it, business presence and "
+                       "nearby competitors come from OpenStreetMap / Geoapify, and ratings and reviews are reported as unavailable.",
         "settings": {}, "secrets": {"api_key": "API key"}, "required": ["api_key"],
         "docs": "https://developers.google.com/maps/documentation/places/web-service/overview",
+    },
+    "tavily": {
+        "label": "Tavily web search", "group": "Research",
+        "description": "Optional live web search the research agent uses when it needs it: finding competitors that were not supplied, customer questions and "
+                       "industry language for keyword intent, and local market context. Search snippets are stored as web evidence, never as verified facts. "
+                       "Metered by Tavily (1 credit per basic search, 2 per advanced); repeated queries are served from the cache and each audit has a search budget.",
+        "settings": {"search_depth": "Search depth (basic | advanced)", "max_searches_per_audit": "Maximum searches per audit"},
+        "secrets": {"api_key": "API key"}, "required": ["api_key"],
+        "default_settings": {"search_depth": "basic", "max_searches_per_audit": "8"},
+        "docs": "https://docs.tavily.com/documentation/api-reference/endpoint/search",
+    },
+    "search_suggestions": {
+        "label": "Search suggestions (keyword discovery)", "group": "Research",
+        "description": "Free keyword discovery from public search-suggestion endpoints (Google Autocomplete, DuckDuckGo, Bing). They return the phrases people "
+                       "type and nothing else: no search volume, CPC or competition. The endpoints are unofficial and can change; requests are throttled and cached.",
+        "settings": {"sources": "Sources, comma separated (google, duckduckgo, bing)"}, "secrets": {}, "required": [],
+        "default_settings": {"sources": "google,duckduckgo,bing"},
+        "subtests": [("google", "Google Autocomplete"), ("duckduckgo", "DuckDuckGo"), ("bing", "Bing")], "required_subtests": [],
+        "docs": "",
+    },
+    "openstreetmap": {
+        "label": "OpenStreetMap (geocoding & nearby places)", "group": "Research",
+        "description": "Free geographic research: Nominatim geocoding and Overpass points of interest for nearby competitors and market density. "
+                       "Coverage of small businesses is incomplete and there are no ratings or reviews. Public servers have usage policies: requests are "
+                       "throttled and cached; set your own instance URLs for heavy use. Data © OpenStreetMap contributors (ODbL).",
+        "settings": {"nominatim_url": "Nominatim URL", "overpass_url": "Overpass API URL", "contact_email": "Contact email sent to Nominatim (optional, recommended by its policy)"},
+        "secrets": {}, "required": [],
+        "default_settings": {"nominatim_url": "https://nominatim.openstreetmap.org", "overpass_url": "https://overpass-api.de/api/interpreter"},
+        "subtests": [("geocode", "Nominatim geocoding"), ("pois", "Overpass points of interest")], "required_subtests": ["geocode"],
+        "docs": "https://operations.osmfoundation.org/policies/nominatim/",
+    },
+    "geoapify": {
+        "label": "Geoapify (places & geocoding)", "group": "Research",
+        "description": "Optional geocoding and Places search built on OpenStreetMap data with a free daily credit allowance (check Geoapify's current plan; "
+                       "limits and pricing can change). Attribution is required wherever its results are shown.",
+        "settings": {}, "secrets": {"api_key": "API key"}, "required": ["api_key"],
+        "docs": "https://apidocs.geoapify.com/docs/places/",
     },
     "smtp": {
         "label": "Email alerts (SMTP)", "group": "System", "system": True,
@@ -299,6 +337,8 @@ _ENV = {
                    "client_secret": "GOOGLE_ADS_CLIENT_SECRET", "refresh_token": "GOOGLE_ADS_REFRESH_TOKEN"},
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
     "places": {"api_key": "GOOGLE_PLACES_API_KEY"},
+    "tavily": {"api_key": "TAVILY_API_KEY"},
+    "geoapify": {"api_key": "GEOAPIFY_API_KEY"},
     "pagespeed": {"api_key": "PAGESPEED_API_KEY"},
     "smtp": {"host": "SMTP_HOST", "port": "SMTP_PORT", "username": "SMTP_USER", "password": "SMTP_PASSWORD", "from_email": "SMTP_FROM"},
 }
@@ -1069,7 +1109,82 @@ def _test_crawler(vals: dict, http: httpx.Client, steps: Steps, row, target: str
     return {}
 
 
-_TESTERS: dict[str, Callable] = {"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
+def _research_step(steps: Steps, name: str, fn, *, sub: str | None = None, hint: str = "") -> object:
+    from app.adapters.base import AdapterError
+    try:
+        return fn()
+    except AdapterError as exc:
+        steps.fail(name, f"{exc.kind}: {exc.message}", sub=sub, hint=hint)
+        return None
+
+
+def _test_tavily(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    from app.adapters.research.tavily import TavilyAdapter
+    if not vals.get("api_key"):
+        steps.fail("Credentials present", "API key is required")
+        return {}
+    steps.ok("Credentials present")
+    t = TavilyAdapter(vals["api_key"], http)
+    res = _research_step(steps, "Run one basic web search", lambda: t.search("google ads campaign best practices", max_results=1, depth="basic"),
+                         hint="Check the key on app.tavily.com; HTTP 432/433 means the plan's credits are used up.")
+    if res is None:
+        return {}
+    steps.ok("Run one basic web search", f"{len(res['results'])} result(s); {res['credits']} credit(s) ({res['credits_source']})")
+    u = _research_step(steps, "Read credit usage", t.usage)
+    if u is not None:
+        steps.ok("Read credit usage", f"{u.get('used')} of {u.get('limit') if u.get('limit') is not None else 'an unreported'} credits used")
+        return {"usage": u}
+    return {}
+
+
+def _test_search_suggestions(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    from app.adapters.research.suggest import LABELS, SuggestionAdapter
+    sources = [x.strip() for x in (vals.get("sources") or "").split(",") if x.strip() in LABELS]
+    if not sources:
+        steps.fail("Sources", "No valid source is enabled (google, duckduckgo, bing)")
+        return {}
+    a = SuggestionAdapter(http, enabled=tuple(sources), min_interval=0)
+    working = []
+    for src in sources:
+        got = _research_step(steps, f"{LABELS[src]}: suggestions for 'plumber'", lambda src=src: a.suggest(src, "plumber"), sub=src)
+        if got is not None:
+            steps.ok(f"{LABELS[src]}: suggestions for 'plumber'", f"{len(got)} suggestion(s), e.g. {', '.join(got[:3])}", sub=src)
+            working.append(src)
+    if not working:
+        steps.fail("At least one source answered", "No suggestion source returned results from this server")
+    return {"working_sources": working}
+
+
+def _test_openstreetmap(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    from app.adapters.research.geo import OSMAdapter
+    a = OSMAdapter(http, nominatim_url=vals.get("nominatim_url") or "https://nominatim.openstreetmap.org",
+                   overpass_url=vals.get("overpass_url") or "https://overpass-api.de/api/interpreter", contact_email=vals.get("contact_email", ""))
+    g = _research_step(steps, "Nominatim: geocode 'Austin, Texas'", lambda: a.geocode("Austin, Texas"), sub="geocode")
+    if g is None:
+        return {}
+    steps.ok("Nominatim: geocode 'Austin, Texas'", f"{g['display_name'][:80]} ({g['lat']:.3f}, {g['lon']:.3f})", sub="geocode")
+    p = _research_step(steps, "Overpass: plumbers within 5 km", lambda: a.nearby(g["lat"], g["lon"], 5000, [("craft", "plumber")], limit=5), sub="pois",
+                       hint="The public Overpass server may be busy or unreachable from this server. Set your own Overpass URL, or rely on Geoapify.")
+    if p is not None:
+        steps.ok("Overpass: plumbers within 5 km", f"{len(p)} named business(es) returned", sub="pois")
+    return {}
+
+
+def _test_geoapify(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    from app.adapters.research.geo import GeoapifyAdapter
+    if not vals.get("api_key"):
+        steps.fail("Credentials present", "API key is required")
+        return {}
+    steps.ok("Credentials present")
+    a = GeoapifyAdapter(vals["api_key"], http)
+    g = _research_step(steps, "Geocode 'Austin, Texas'", lambda: a.geocode("Austin, Texas"), hint="Check the key in your Geoapify project.")
+    if g is not None:
+        steps.ok("Geocode 'Austin, Texas'", f"{g['display_name'][:80]}")
+    return {}
+
+
+_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "search_suggestions": _test_search_suggestions,
+                                 "openstreetmap": _test_openstreetmap, "geoapify": _test_geoapify,"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
                                  "google_ads": _test_google_ads, "ga4": _test_ga4, "groq": _test_groq,
                                  "claude": _test_claude, "pagespeed": _test_pagespeed, "places": _test_places,
                                  "crawler": _test_crawler}
@@ -1402,6 +1517,10 @@ def serialize(db: Session, provider: str) -> dict:
                 "api_access": disc.get("cloud_access") or {"api_enabled": None, "level": "not tested", "basis": "Run Test Connection"},
                 "manager_id_set": bool(_selected_manager(vals)), "managers": disc.get("managers"),
                 "hierarchy": disc.get("hierarchy_preview")}
+    if provider in ("tavily", "openstreetmap", "geoapify", "search_suggestions"):
+        from app.services import provider_calls
+        names = {"search_suggestions": ["suggest_google", "suggest_duckduckgo", "suggest_bing"]}.get(provider, [provider])
+        info = {"usage_30d": {n: provider_calls.usage(n) for n in names}}
     if provider == "claude":
         info = {"usage": ai_usage(db, "claude:%"), "models": (row.discovered or {}).get("models", []) if row else [],
                 "independent": "Claude uses its own API key and model and drafts the same inputs separately from Groq; each side then reviews the other's draft. "

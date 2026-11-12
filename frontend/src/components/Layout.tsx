@@ -24,13 +24,15 @@ export function SafetyBanner() {
   const { data } = useQuery({ queryKey: ["integration-banner"], queryFn: () => api.get("/integrations/mode"), staleTime: 30_000 });
   if (!data) return null;
   const writes = !!data.real_writes_possible;
+  const missing = [!data.write_keys?.environment_enabled && "deployment permit", data.mode !== "execution" && "execution mode",
+    !data.write_keys?.super_admin_authorized && "Super Admin key"].filter(Boolean) as string[];
   return (
-    <div role="status" title={data.label}
-      className={cx("inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-2xs font-medium ring-1 ring-inset",
+    <NavLink to="/integrations#writes" role="status" title={writes ? data.label : `Missing: ${missing.join(", ")}`}
+      className={cx("inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-2xs font-medium ring-1 ring-inset transition hover:ring-slate-300",
         writes ? "bg-amber-50 text-amber-900 ring-amber-300" : "bg-white text-slate-600 ring-slate-200")}>
       <Icon name="shield" className="h-3.5 w-3.5" />
-      <span>{writes ? "Writes possible with approval" : "Read-only: Google Ads writes disabled"}</span>
-    </div>
+      <span>{writes ? "Writes possible with approval" : `Google Ads writes off · ${missing.length} key${missing.length === 1 ? "" : "s"} missing`}</span>
+    </NavLink>
   );
 }
 

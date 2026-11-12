@@ -92,6 +92,11 @@ def real_writes_permitted() -> tuple[bool, str]:
     from app.services import settings_service
     if not settings_service.get_value("real_writes_authorized", False):
         return False, "Super Admin has not authorized real writes (system setting real_writes_authorized)"
+    from app.db.session import session_scope
+    from app.services import integrations_service
+    with session_scope() as db:
+        if integrations_service.operating_mode(db) != "execution":
+            return False, "The app is in read-only mode (Integrations › Operating mode)"
     return True, ""
 
 

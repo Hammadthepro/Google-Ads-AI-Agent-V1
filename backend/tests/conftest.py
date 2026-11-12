@@ -79,6 +79,9 @@ def install_fakes() -> None:
     registry.override("ai", MockAIProvider())
     registry.override("claude_ai", MockAIProvider(variant="b"))
     registry.override("notifier", MockNotifier())
+    from tests.fakes.research import FakeOSM, FakeSuggestions
+    registry.override("search_suggestions", FakeSuggestions())
+    registry.override("openstreetmap", FakeOSM())
 
 
 @pytest.fixture(scope="session", autouse=True)

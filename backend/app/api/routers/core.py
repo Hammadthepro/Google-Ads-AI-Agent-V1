@@ -104,6 +104,42 @@ class LinkIn(BaseModel):
     client_id: str | None
 
 
+class AllowWritesIn(BaseModel):
+    allowed: bool
+    reason: str = ""
+
+
+@router.put("/ads-accounts/{account_id}/write-allowlist", tags=["google ads"])
+def set_write_allowlist(account_id: str, body: AllowWritesIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Super Admin only, audited. Allowing writes changes nothing in Google Ads: it is one of the keys a write needs."""
+    auth_service.require(user, "real_writes.authorize")
+    a = db.get(GoogleAdsAccount, account_id)
+    if not a:
+        raise NotFound("Account not found")
+    if body.allowed:
+        if a.is_manager or a.status != "ENABLED":
+            raise ValidationFailed("Only an enabled client account (not a manager account) can be allowed for writes.")
+        if len(body.reason.strip()) < 20:
+            raise ValidationFailed("Allowing writes to an account requires a written reason (20+ characters).")
+    before = a.writes_allowed
+    a.writes_allowed = body.allowed
+    activity.log(db, "ads_account.write_allowlist", actor=user, entity="google_ads_account", entity_id=a.id, client_id=a.client_id,
+                 details={"customer_id": a.customer_id, "from": before, "to": body.allowed, "reason": body.reason})
+    db.commit()
+    return accounts_service.serialize_account(a)
+
+
+@router.get("/google-ads/write-readiness", tags=["google ads"])
+def write_readiness(account_id: str | None = None, client_id: str | None = None, user: User = Depends(require("reports.view")),
+                    db: Session = Depends(get_db)):
+    from app.services import write_readiness as wr
+    acct = db.get(GoogleAdsAccount, account_id) if account_id else None
+    if acct is None and client_id:
+        auth_service.require_client_access(db, user, client_id)
+        acct = db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client_id).limit(1))
+    return wr.readiness(db, acct)
+
+
 @router.post("/ads-accounts/{account_id}/link", tags=["google ads"])
 def link(account_id: str, body: LinkIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     a = accounts_service.link(db, user, account_id, body.client_id)

@@ -161,4 +161,7 @@ def test_integration_failures_are_handled_and_never_faked():
     assert web["pagespeed"]["mobile"]["error"] == "rate_limited"
     inject("keyword_research", "empty", times=-1)
     kw = admin.post("/audits", {"business_id": plumb["id"], "audit_type": "KEYWORD"}).json()[0]["result"]
-    assert all(k["seed"].startswith("competitor") for k in kw["keywords"])
+    # Keyword Planner returned nothing: other sources still contribute, but no keyword carries a volume or bid it did not observe
+    assert not any(k["sources"][0]["source"] == "keyword_planner" for k in kw["keywords"])
+    assert all(k["avg_monthly_searches"] is None and k["high_top_of_page_bid_micros"] is None for k in kw["keywords"])
+    assert all(m["basis"] == "unavailable" and m["value"] is None for k in kw["keywords"] for m in k["metrics"].values())

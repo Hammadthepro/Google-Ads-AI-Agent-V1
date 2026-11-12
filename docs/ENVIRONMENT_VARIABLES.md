@@ -102,6 +102,13 @@ Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on t
 | `GOOGLE_PLACES_API_KEY` 🔒 | optional | — | Places API (New) key for competitor and Business Profile research. | integrations_service.py |
 | `PAGESPEED_API_KEY` 🔒 | optional | — | PageSpeed Insights key (works without one at a low quota). | integrations_service.py |
 
+### Research
+
+| Variable | Needed | Default | Purpose | Read by |
+|---|---|---|---|---|
+| `TAVILY_API_KEY` 🔒 | optional | — | Tavily web search key (optional; the Integrations page is preferred). | integrations_service.py |
+| `GEOAPIFY_API_KEY` 🔒 | optional | — | Geoapify places/geocoding key (optional; the Integrations page is preferred). | integrations_service.py |
+
 ### AI (Groq)
 
 | Variable | Needed | Default | Purpose | Read by |

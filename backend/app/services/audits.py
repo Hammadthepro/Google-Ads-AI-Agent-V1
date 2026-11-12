@@ -18,7 +18,7 @@ from app.core.errors import IntegrationNotConfigured
 from app.core.util import from_micros, normalize_term
 from app.db.session import session_scope
 from app.models import Audit, Business, SourceType
-from app.services import accounts_service, ai_service, clients_service, crawler_service
+from app.services import accounts_service, ai_service, clients_service, crawler_service, geo_intel, keyword_intel, research_events, web_research
 
 TRUST_WORDS = ["licensed", "insured", "certified", "warranty", "guarantee", "years", "since", "review", "award",
                "family owned", "board-certified", "no fee"]
@@ -146,9 +146,24 @@ def website_audit(ctx: dict, task_id: str | None) -> dict:
     }
 
 
-# ------------------------------------------------------------------ 4b GBP
+# ------------------------------------------------------------------ 4b GBP / public presence / local market
 def gbp_audit(ctx: dict) -> dict:
-    places = registry.get("places")
+    """Business presence and local market. OpenStreetMap/Geoapify research always runs (free); Google Places is optional and adds
+    ratings, reviews and hours. Without Places those checks are reported as unavailable, never guessed."""
+    geo = geo_intel.research(ctx)
+    market = web_research.local_market(ctx, stage="geo")
+    places = registry.optional("places")
+    if places is None:
+        research_events.emit("provider_unavailable", "Google Places is not configured: ratings, reviews and hours are not available", stage="gbp",
+                             level="warn", provider="places")
+        presence = geo.get("client_listing")
+        findings = [("Listed on OpenStreetMap: " + presence["name"]) if presence else
+                    "Not found on OpenStreetMap (common for small businesses; it does not mean there is no Google profile)"]
+        return {"client": None, "competitors": [], "findings": findings, "places_available": False, "presence": presence, "geo": geo,
+                "market_evidence": market.get("evidence", []),
+                "note": "Google Places is not configured. Business presence and nearby competitors come from OpenStreetMap/Geoapify; "
+                        "ratings, reviews, hours and profile completeness are unavailable.",
+                "source": SourceType.LIVE if geo.get("available") else SourceType.NONE}
     try:
         client = places.find_business(ctx["business_name"], ctx["website_url"], ctx["address"])
     except AdapterError as exc:
@@ -173,15 +188,18 @@ def gbp_audit(ctx: dict) -> dict:
         findings.append("Opening hours missing on the listing")
     if not client:
         findings.append("Business listing not found on Google Maps")
-    return {"client": client, "competitors": comps, "findings": findings,
+    return {"client": client, "competitors": comps, "findings": findings, "places_available": True, "geo": geo,
+            "market_evidence": market.get("evidence", []),
             "note": "Posts, Q&A and services lists have no public API for competitors — not audited (decision D-06).",
             "source": places.source}
 
 
 # ------------------------------------------------------------------ 4c competitors
 def competitor_audit(ctx: dict, task_id: str | None) -> dict:
+    web = web_research.discover_competitors(ctx, stage="competitors")
     if not ctx["competitors"]:
-        return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "source": "NONE"}
+        return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "web_candidates": web["candidates"],
+                "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "source": "NONE"}
     out, client_services = [], {normalize_term(s) for s in ctx["service_names"]}
     try:
         kw_adapter = registry.get("keyword_research")
@@ -189,6 +207,7 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
         kw_adapter, kw_unavailable = None, exc.message
     for c in ctx["competitors"]:
         entry = {"name": c["name"], "website_url": c["website_url"]}
+        research_events.emit("competitor_identified", c["name"], stage="competitors", url=c["website_url"], basis="supplied by the client")
         if c["website_url"]:
             crawl = crawler_service.crawl(c["website_url"], max_pages=8, max_depth=1)
             # service pages only: skip the home page and brand headings ("X — trusted in City")
@@ -215,7 +234,8 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
             parsed, _ = ai_service.generate(db, "EXTRACT_COMPETITOR_ADS", {"ads_text": ctx["competitor_ads_text"][:6000]},
                                             task_id=task_id)
         ads_analysis = {**parsed.model_dump(), "verification": "Pasted by the team — not verified as currently running."}
-    return {"competitors": out, "pasted_ads_analysis": ads_analysis,
+    return {"competitors": out, "pasted_ads_analysis": ads_analysis, "web_candidates": web["candidates"],
+            "web_discovery": {k: v for k, v in web.items() if k != "candidates"},
             "keyword_sources": ["Keyword Planner URL seeds (" + kw_adapter.source + ")"] if kw_adapter else [],
             "missing_sources": ["Paid competitor bidding data (Semrush or similar) not connected"],
             "source": SourceType.combine(registry.get("crawler").source, kw_adapter.source if kw_adapter else None)}
@@ -225,34 +245,68 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
 def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, task_id: str | None,
                      services: list[dict] | None = None, existing_keywords: dict[str, list[str]] | None = None,
                      daily_budget: float | None = None) -> dict:
-    try:
-        kw = registry.get("keyword_research")
-    except IntegrationNotConfigured as exc:  # Keyword Planner rides on the Google Ads connection: say so, invent nothing
-        return {"keywords": [], "clusters": {}, "negative_ideas": [], "overlaps": [], "unavailable": True, "not_configured": exc.provider,
-                "errors": [{"service": "*", "error": exc.message}], "source": SourceType.NONE,
-                "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably."}
+    """Keyword research from every available source. Keyword Planner is optional: when it is missing or fails, research continues with
+    search suggestions, website and competitor terms, first-party search terms and (optionally) Tavily. Metrics are never invented."""
+    stage = "keywords"
     services = services or ctx["services"]
     names = [s["name"] for s in services]
     lp_map = website.get("landing_page_map", {}) if website else {}
     rows, errors = [], []
-    for s in services:
-        seeds = [s["name"]] + [x for x in (website or {}).get("keyword_seeds", []) if normalize_term(s["name"]) in normalize_term(x)][:2]
-        try:
-            ideas = kw.generate_ideas("", seeds,  # research runs under the configured research customer, never a client account
-                                       page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""),
-                                      city=ctx["city"])
-        except AdapterError as exc:
-            errors.append({"service": s["name"], "error": exc.kind})
+    planner = {"available": False, "reason": ""}
+    try:
+        kw = registry.get("keyword_research")
+        planner["available"] = True
+    except IntegrationNotConfigured as exc:  # Keyword Planner rides on the Google Ads connection: say so and continue without it
+        kw = None
+        planner.update(reason=exc.message, not_configured=exc.provider)
+        research_events.emit("provider_unavailable", "Keyword Planner is not available: search volume and bids will be reported as unavailable",
+                             stage=stage, level="warn", provider="keyword_planner", reason=exc.message)
+    if kw is not None:
+        for s in services:
+            seeds = [s["name"]] + [x for x in (website or {}).get("keyword_seeds", []) if normalize_term(s["name"]) in normalize_term(x)][:2]
+            try:
+                ideas = kw.generate_ideas("", seeds,  # research runs under the configured research customer, never a client account
+                                          page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""), city=ctx["city"])
+            except AdapterError as exc:
+                errors.append({"service": s["name"], "error": exc.kind})
+                research_events.emit("provider_failed", f"Keyword Planner failed for “{s['name']}” ({exc.kind}); other sources continue",
+                                     stage=stage, level="warn", provider="keyword_planner", error_kind=exc.kind)
+                continue
+            rows += ideas
+            research_events.emit("keyword_discovery", f"{len(ideas)} Keyword Planner idea(s) for “{s['name']}”", stage=stage,
+                                 provider="keyword_planner", count=len(ideas), examples=[i["keyword"] for i in ideas[:5]])
+        planner["failed_services"] = [e["service"] for e in errors]
+    disc = keyword_intel.discover(db, {**ctx, "service_names": names}, website, competitors, stage=stage)
+    first_party = disc["report"]["search_terms"].get("metrics", {})
+    no_metrics_reason = ("Keyword Planner is not available, and suggestion/web sources do not provide search volume or bids."
+                         if kw is None else "Keyword Planner did not return this keyword; its source provides no metrics.")
+    dedup: dict[str, dict] = {}
+    for r in rows:
+        k = normalize_term(r["keyword"])
+        if k in dedup:
             continue
-        rows += ideas
+        dedup[k] = {**r, "seed": r.get("seed") or "keyword_planner", "sources": [{"source": "keyword_planner", "label": "Keyword Planner"}],
+                    "metrics": keyword_intel.planner_metrics(r)}
     for comp in (competitors or {}).get("competitors", []):
         for k in comp.get("keyword_ideas", [])[:5]:
-            rows.append({"keyword": k, "avg_monthly_searches": None, "competition": None, "low_top_of_page_bid_micros": None,
-                         "high_top_of_page_bid_micros": None, "seed": f"competitor:{comp['name']}", "source": kw.source,
-                         "metrics_unavailable": ["avg_monthly_searches", "competition", "low_top_of_page_bid_micros", "high_top_of_page_bid_micros"]})
-    dedup = {}
-    for r in rows:
-        dedup.setdefault(normalize_term(r["keyword"]), r)
+            key = normalize_term(k)
+            if key not in dedup:
+                dedup[key] = {"keyword": k, **{m: None for m in keyword_intel.METRICS}, "seed": f"competitor:{comp['name']}", "source": kw.source if kw else "LIVE",
+                              "sources": [{"source": f"competitor_website:{comp['name']}", "label": "Competitor website (Keyword Planner URL seed)"}],
+                              "metrics": keyword_intel.unavailable_metrics("Idea from a competitor URL seed; metrics not attached."),
+                              "metrics_unavailable": list(keyword_intel.METRICS)}
+    for key, c in disc["candidates"].items():
+        if key in dedup:
+            known = {(x["source"], x.get("detail")) for x in dedup[key]["sources"]}
+            dedup[key]["sources"] += [x for x in c["sources"] if (x["source"], x.get("detail")) not in known]
+            continue
+        dedup[key] = {"keyword": c["keyword"], **{m: None for m in keyword_intel.METRICS}, "seed": c["sources"][0]["source"], "source": "LIVE",
+                      "sources": c["sources"], "metrics": keyword_intel.unavailable_metrics(no_metrics_reason), "service_hint": c.get("service_hint"),
+                      "metrics_unavailable": list(keyword_intel.METRICS)}
+    for key, r in dedup.items():
+        if key in first_party:
+            fp = first_party[key]
+            r["first_party"] = {**fp, "source": "google_ads_search_terms", "basis": "observed", "confidence": "account_history"}
     unsure = []
     for key, r in dedup.items():
         label, svc, why = label_keyword(r["keyword"], names, ctx["excluded"])
@@ -270,31 +324,61 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                               "label_reason": lab.reason or "AI label", "labelled_by": "ai"})
         except (ai_service.AIOutputInvalid, IntegrationNotConfigured) as exc:
             errors.append({"service": "*", "error": f"AI labelling unavailable: {exc.message} Rule-based labels were kept."})
+    brand = {x for x in normalize_term(ctx.get("business_name") or "").split() if len(x) > 3}
+    comp_names = {normalize_term(c["name"]) for c in ctx.get("competitors") or []}
+    places = [ctx.get("city") or "", *[a.get("label", "") for a in ctx.get("service_areas") or []]]
     max_bid = (daily_budget / 5) if daily_budget else None
     table = []
     for r in dedup.values():
         high = (r.get("high_top_of_page_bid_micros") or 0) / 1e6
         affordable = max_bid is None or high == 0 or high <= max_bid
-        keep = r["label"] != "IRRELEVANT" and ((r.get("avg_monthly_searches") or 0) >= 20 or r["seed"].startswith("competitor")) and affordable
-        table.append({"keyword": r["keyword"], "label": r["label"], "service": r.get("service"),
-                      "ad_group": r.get("service") if r["label"] == "SERVICE" else ("Generic" if r["label"] == "GENERIC" else None),
-                      "match_types": ["EXACT", "PHRASE"] if r["label"] != "IRRELEVANT" else [],
-                      "avg_monthly_searches": r.get("avg_monthly_searches"), "competition": r.get("competition"),
+        k_intent = keyword_intel.intent(r["keyword"], brand, comp_names)
+        score, basis = keyword_intel.relevance(r["keyword"], label=r["label"], kw_intent=k_intent, sources=r["sources"], services=names, places=places)
+        vol = r.get("avg_monthly_searches")
+        uncertainty = [] if vol is not None else ["search volume unavailable"]
+        if not r.get("high_top_of_page_bid_micros"):
+            uncertainty.append("bid estimate unavailable")
+        if vol is not None:
+            keep = r["label"] != "IRRELEVANT" and (vol >= 20 or str(r["seed"]).startswith("competitor")) and affordable
+        else:  # no volume from any source: the decision rests on fit and intent, and says so. When Keyword Planner works but did not
+            # return the keyword, ask for stronger agreement before it enters a campaign.
+            keep = r["label"] != "IRRELEVANT" and k_intent in ("transactional", "commercial") and score >= (60 if kw is not None else 40) and affordable
+        group = r.get("service") if r["label"] == "SERVICE" else ("Generic" if r["label"] == "GENERIC" else None)
+        table.append({"keyword": r["keyword"], "label": r["label"], "service": r.get("service"), "ad_group": group,
+                      "match_types": ["EXACT", "PHRASE"] if r["label"] != "IRRELEVANT" and k_intent != "informational" else [],
+                      "avg_monthly_searches": vol, "competition": r.get("competition"),
                       "low_top_of_page_bid_micros": r.get("low_top_of_page_bid_micros"),
                       "high_top_of_page_bid_micros": r.get("high_top_of_page_bid_micros"),
                       "bid_range": f"${from_micros(r.get('low_top_of_page_bid_micros')):.2f}–${high:.2f}" if high else "n/a",
                       "affordable": affordable, "selected": keep, "label_reason": r.get("label_reason"),
-                      "labelled_by": r.get("labelled_by"), "seed": r.get("seed")})
-    table.sort(key=lambda x: (x["label"] != "SERVICE", -(x["avg_monthly_searches"] or 0)))
+                      "labelled_by": r.get("labelled_by"), "seed": r.get("seed"), "intent": k_intent,
+                      "relevance_score": score, "relevance_basis": basis, "sources": r["sources"], "metrics": r["metrics"],
+                      "first_party": r.get("first_party"), "landing_page": lp_map.get(r.get("service") or "", ""),
+                      "selection_basis": "observed volume" if vol is not None else "relevance and intent (no volume data)",
+                      "uncertainty": uncertainty})
+    table.sort(key=lambda x: (x["label"] != "SERVICE", -(x["avg_monthly_searches"] or 0), -x["relevance_score"]))
     clusters = {}
     for t in table:
         if t["selected"] and t["ad_group"]:
             clusters.setdefault(t["ad_group"], []).append(t["keyword"])
     negatives = sorted({t["keyword"] for t in table if t["label"] == "IRRELEVANT"})
     overlaps = overlap_check(clusters, existing_keywords or {})
-    return {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors,
-            "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably.",
-            "source": SourceType.combine(kw.source)}
+    sources_used = sorted({x["label"] for t in table for x in t["sources"]})
+    research_events.emit("research_stored", f"{len(table)} keyword(s) stored, {sum(t['selected'] for t in table)} selected in {len(clusters)} group(s)",
+                         stage=stage, count=len(table), sources=sources_used)
+    with_volume = sum(1 for t in table if t["avg_monthly_searches"] is not None)
+    research_events.emit("evidence_validated", f"{with_volume} of {len(table)} keyword(s) have observed search volume; the rest are marked unavailable",
+                         stage=stage, observed=with_volume, total=len(table))
+    out = {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors,
+           "keyword_planner": planner, "discovery": disc["report"], "sources_used": sources_used,
+           "metrics_policy": "Search volume, competition and bids come only from Keyword Planner (Google estimates) or are unavailable. "
+                             "relevance_score is this app's fit score, not search volume. First-party clicks/conversions come from the account's own search terms.",
+           "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably.",
+           "source": SourceType.combine(kw.source if kw else None, "LIVE" if disc["candidates"] else None)}
+    if kw is None:
+        out.update(unavailable=not table, not_configured=planner.get("not_configured"),
+                   errors=errors + [{"service": "*", "error": planner["reason"]}])
+    return out
 
 
 def overlap_check(groups: dict[str, list[str]], existing: dict[str, list[str]]) -> list[dict]:
@@ -315,7 +399,7 @@ def overlap_check(groups: dict[str, list[str]], existing: dict[str, list[str]]) 
 # ------------------------------------------------------------------ orchestration
 def build_context(db: Session, business: Business) -> dict:
     acct = accounts_service.account_for_business(db, business)
-    return {"business_id": business.id, "business_name": business.name, "website_url": business.website_url,
+    return {"business_id": business.id, "client_id": business.client_id, "business_name": business.name, "website_url": business.website_url,
             "address": business.address, "city": clients_service.city_of(business), "phone": business.phone,
             "service_names": [s.name for s in clients_service.active_services(business)],
             "services": [{"name": s.name, "landing_page_url": s.landing_page_url} for s in clients_service.active_services(business)],
@@ -339,8 +423,9 @@ def run_parallel(db: Session, business: Business, *, task_id: str | None, actor_
     for r in rows.values():
         db.add(r)
     db.commit()  # audits visible as RUNNING while they execute
-    jobs = {"WEBSITE": lambda: website_audit(ctx, task_id), "GBP": lambda: gbp_audit(ctx),
-            "COMPETITOR": lambda: competitor_audit(ctx, task_id)}
+    jobs = {"WEBSITE": research_events.in_stage("website", lambda: website_audit(ctx, task_id)),
+            "GBP": research_events.in_stage("gbp", lambda: gbp_audit(ctx)),
+            "COMPETITOR": research_events.in_stage("competitors", lambda: competitor_audit(ctx, task_id))}
     results = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {k: pool.submit(fn) for k, fn in jobs.items()}
@@ -384,8 +469,12 @@ def _summary(kind: str, r: dict) -> str:
                 f"{len(r['services_without_page'])} service(s) without a page, mobile speed "
                 f"{(r['pagespeed'].get('mobile') or {}).get('performance_score', 'n/a')}")
     if kind == "GBP":
+        geo = r.get("geo") or {}
+        near = f"{(geo.get('density') or {}).get('total', 0)} nearby business(es) in the same category" if geo.get("available") else "local market data unavailable"
+        if not r.get("places_available", True):
+            return f"Google Places not configured (no ratings/reviews); {near}"
         c = r.get("client") or {}
-        return f"Rating {c.get('rating', 'n/a')} from {c.get('user_rating_count', 0)} reviews; {len(r['findings'])} finding(s)"
+        return f"Rating {c.get('rating', 'n/a')} from {c.get('user_rating_count', 0)} reviews; {len(r['findings'])} finding(s); {near}"
     if kind == "COMPETITOR":
         return "Skipped — no competitors" if r.get("skipped") else f"{len(r['competitors'])} competitor(s) analysed"
     if kind == "KEYWORD":

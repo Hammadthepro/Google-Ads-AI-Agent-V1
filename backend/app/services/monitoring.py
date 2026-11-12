@@ -183,7 +183,15 @@ def search_terms(db: Session, client_id: str, limit: int = 200) -> list[dict]:
 
 def change_events(db: Session, client_id: str) -> list[dict]:
     accts = [a.id for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client_id))]
-    rows = db.scalars(select(ChangeEvent).where(ChangeEvent.google_ads_account_id.in_(accts or ["-"])).order_by(ChangeEvent.changed_at.desc()).limit(100))
+    scope = ChangeEvent.google_ads_account_id.in_(accts or ["-"])
+    recent = list(db.scalars(select(ChangeEvent).where(scope).order_by(ChangeEvent.changed_at.desc()).limit(100)))
+    # changes made outside this app matter most (they can conflict with approved work), so they are never pushed out by the app's own writes
+    outside = list(db.scalars(select(ChangeEvent).where(scope, ChangeEvent.made_outside_app.is_(True)).order_by(ChangeEvent.changed_at.desc()).limit(100)))
+    seen, rows = set(), []
+    for r in sorted(recent + outside, key=lambda r: r.changed_at, reverse=True):
+        if r.id not in seen:
+            seen.add(r.id)
+            rows.append(r)
     return [{"resource": r.resource_name, "change": r.change_type, "user": r.user_email, "client_type": r.client_type,
              "changed_at": r.changed_at.isoformat(), "made_outside_app": r.made_outside_app, "source_type": r.source_type} for r in rows]
 

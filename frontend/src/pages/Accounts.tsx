@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
 import AccountSelector from "../components/AccountSelector";
-import { Badge, Button, Card, DataSourceBadge, dt, ErrorBox, Notice, PageHeader, Select, Spinner, StatusBadge, Table } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, DataSourceBadge, dt, ErrorBox, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
 
 export default function Accounts() {
   const { can } = useAuth();
@@ -12,6 +12,9 @@ export default function Accounts() {
   const clients = useClients();
   const link = useAction(({ id, client_id }) => api.post(`/ads-accounts/${id}/link`, { client_id: client_id || null }), [["accounts"]]);
   const sync = useAction((id) => api.post(`/ads-accounts/${id}/sync`), [["accounts"]]);
+  const allow = useAction(({ id, allowed, reason }: any) => api.put(`/ads-accounts/${id}/write-allowlist`, { allowed, reason }), [["accounts"], ["write-readiness"]]);
+  const [allowFor, setAllowFor] = useState<any>(null);
+  const [reason, setReason] = useState("");
   const [clientId, setClientId] = useState("");
   const structure = useQuery({ queryKey: ["structure", clientId], enabled: !!clientId, queryFn: () => api.get(`/clients/${clientId}/structure`) });
   const linkable = (accounts.data ?? []).filter((a: any) => !a.is_manager);  // manager accounts hold no campaigns and are listed separately above
@@ -22,7 +25,7 @@ export default function Accounts() {
         />
       <Notice tone="blue">Accounts come from your connected Google Ads login (configure it on the <a className="underline" href="/integrations">Integrations page</a>). The app stays read-only until real writes are explicitly authorized.</Notice>
       <AccountSelector canRefresh={can("clients.edit")} />
-      <ErrorBox error={link.error || sync.error} />
+      <ErrorBox error={link.error || sync.error || allow.error} />
       <Card title="Link accounts to clients">
         {accounts.isLoading ? <Spinner /> : (
           <Table rows={linkable} empty="No client accounts to link yet. Manager accounts cannot be linked to a client." columns={[
@@ -33,13 +36,23 @@ export default function Accounts() {
               <Select value={a.client_id ?? ""} onChange={(e) => link.mutate({ id: a.id, client_id: e.target.value })}
                 options={[{ value: "", label: "— not linked —" }, ...clientOptions(clients.data)]} />) : nameOf(a.client_id) },
             { key: "auto_tagging_enabled", label: "Auto-tagging" },
-            { key: "writes_allowed", label: "Write allowlist", render: (a) => a.writes_allowed ? <Badge tone="red">allowed</Badge> : <Badge>not allowed</Badge> },
+            { key: "writes_allowed", label: "Write allowlist", render: (a) => (
+              <div className="flex items-center gap-2">{a.writes_allowed ? <Badge tone="amber">allowed</Badge> : <Badge>not allowed</Badge>}
+                {can("real_writes.authorize") && (a.writes_allowed
+                  ? <Button size="sm" onClick={() => allow.mutate({ id: a.id, allowed: false, reason: "" })}>Remove</Button>
+                  : a.status === "ENABLED" && <Button size="sm" onClick={() => { setReason(""); setAllowFor(a); }}>Allow writes…</Button>)}</div>) },
             { key: "integration_mode", label: "Mode", render: (a) => <Badge tone="violet">{a.integration_mode}</Badge> },
             { key: "last_synced_at", label: "Last sync", render: (a) => dt(a.last_synced_at) },
             { key: "act", label: "", render: (a) => a.client_id && <Button size="sm" onClick={() => sync.mutate(a.id)}>Sync (read)</Button> },
           ]} />
         )}
       </Card>
+      <ConfirmDialog open={!!allowFor} title={`Allow writes to ${allowFor?.descriptive_name || allowFor?.customer_id_display || ""}?`} tone="danger" confirmLabel="Allow writes"
+        body={<>This adds the account to the write allowlist. It changes nothing in Google Ads: every change still needs its own approval, the deployment
+          permit, execution mode and the Super Admin key. The reason is recorded in the activity log.</>}
+        onCancel={() => setAllowFor(null)} onConfirm={() => allow.mutate({ id: allowFor.id, allowed: true, reason }, { onSuccess: () => setAllowFor(null) })}>
+        <Textarea aria-label="Reason" rows={3} placeholder="Why this account may receive approved changes (20+ characters)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </ConfirmDialog>
       <Card title="Account structure" actions={<div className="w-64"><Select value={clientId} onChange={(e) => setClientId(e.target.value)} options={[{ value: "", label: "Choose a client…" }, ...clientOptions(clients.data)]} /></div>}>
         {!clientId ? <Notice>Choose a client to see campaigns → ad groups → ads and keywords.</Notice> : structure.isLoading ? <Spinner /> : (
           <div className="space-y-4">

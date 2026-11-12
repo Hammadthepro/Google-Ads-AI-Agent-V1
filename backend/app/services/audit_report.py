@@ -28,7 +28,7 @@ from app.core.errors import Conflict, IntegrationNotConfigured, NotFound
 from app.core.util import canonical_json, normalize_term
 from app.db.session import SessionLocal, session_scope
 from app.models import AuditReport, Business, Client
-from app.services import audits, clients_service, crawler_service
+from app.services import audits, clients_service, crawler_service, research_events
 
 SECTIONS = [("client", "Client & business"), ("website", "Website & landing pages"), ("gbp", "Google Business Profile"),
             ("competitors", "Competitor analysis"), ("keywords", "Keyword research")]
@@ -338,6 +338,27 @@ def audit_gbp(biz: Business, ctx: dict, g: dict) -> list[dict]:
                            ("assets", "Location assets in Google Ads")):
             c.na(fid, "A. Profile", label, "No profile exists yet; becomes applicable once one is created.")
         return c.items
+    if g and g.get("places_available") is False:  # free sources only: say exactly what can and cannot be known
+        geo, pres = g.get("geo") or {}, g.get("presence")
+        c.unavailable("found", "A. Profile", "Google Business Profile details (rating, reviews, hours, categories)",
+                      "Google Places is not configured; these fields are only available from Google.", needs="integration",
+                      rec="Configure Google Places (paid) on the Integrations page to audit the profile, or review it manually in Google Maps.")
+        if pres:
+            c.add("osm_presence", "A. Profile", "Business listed on OpenStreetMap", "PASS", "VERIFIED",
+                  f"{pres['name']}" + (f" — {pres['address']}" if pres.get("address") else ""), source="OpenStreetMap", weight=1, sim=False)
+        elif geo.get("available"):
+            c.add("osm_presence", "A. Profile", "Business listed on OpenStreetMap", "INFO", "VERIFIED",
+                  "Not found on OpenStreetMap near the business location. Many small businesses are missing there; this is not a defect.",
+                  source="OpenStreetMap", sim=False)
+        if geo.get("available"):
+            d = geo["density"]
+            c.add("market_density", "E. Local market", "Same-category businesses nearby", "INFO", "VERIFIED",
+                  f"{d['total']} listing(s) within {geo['radius_m'] / 1609:.0f} miles" + "".join(f"; {v} {k.replace('_', ' ')}" for k, v in d.items() if k != "total") +
+                  ". A lower bound: map coverage of small businesses is incomplete.",
+                  source=" + ".join(x["provider"] for x in geo.get("sources", [])) or "OpenStreetMap", sim=False)
+        else:
+            c.unavailable("market_density", "E. Local market", "Same-category businesses nearby", geo.get("reason") or "No map data.", needs="integration")
+        return c.items
     if not g or g.get("error") or not g.get("client"):
         c.add("found", "A. Profile", "Profile found on Google Maps", "FAIL", "UNAVAILABLE" if (g or {}).get("error") else "VERIFIED",
               (g or {}).get("error") or "No matching listing found by name, website and location.", source="Google Places", weight=3,
@@ -418,8 +439,27 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
               source="Google Places text search", sim=registry.get("places").source == "MOCK")
     except AdapterError as exc:
         c.unavailable("discovered", "A. Identification", "Additional local competitors discovered", f"Places search failed ({exc.kind}).", needs="manual")
-    except IntegrationNotConfigured as exc:
-        c.unavailable("discovered", "A. Identification", "Additional local competitors discovered", exc.message, needs="integration")
+    except IntegrationNotConfigured:
+        geo = (g or {}).get("geo") or {}
+        have = {normalize_term(x["name"]) for x in provided} | {normalize_term(biz.name)}
+        near = [p for p in geo.get("nearby", []) if normalize_term(p["name"]) not in have and not p.get("supplied_competitor")]
+        suggested = [{"name": p["name"], "website": p.get("website", ""), "distance_km": p["distance_km"], "source": p["sources"][0]["source"],
+                      "basis": "map listing in the same category"} for p in near][:7]
+        if geo.get("available"):
+            c.add("discovered", "A. Identification", "Additional local competitors discovered", "INFO", "VERIFIED",
+                  f"{len(near)} '{ctx['category']}' listing(s) within {geo['radius_m'] / 1609:.0f} miles on the map sources: "
+                  f"{', '.join(s_['name'] for s_ in suggested[:5]) or 'none'}. Coverage is incomplete for small businesses.",
+                  source=" + ".join(s_["provider"] for s_ in geo.get("sources", [])) or "OpenStreetMap", sim=False)
+        else:
+            c.unavailable("discovered", "A. Identification", "Additional local competitors discovered",
+                          geo.get("reason") or "Google Places is not configured and the map sources returned nothing.", needs="integration")
+    web = [w_ for w_ in (comp or {}).get("web_candidates", []) if normalize_term(w_["name"]) not in {normalize_term(s_["name"]) for s_ in suggested}]
+    if web:
+        suggested += [{"name": w_["name"], "website": w_["website_url"], "source": "tavily", "basis": "web search result (not verified)",
+                       "evidence_url": w_["evidence"]["url"]} for w_ in web][:5]
+        c.add("web_discovered", "A. Identification", "Competitors suggested by web search", "INFO", "ESTIMATED",
+              f"{len(web)} candidate(s) from web results, not verified: {', '.join(w_['name'] for w_ in web[:5])}.", source="Tavily web search", sim=False,
+              rec="Confirm these are real competitors before adding them to the profile.")
     c.unavailable("advertisers", "A. Identification", "Who is advertising on Google Search / ranking organically",
                   "Needs the Google Ads Transparency Center (https://adstransparency.google.com) or a paid tool (Semrush/Ahrefs); neither is connected.", needs="manual",
                   rec="Check the Ads Transparency Center for each competitor and record observed ads.")
@@ -505,7 +545,8 @@ def intent_of(kw: str, brand_words: set[str], comp_names: set[str]) -> str:
 
 def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> tuple[list[dict], dict]:
     c = Collector("keywords", simulated_default=(kw or {}).get("source") == "MOCK")
-    src = f"Keyword Planner ({(kw or {}).get('source', 'MOCK')})"
+    planner_ok = ((kw or {}).get("keyword_planner") or {}).get("available", True)
+    src = ", ".join((kw or {}).get("sources_used") or []) or f"Keyword Planner ({(kw or {}).get('source', 'MOCK')})"
     sim = (kw or {}).get("source") == "MOCK"
     rows = (kw or {}).get("keywords", [])
     lp = (w or {}).get("landing_page_map", {}) or {}
@@ -518,12 +559,20 @@ def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> t
     for r in rows:
         intent = intent_of(r["keyword"], brand, comp_names)
         vol = r.get("avg_monthly_searches")
-        has_metrics = bool(vol) or bool(r.get("high_top_of_page_bid_micros"))
+        has_metrics = vol is not None or bool(r.get("high_top_of_page_bid_micros"))
         irrelevant = r["label"] == "IRRELEVANT"
+        rel = r.get("relevance_score")
         if irrelevant or intent in ("informational", "navigational"):
             prio, why = "EXCLUDED", "Irrelevant or informational intent" if not irrelevant else r.get("label_reason", "Irrelevant")
         elif intent in ("brand", "competitor"):
             prio, why = "LOW", f"{intent.title()} term: run separately, not in main lead-gen ad groups"
+        elif vol is None and rel is not None:  # no volume from any source: priority from fit and intent, stated as such
+            if r["label"] == "SERVICE" and rel >= 70 and r.get("affordable", True):
+                prio, why = "HIGH", f"Strong fit (relevance {rel}/100: {', '.join(r.get('relevance_basis') or [])}); search volume unavailable"
+            elif rel >= 45:
+                prio, why = "MEDIUM", f"Relevant (relevance {rel}/100); search volume unavailable, validate before scaling"
+            else:
+                prio, why = "LOW", f"Weak fit (relevance {rel}/100); search volume unavailable"
         elif r["label"] == "SERVICE" and intent in ("transactional", "local", "service_specific") and (vol or 0) >= 20 and r.get("affordable", True):
             prio, why = "HIGH", "Matches a service with commercial/transactional intent and measurable volume"
         elif r["label"] in ("SERVICE", "GENERIC") and (vol or 0) >= 20:
@@ -540,7 +589,10 @@ def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> t
                        "match_type": "EXACT + PHRASE" if prio in ("HIGH", "MEDIUM") else ("PHRASE" if prio == "LOW" else "—"),
                        "landing_page": lp.get(r.get("service") or "", "") or next((s_["landing_page_url"] for s_ in ctx["services"] if s_["name"] == r.get("service")), ""),
                        "priority": prio, "negative_recommendation": "Add as negative" if prio == "EXCLUDED" else "",
-                       "source": r.get("seed", "")[:40] if str(r.get("seed", "")).startswith("competitor") else "Keyword Planner idea", "evidence": "ESTIMATED",
+                       "source": " · ".join(sorted({x["label"] for x in r.get("sources") or []}))[:120] or
+                                 (r.get("seed", "")[:40] if str(r.get("seed", "")).startswith("competitor") else "Keyword Planner idea"),
+                       "evidence": "ESTIMATED" if vol is not None else "AI_GENERATED" if not r.get("sources") else "VERIFIED",
+                       "relevance_score": rel, "metrics": r.get("metrics"), "first_party": r.get("first_party"),
                        "simulated": sim, "notes": why})
     # unvalidated variations (hypotheses): never given metrics
     have = {normalize_term(x["keyword"]) for x in report}
@@ -584,9 +636,15 @@ def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> t
     c.add("high", "G. Prioritisation", "High-priority keywords available", "PASS" if high >= 5 else "WARN" if high else "FAIL", "ESTIMATED",
           f"{high} high · {counts.get('MEDIUM', 0)} medium · {counts.get('LOW', 0)} low · {counts.get('EXCLUDED', 0)} excluded.", source=src, weight=3, sim=sim)
     metrics = sum(1 for r in report if r["monthly_searches"] is not None)
-    c.add("metrics", "C. Evaluation", "Volume/bid data available for the keywords", "PASS" if metrics >= 0.5 * max(len(report), 1) else "WARN", "VERIFIED" if not sim else "ESTIMATED",
-          f"{metrics} of {len(report)} keywords have Keyword Planner metrics; the rest are labelled unavailable, never estimated.", source=src, weight=2, sim=sim,
-          rec="Connect Google Ads (read-only) to pull real Keyword Planner data." if sim else "")
+    if planner_ok:
+        c.add("metrics", "C. Evaluation", "Volume/bid data available for the keywords", "PASS" if metrics >= 0.5 * max(len(report), 1) else "WARN", "VERIFIED" if not sim else "ESTIMATED",
+              f"{metrics} of {len(report)} keywords have Keyword Planner metrics; the rest are labelled unavailable, never estimated.", source=src, weight=2, sim=sim,
+              rec="Connect Google Ads (read-only) to pull real Keyword Planner data." if sim else "")
+    else:
+        c.unavailable("metrics", "C. Evaluation", "Search volume and bid estimates",
+                      "Keyword Planner is not available to this Google Cloud project, and the free sources (suggestions, websites, web search) do not provide "
+                      "volume or bids. Keywords are prioritised by relevance and intent instead; every metric is shown as unavailable.",
+                      needs="integration", rec="Apply for the Google Ads API access that Keyword Planner requires, then configure the research customer ID.")
     c.unavailable("avg_cpc", "C. Evaluation", "Average CPC", "Keyword Planner returns top-of-page bids, not average CPC; actual CPC appears only after campaigns run.", needs="manual")
     ov = (kw or {}).get("overlaps", [])
     c.add("overlap", "E. Grouping", "No keyword overlap between ad groups", "PASS" if not ov else "WARN", "VERIFIED", f"{len(ov)} overlap(s)." if ov else "None.", source="Audit rules", weight=1,
@@ -600,14 +658,22 @@ def audit_keywords(biz: Business, ctx: dict, kw: dict, w: dict, comp: dict) -> t
     mapped = sum(1 for s_ in ctx["service_names"] if lp.get(s_))
     c.add("mapping", "E. Grouping", "Keywords mapped to dedicated landing pages", "PASS" if mapped == len(ctx["service_names"]) else "WARN" if mapped else "FAIL", "VERIFIED",
           f"{mapped} of {len(ctx['service_names'])} services have a dedicated landing page.", source="Website audit", weight=2, sim=False, rec="Create the missing service pages.")
+    disc = (kw or {}).get("discovery") or {}
+    sug = disc.get("suggestions") or {}
+    failed = "; ".join(f"{k}: {v}" for k, v in (sug.get("failed") or {}).items())
     c.add("sources", "B. Discovery", "Research sources used", "INFO", "VERIFIED",
-          "Used: client service list, website headings, competitor websites, Keyword Planner ideas" + (", pasted competitor ads" if ctx["competitor_ads_text"].strip() else "") +
-          ". Not connected: Google Autocomplete/Related searches/People Also Ask, Google Trends, Semrush/Ahrefs, forums, existing search-terms report (needs account history).",
+          "Used: " + (", ".join((kw or {}).get("sources_used") or []) or "none") + (", pasted competitor ads" if ctx["competitor_ads_text"].strip() else "") + "." +
+          (f" Unavailable: {failed}." if failed else "") +
+          ("" if (disc.get("search_terms") or {}).get("available") else " No Google Ads search-term history for this client yet.") +
+          ("" if (disc.get("web") or {}).get("used") else " Web search (Tavily) not used: " + ((disc.get("web") or {}).get("reason") or "not configured") + "."),
           source="Audit configuration", sim=False)
-    c.unavailable("trends", "B. Discovery", "Seasonal trends, autocomplete, People Also Ask, third-party databases", "Sources not connected to this app.", needs="manual",
-                  rec="Check Google Trends and autocomplete manually for seasonality and customer phrasing.")
-    c.add("ai_note", "B. Discovery", "AI used only for labelling and variations", "INFO", "AI_GENERATED",
-          "AI/rules classify intent and propose variations; every metric comes from Keyword Planner or is marked unavailable.", source="Audit method", sim=False)
+    c.unavailable("trends", "B. Discovery", "Seasonal trends and third-party keyword databases",
+                  "Google Trends has no generally available public API (its official API is in limited alpha), so seasonality is not measured; "
+                  "paid databases (Semrush, Ahrefs) are not connected.", needs="manual",
+                  rec="Check Google Trends manually for seasonality before setting monthly budgets.")
+    c.add("ai_note", "B. Discovery", "How keywords were judged", "INFO", "AI_GENERATED",
+          "Rules (and AI only for ambiguous labels) classify intent. relevance_score is this app's fit score, not search volume. "
+          "Every volume, competition and bid figure comes from Keyword Planner or is marked unavailable.", source="Audit method", sim=False)
     return c.items, {"columns": ["keyword", "service", "intent", "monthly_searches", "avg_cpc", "competition", "top_of_page_bid", "target_location",
                                  "match_type", "landing_page", "priority", "negative_recommendation", "source", "evidence", "notes"],
                      "rows": report, "negatives": neg_final, "negative_conflicts": conflicts, "counts": dict(counts)}
@@ -701,80 +767,101 @@ def start(db: Session, biz: Business, client: Client, user_id: str | None) -> Au
     snap = snapshot(biz, client)
     rep = AuditReport(client_id=client.id, business_id=biz.id, version=(prev.version + 1) if prev else 1, previous_report_id=prev.id if prev else None,
                       status="RUNNING", steps=[{"key": k, "name": n, "status": "PENDING", "summary": ""} for k, n in
-                                               [("client", "1 · Client & business"), ("website", "2 · Website & landing pages"), ("gbp", "3 · Google Business Profile"),
-                                                ("competitors", "4 · Competitor analysis"), ("keywords", "5 · Keyword research"), ("report", "Scoring, recommendations & summary")]],
+                                               [("client", "1 · Client & business"), ("website", "2 · Website & landing pages"), ("gbp", "3 · Business presence & local market"),
+                                                ("competitors", "4 · Competitor analysis"), ("keywords", "5 · Keyword research & search intent"), ("report", "Scoring, recommendations & summary")]],
                       input_snapshot=snap, input_hash=_hash(snap), created_by_id=user_id, source_type="NONE")
     db.add(rep)
     db.flush()
     return rep
 
 
+_STEP_EVENT = {"RUNNING": ("stage_started", "info"), "DONE": ("stage_completed", "info"), "FAILED": ("stage_failed", "error"), "SKIPPED": ("stage_skipped", "warn")}
+
+
 def _step(report_id: str, key: str, status: str, summary: str = "") -> None:
     with session_scope() as db:
         r = db.get(AuditReport, report_id)
+        name = next((s["name"] for s in r.steps if s["key"] == key), key)
         r.steps = [({**s, "status": status, "summary": summary, **({"at": clock.now().isoformat()} if status != "RUNNING" else {})} if s["key"] == key else s) for s in r.steps]
+    kind, level = _STEP_EVENT.get(status, ("note", "info"))
+    research_events.emit(kind, name.split(" · ", 1)[-1], stage=key, level=level, summary=summary[:300] or None)
 
 
 def run(report_id: str) -> str:
-    """Runs all five audits, stores findings against the client's ID, scores, compares with the previous report."""
+    """Runs all five audits, stores findings against the client's ID, scores, compares with the previous report.
+    Every real step is recorded as a research event, so the live view can be rebuilt after a refresh."""
     db = SessionLocal()
+    rep = db.get(AuditReport, report_id)
     try:
-        rep = db.get(AuditReport, report_id)
-        biz, client = db.get(Business, rep.business_id), db.get(Client, rep.client_id)
-        ctx = audits.build_context(db, biz)
-        try:
-            _step(rep.id, "client", "RUNNING")
-            _step(rep.id, "website", "RUNNING")
-            _step(rep.id, "gbp", "RUNNING")
-            _step(rep.id, "competitors", "RUNNING")
-            done = {}
-
-            def on_done(kind, res, summary):
-                key = {"WEBSITE": "website", "GBP": "gbp", "COMPETITOR": "competitors"}[kind]
-                done[key] = res
-                _step(rep.id, key, "FAILED" if res.get("error") else "DONE", summary)
-            par = audits.run_parallel(db, biz, task_id=None, actor_id=rep.created_by_id, on_done=on_done)
-            w, g, comp = par["website"], par["gbp"], par["competitor"]
-            _step(rep.id, "keywords", "RUNNING")
-            budget = (biz.monthly_budget_usd or 0) / 30.4 or None
-            kw = audits.keyword_research(db, ctx, w if not w.get("error") else {}, comp, None, daily_budget=budget)
-            audits.save_keyword_audit(db, biz, None, rep.created_by_id, kw)
-            _step(rep.id, "keywords", "DONE", audits._summary("KEYWORD", kw))
-            db.commit()
-            sections = {}
-            f1 = audit_client(biz, client, ctx, kw, w)
-            _step(rep.id, "client", "DONE", f"{len(f1)} checks")
-            f2 = audit_website(biz, ctx, w)
-            f3 = audit_gbp(biz, ctx, g)
-            f4, suggested = audit_competitors(biz, ctx, comp, g, w)
-            f5, kwrep = audit_keywords(biz, ctx, kw, w, comp)
-            for key, items in (("client", f1), ("website", f2), ("gbp", f3), ("competitors", f4), ("keywords", f5)):
-                sections[key] = {"title": dict(SECTIONS)[key], "findings": items, **score(items)}
-            sections["competitors"]["suggested_competitors"] = suggested
-            sections["keywords"]["report"] = kwrep
-            scores = {k: {kk: v[kk] for kk in ("score", "checks_scored", "checks_unavailable", "checks_not_applicable", "coverage")} for k, v in sections.items()}
-            have = {k: v["score"] for k, v in scores.items() if v["score"] is not None}
-            tw = sum(OVERALL_WEIGHTS[k] for k in have)
-            scores["overall"] = {"score": round(sum(OVERALL_WEIGHTS[k] * s_ for k, s_ in have.items()) / tw) if tw else None,
-                                 "sections_scored": sorted(have), "criteria": SCORING_CRITERIA, "label": readiness(round(sum(OVERALL_WEIGHTS[k] * s_ for k, s_ in have.items()) / tw) if tw else None)}
-            all_items = [i for v in sections.values() for i in v["findings"]]
-            recs = recommendations(all_items)
-            summary = build_summary(biz, client, ctx, sections, scores, recs, kwrep, w, g, comp, suggested)
-            prev = db.get(AuditReport, rep.previous_report_id) if rep.previous_report_id else None
-            changes = compare(prev, all_items, scores) if prev and prev.status == "COMPLETED" else {"first_audit": True}
-            rep.sections, rep.scores, rep.recommendations, rep.summary, rep.changes = sections, scores, recs, summary, changes
-            rep.source_type = "LIVE" if all(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else ("MIXED" if any(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else "NONE")
-            rep.status, rep.finished_at = "COMPLETED", clock.now()
-            db.commit()
-            _step(rep.id, "report", "DONE", f"Overall readiness {scores['overall']['score']}/100")
-        except Exception as exc:  # noqa: BLE001 - record, never leave a report RUNNING
-            db.rollback()
-            rep = db.get(AuditReport, report_id)
-            rep.status, rep.error, rep.finished_at = "FAILED", f"{type(exc).__name__}: {str(exc)[:400]}", clock.now()
-            db.commit()
-        return rep.status
+        with research_events.bind(report_id, client_id=rep.client_id, business_id=rep.business_id):
+            return _run(db, report_id)
     finally:
+        research_events.forget(report_id)
         db.close()
+
+
+def _run(db, report_id: str) -> str:
+    rep = db.get(AuditReport, report_id)
+    biz, client = db.get(Business, rep.business_id), db.get(Client, rep.client_id)
+    research_events.emit("audit_started", f"Research started for {biz.name}", business=biz.name, website=biz.website_url or None,
+                         city=clients_service.city_of(biz) or None, services=[s.name for s in clients_service.active_services(biz)][:12])
+    ctx = audits.build_context(db, biz)
+    try:
+        _step(rep.id, "client", "RUNNING")
+        _step(rep.id, "website", "RUNNING")
+        _step(rep.id, "gbp", "RUNNING")
+        _step(rep.id, "competitors", "RUNNING")
+        done = {}
+
+        def on_done(kind, res, summary):
+            key = {"WEBSITE": "website", "GBP": "gbp", "COMPETITOR": "competitors"}[kind]
+            done[key] = res
+            _step(rep.id, key, "FAILED" if res.get("error") else "DONE", summary)
+        par = audits.run_parallel(db, biz, task_id=None, actor_id=rep.created_by_id, on_done=on_done)
+        w, g, comp = par["website"], par["gbp"], par["competitor"]
+        _step(rep.id, "keywords", "RUNNING")
+        budget = (biz.monthly_budget_usd or 0) / 30.4 or None
+        kw = audits.keyword_research(db, ctx, w if not w.get("error") else {}, comp, None, daily_budget=budget)
+        audits.save_keyword_audit(db, biz, None, rep.created_by_id, kw)
+        _step(rep.id, "keywords", "DONE", audits._summary("KEYWORD", kw))
+        db.commit()
+        sections = {}
+        f1 = audit_client(biz, client, ctx, kw, w)
+        _step(rep.id, "client", "DONE", f"{len(f1)} checks")
+        f2 = audit_website(biz, ctx, w)
+        f3 = audit_gbp(biz, ctx, g)
+        f4, suggested = audit_competitors(biz, ctx, comp, g, w)
+        f5, kwrep = audit_keywords(biz, ctx, kw, w, comp)
+        for key, items in (("client", f1), ("website", f2), ("gbp", f3), ("competitors", f4), ("keywords", f5)):
+            sections[key] = {"title": dict(SECTIONS)[key], "findings": items, **score(items)}
+        sections["competitors"]["suggested_competitors"] = suggested
+        sections["keywords"]["report"] = kwrep
+        scores = {k: {kk: v[kk] for kk in ("score", "checks_scored", "checks_unavailable", "checks_not_applicable", "coverage")} for k, v in sections.items()}
+        have = {k: v["score"] for k, v in scores.items() if v["score"] is not None}
+        tw = sum(OVERALL_WEIGHTS[k] for k in have)
+        scores["overall"] = {"score": round(sum(OVERALL_WEIGHTS[k] * s_ for k, s_ in have.items()) / tw) if tw else None,
+                             "sections_scored": sorted(have), "criteria": SCORING_CRITERIA, "label": readiness(round(sum(OVERALL_WEIGHTS[k] * s_ for k, s_ in have.items()) / tw) if tw else None)}
+        all_items = [i for v in sections.values() for i in v["findings"]]
+        recs = recommendations(all_items)
+        summary = build_summary(biz, client, ctx, sections, scores, recs, kwrep, w, g, comp, suggested)
+        prev = db.get(AuditReport, rep.previous_report_id) if rep.previous_report_id else None
+        changes = compare(prev, all_items, scores) if prev and prev.status == "COMPLETED" else {"first_audit": True}
+        rep.sections, rep.scores, rep.recommendations, rep.summary, rep.changes = sections, scores, recs, summary, changes
+        rep.source_type = "LIVE" if all(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else ("MIXED" if any(not i.get("simulated") for i in all_items if i["status"] in CREDIT) else "NONE")
+        rep.status, rep.finished_at = "COMPLETED", clock.now()
+        db.commit()
+        _step(rep.id, "report", "DONE", f"Overall readiness {scores['overall']['score']}/100")
+        research_events.emit("audit_completed", "Research complete", overall=scores["overall"]["score"], findings=len(all_items))
+    except Exception as exc:  # noqa: BLE001 - record, never leave a report RUNNING
+        db.rollback()
+        rep = db.get(AuditReport, report_id)
+        rep.status, rep.error, rep.finished_at = "FAILED", f"{type(exc).__name__}: {str(exc)[:400]}", clock.now()
+        for st in rep.steps:
+            if st["status"] in ("RUNNING", "PENDING"):
+                _step(rep.id, st["key"], "FAILED" if st["status"] == "RUNNING" else "SKIPPED", "Stopped because the audit failed")
+        db.commit()
+        research_events.emit("audit_failed", "Research stopped", level="error", error=rep.error)
+    return rep.status
 
 
 def compare(prev: AuditReport, items: list[dict], scores: dict) -> dict:

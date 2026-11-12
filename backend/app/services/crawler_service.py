@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from lxml import etree
 
 from app.adapters import registry
+from app.services import research_events
 from app.adapters.crawler import USER_AGENT
 from app.core.config import get_settings
 
@@ -108,10 +109,13 @@ def crawl(start_url: str, *, max_pages: int | None = None, max_depth: int | None
         seen.add(url)
         if not rp.can_fetch(USER_AGENT, url):
             blocked.append(url)
+            research_events.emit("crawl_blocked", url, level="warn", url=url, reason="disallowed by robots.txt")
             continue
+        research_events.emit("url_crawling", url, url=url, depth=depth, host=host)
         res = adapter.fetch(url)
         if not res.ok:
             errors.append({"url": url, "status": res.status, "error": res.error})
+            research_events.emit("page_failed", url, level="warn", url=url, status=res.status, error=str(res.error or "")[:200])
             continue
         page = parse_page(res.text, res.final_url)
         if page["word_count"] < 60:  # likely a JS-rendered site: try Playwright (live mode only)
@@ -122,6 +126,10 @@ def crawl(start_url: str, *, max_pages: int | None = None, max_depth: int | None
         page["depth"] = depth
         page["status"] = res.status
         pages.append(page)
+        research_events.emit("page_extracted", page.get("title") or url, url=url, page_title=(page.get("title") or "")[:160],
+                             h1=(page.get("h1") or [""])[0][:160], headings=[h[:80] for h in (page.get("h2") or [])[:6]],
+                             words=page.get("word_count"), links=len(page.get("internal_links") or []),
+                             rendered=page.get("rendered_with") == "playwright")
         if depth < max_depth:
             for link in page["internal_links"]:
                 if link not in seen:

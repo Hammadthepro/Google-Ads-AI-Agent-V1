@@ -11,7 +11,7 @@ from app.api.deps import current_user, require
 from app.core.errors import NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models import AuditReport, Business, Client, User
-from app.services import activity, audit_report, auth_service, client_profile, clients_service
+from app.services import activity, audit_report, auth_service, client_profile, clients_service, research_events
 
 router = APIRouter(tags=["client profiles"])
 
@@ -90,6 +90,17 @@ def get_report(report_id: str, user: User = Depends(require("clients.view")), db
     b = db.get(Business, r.business_id)
     cur = audit_report._hash(audit_report.snapshot(b, b.client)) if b else None
     return audit_report.serialize(r, current_profile_hash=cur)
+
+
+@router.get("/audit-reports/{report_id}/events")
+def report_events(report_id: str, after: int = 0, limit: int = 500, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The live research record of one audit, in order. Poll with `after` = the last `seq` received; the full history is always available,
+    so the live view recovers after a refresh. `done` is true once the audit has finished (completed or failed)."""
+    r = audit_report.get_for_user(db, report_id)
+    auth_service.require_client_access(db, user, r.client_id)
+    events = research_events.list_events(db, report_id, after=after, limit=limit)
+    return {"report_id": r.id, "status": r.status, "steps": r.steps, "done": r.status != "RUNNING", "events": events,
+            "last_seq": events[-1]["seq"] if events else after}
 
 
 @router.get("/audit-reports/{report_id}/keywords.csv", response_class=PlainTextResponse)

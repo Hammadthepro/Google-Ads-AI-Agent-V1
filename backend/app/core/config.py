@@ -73,6 +73,8 @@ class Settings(BaseSettings):
 
     GOOGLE_PLACES_API_KEY: str = ""
     PAGESPEED_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
+    GEOAPIFY_API_KEY: str = ""
 
     # AI
     GROQ_API_KEY: str = ""

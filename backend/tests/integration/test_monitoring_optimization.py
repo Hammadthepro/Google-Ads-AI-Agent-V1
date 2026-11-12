@@ -176,3 +176,28 @@ def test_learning_loop_playbook_feedback_and_regression():
     plans = admin.get("/plans").json()
     assert plans and plans[0]["draft_ai"]["prompt"].startswith("draft_")
     assert plans[0]["playbook_rule_ids"]
+
+
+def test_changes_made_outside_the_app_are_never_pushed_out_by_the_apps_own_writes():
+    from datetime import timedelta
+
+    from app.core import clock
+    from app.db.session import session_scope
+    from app.models import ChangeEvent, Client, GoogleAdsAccount
+    from app.services import monitoring
+    with session_scope() as db:
+        client = db.scalar(select(Client).where(Client.name == "Northside Home Services"))
+        acct = db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client.id))
+        ids = []
+        for i in range(120):  # many newer changes made by the app itself
+            e = ChangeEvent(google_ads_account_id=acct.id, external_id=f"regression-outside-{i}", resource_name=f"customers/x/campaigns/{i}", change_type="UPDATE", user_email="api@app",
+                            client_type="GOOGLE_ADS_API", changed_at=clock.now() + timedelta(minutes=i + 1), made_outside_app=False, source_type="MOCK")
+            db.add(e)
+            ids.append(e)
+        db.flush()
+        try:
+            out = monitoring.change_events(db, client.id)
+            assert any(c["made_outside_app"] for c in out)
+        finally:
+            for e in ids:
+                db.delete(e)

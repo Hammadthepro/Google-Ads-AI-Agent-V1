@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAction } from "../lib/hooks";
+import { LiveResearch } from "../components/research/LiveResearch";
 import { Badge, Button, Card, cx, dt, EmptyState, ErrorBox, Notice, PageHeader, Spinner, Stat, Tabs } from "../components/ui";
 
 const EVIDENCE: Record<string, { label: string; tone: string; tip: string }> = {
@@ -107,21 +108,6 @@ function KeywordReport({ rep, reportId }: { rep: any; reportId: string }) {
   );
 }
 
-function Steps({ steps }: { steps: any[] }) {
-  return (
-    <ol className="space-y-3" aria-label="Audit progress">
-      {steps.map((s) => (
-        <li key={s.key} className="flex gap-3">
-          <span className={cx("mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-            s.status === "DONE" ? "bg-emerald-100 text-emerald-700" : s.status === "RUNNING" ? "bg-brand-100 text-brand-700" : s.status === "FAILED" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-400")}>
-            {s.status === "DONE" ? "✓" : s.status === "RUNNING" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand-300 border-t-brand-600" /> : s.status === "FAILED" ? "!" : "·"}</span>
-          <div><div className="text-sm font-medium text-slate-800">{s.name} <span className="text-xs font-normal text-slate-400">{s.status}</span></div>
-            {s.summary && <div className="text-sm text-slate-600">{s.summary}</div>}</div>
-        </li>))}
-    </ol>
-  );
-}
-
 export function AuditReportPage() {
   const { id } = useParams();
   const q = useQuery({ queryKey: ["audit-report", id], queryFn: () => api.get(`/audit-reports/${id}`),
@@ -138,7 +124,12 @@ export function AuditReportPage() {
       <ErrorBox error={rerun.error} />
       {r.profile_changed_since && <Notice tone="amber">The client profile was edited after this audit. These findings reflect the earlier information — run a new audit to refresh them.</Notice>}
       {r.status === "FAILED" && <Notice tone="red">{r.error}</Notice>}
-      {(running || r.status === "FAILED") && <Card title="Progress"><Steps steps={r.steps} /></Card>}
+      {(running || r.status === "FAILED") && <LiveResearch reportId={r.id} running={running} />}
+      {r.status === "COMPLETED" && (
+        <details className="rounded-lg border border-slate-200 bg-white">
+          <summary className="cursor-pointer px-4 py-2.5 text-sm font-medium text-slate-800">How this research was done: replay every step, source and limitation</summary>
+          <div className="border-t border-slate-100 p-4"><LiveResearch reportId={r.id} running={false} /></div>
+        </details>)}
       {r.status === "COMPLETED" && (<>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
           <ScoreCard label="Overall client readiness" s={r.scores.overall} />

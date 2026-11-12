@@ -59,6 +59,9 @@ def check(db: Session, *, policy: str, client: Client | None, account: GoogleAds
     if ads.is_real and policy != "INTERNAL":
         if not s.GOOGLE_ADS_WRITES_ENABLED:
             reasons.append("GOOGLE_ADS_WRITES_ENABLED is false")
+        from app.services import integrations_service
+        if integrations_service.operating_mode(db) != "execution":
+            reasons.append("The app is in read-only mode (Integrations › Operating mode)")
         if not settings_service.get_value("real_writes_authorized", False, db):
             reasons.append("Super Admin has not authorized real writes")
         if account and not account.writes_allowed:

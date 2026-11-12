@@ -61,6 +61,8 @@ REGISTRY: list[dict] = [
     _v("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "Google Ads", "optional", "OPTIONAL default manager (MCC) ID, 10 digits. The manager is normally chosen on the Integrations page and stored in the database; this is only a pre-selection for new deployments.", "integrations_service.py, adapters/google_ads/real.py"),
     _v("GOOGLE_PLACES_API_KEY", "Website research", "optional", "Places API (New) key for competitor and Business Profile research.", "integrations_service.py", secret=True),
     _v("PAGESPEED_API_KEY", "Website research", "optional", "PageSpeed Insights key (works without one at a low quota).", "integrations_service.py", secret=True),
+    _v("TAVILY_API_KEY", "Research", "optional", "Tavily web search key (optional; the Integrations page is preferred).", "integrations_service.py", secret=True),
+    _v("GEOAPIFY_API_KEY", "Research", "optional", "Geoapify places/geocoding key (optional; the Integrations page is preferred).", "integrations_service.py", secret=True),
     # ---- AI
     _v("GROQ_API_KEY", "AI (Groq)", "conditional", "Groq API key (starts with gsk_).", "integrations_service.py", secret=True, when="Groq is used"),
     _v("GROQ_MODEL", "AI (Groq)", "conditional", "Groq model that writes drafts and explanations. Exact Groq model ID.", "adapters/ai/__init__.py", when="Groq is used"),
