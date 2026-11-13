@@ -42,6 +42,9 @@ export default function Scene3D({ graph, focus, onFocus, live, reduced, onFail, 
     const controls = new OrbitControls(camera, renderer.domElement);
     Object.assign(controls, { enableDamping: true, dampingFactor: 0.08, enablePan: false, enableZoom: false, minPolarAngle: 0.25, maxPolarAngle: 1.32, autoRotateSpeed: 0.35 });
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+    // touch: one finger scrolls the page (the scene must never trap scrolling on a phone); two fingers turn the scene
+    controls.touches = { ONE: null as unknown as THREE.TOUCH, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    renderer.domElement.style.touchAction = "pan-y";
     let userMoved = false;
     controls.addEventListener("start", () => { userMoved = true; dirty = true; });
     controls.addEventListener("change", () => { dirty = true; });

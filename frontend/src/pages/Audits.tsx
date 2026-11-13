@@ -339,7 +339,8 @@ export function AuditDetail() {
             : <div className="mt-3 pl-6"><Button size="sm" disabled={retry.isPending} onClick={() => retry.mutate({}, { onSuccess: (rows: any) => rows[0] && nav(`/audits/${rows[0].id}`) })}>{retry.isPending ? "Starting…" : "Retry this audit"}</Button></div>)}
           <div className="mt-2"><ErrorBox error={retry.error} /></div>
         </div>)}
-      {a.audit_type !== "ACCOUNT" && <LiveFindings url={`/audits/${a.id}/events`} active={active} title={active ? "Live findings" : "Research activity"} kind={TYPE_SCENE[a.audit_type]} subject={{ website: a.business?.website_url, business: a.business?.name }} result={a.status === "COMPLETED" ? a.result : undefined}
+      {a.audit_type !== "ACCOUNT" && <LiveFindings url={`/audits/${a.id}/events`} active={active} title={active ? "Live findings" : "Research activity"} kind={TYPE_SCENE[a.audit_type]} subject={{ website: a.business?.website_url, business: a.business?.name }} result={a.status === "COMPLETED" || a.status === "SKIPPED" ? a.result : undefined}
+        audit={{ status: a.status, error: a.error, simulated: a.source_type === "MOCK" || !!r?.simulated || !!r?.client?.simulated }}
         steps={[{ key: a.audit_type.toLowerCase(), name: TYPE_LABEL[a.audit_type] ?? a.audit_type, status: a.status }]} />}
       {hasResult && (
         <ErrorBoundary label="The findings">

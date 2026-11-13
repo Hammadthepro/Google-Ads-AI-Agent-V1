@@ -16,6 +16,11 @@ const SCENE_HINT: Record<SceneKind, string> = {
   combined: "One island per research stream. An island lights up when its stage records its first step.",
 };
 
+const FINISHED_EMPTY: Record<SceneKind, string> = {
+  website: "No page was opened during this run.", local: "No location or map listing was recorded in this run.",
+  competitors: "No competitor was recorded in this run.", keywords: "No keyword source answered in this run.", combined: "Nothing was recorded in this run.",
+};
+
 let webglCache: boolean | null = null;
 export function canUseWebGL(): boolean {
   if (webglCache !== null) return webglCache;
@@ -95,8 +100,10 @@ export function SceneSvg({ graph, focus, onFocus }: { graph: SceneGraph; focus: 
 }
 
 /** A research scene: what is being researched, drawn from the same events as the findings next to it. */
-export function ResearchScene({ kind, model, stages, live, focus, onFocus, className }: {
+export function ResearchScene({ kind, model, stages, live, focus, onFocus, className, fixture, queued }: {
   kind: SceneKind; model: ResearchModel; stages?: StageState; live: boolean; focus: string | null; onFocus: (id: string | null) => void; className?: string;
+  /** The backend marked this data as a test fixture: every point is labelled as such, never as a real business. */ fixture?: boolean;
+  /** Accepted but not started: nothing is live yet. */ queued?: boolean;
 }) {
   const graph = useMemo(() => buildScene(kind, model, stages), [kind, model, stages]);
   const counts = useMemo(() => sceneCounts(kind, model), [kind, model]);
@@ -105,6 +112,9 @@ export function ResearchScene({ kind, model, stages, live, focus, onFocus, class
   const [flat, setFlat] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const use3d = gl && !flat;
+  const coarse = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
+  // once the run is over, an empty scene says nothing was recorded rather than "not yet"
+  const emptyText = !graph.empty ? null : live ? graph.empty : FINISHED_EMPTY[kind];
   const summary = `${SCENE_TITLE[kind]}: ${counts.map((c) => `${c.value} ${c.label}`).join(", ")}.`;
   return (
     <div className={cx("relative overflow-hidden rounded-lg bg-ink text-slate-200", className)} role="img" aria-label={summary}>
@@ -119,7 +129,9 @@ export function ResearchScene({ kind, model, stages, live, focus, onFocus, class
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
             {SCENE_TITLE[kind]}
-            {live && <span className="inline-flex items-center gap-1.5 rounded bg-brand-500/20 px-1.5 py-px text-2xs font-medium text-brand-200"><span className="h-1.5 w-1.5 rounded-full bg-brand-300 motion-safe:animate-pulse" />live</span>}
+            {fixture && <span className="rounded bg-plum-500/30 px-1.5 py-px text-2xs font-medium text-plum-50">Test fixture — not real businesses</span>}
+            {live && queued && <span className="rounded bg-white/10 px-1.5 py-px text-2xs font-medium text-slate-300">waiting to start</span>}
+            {live && !queued && <span className="inline-flex items-center gap-1.5 rounded bg-brand-500/20 px-1.5 py-px text-2xs font-medium text-brand-200"><span className="h-1.5 w-1.5 rounded-full bg-brand-300 motion-safe:animate-pulse" />live</span>}
           </div>
           <p className="mt-0.5 hidden max-w-sm text-xs leading-4 text-ink-muted sm:block">{SCENE_HINT[kind]}</p>
         </div>
@@ -130,7 +142,7 @@ export function ResearchScene({ kind, model, stages, live, focus, onFocus, class
         </div>
       </div>
 
-      {graph.empty && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 px-6 text-center text-[13px] text-slate-400">{graph.empty}</div>}
+      {emptyText && <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 px-6 text-center text-[13px] text-slate-400">{emptyText}</div>}
 
       <dl className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-wrap items-end gap-x-5 gap-y-1 bg-gradient-to-t from-ink via-ink/80 to-transparent px-4 pb-3 pt-8">
         {counts.map((c) => (
@@ -138,7 +150,7 @@ export function ResearchScene({ kind, model, stages, live, focus, onFocus, class
             <span aria-hidden className="h-2 w-2 self-center rounded-full" style={{ background: c.tone === "series0" ? C.series[0] : (C as any)[c.tone] }} />
             <dd className="tabular text-sm font-semibold text-white">{c.value}</dd><dt className="text-xs text-ink-muted">{c.label}</dt>
           </div>))}
-        {use3d && <span className="ml-auto hidden text-2xs text-ink-muted md:block">Drag to rotate</span>}
+        {use3d && <span className="ml-auto text-2xs text-ink-muted">{coarse ? "Two fingers to rotate" : "Drag to rotate"}</span>}
       </dl>
     </div>
   );

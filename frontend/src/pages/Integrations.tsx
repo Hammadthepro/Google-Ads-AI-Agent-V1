@@ -468,7 +468,7 @@ export default function Integrations() {
             </div>
           </div>
           <ErrorBox error={test.error} />
-          {test.data && <Notice tone={test.data.connected ? "green" : "amber"}><b>{test.data.integration.label}:</b> {test.data.connected ? "Connected — real request succeeded." : `Not connected — ${(test.data.steps.find((s: any) => s.status === "FAILED")?.detail) ?? "open it for the step-by-step result"}`}</Notice>}
+          {test.data && <Notice tone={test.data.connected ? "green" : "amber"}><b>{test.data.integration?.label ?? test.data.provider ?? "Connection test"}:</b> {test.data.connected ? "Connected — real request succeeded." : `Not connected — ${(test.data.steps?.find((s: any) => s.status === "FAILED")?.detail) ?? "open it for the step-by-step result"}`}</Notice>}
           {GROUPS.map(([g, title]) => {
             const list = items.filter((i) => i.group === g);
             if (!list.length) return null;

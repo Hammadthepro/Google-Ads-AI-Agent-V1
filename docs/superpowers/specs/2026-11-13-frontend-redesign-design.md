@@ -54,3 +54,12 @@ Palette, typefaces, dark sidebar, sidebar collapse, the scene concepts above, th
   points, no redraw at rest, live idle animation capped at 30 fps. Labels avoid overlapping; listings are named nearest first.
 - Integrations: providers collapse to summary rows (accordion). Collapsed panels stay mounted (drafts kept) but are `inert` and
   `aria-hidden`. Three existing tests gained one "open the provider" step (approved by the client); their assertions are unchanged.
+
+## Third pass: final verification (2026-11-13)
+
+- The findings summary is grouped into *What was found*, *Needs attention* and *Could not be verified*. Every item carries a "Based on:" line naming the recorded event or stored result behind it. Nothing in it is inferred.
+- Failed audits show what was gathered before the failure, plus the recorded error and the outputs that were not produced. The live badge appears only while the audit is QUEUED or RUNNING. A queued audit reads "waiting to start".
+- GBP fixtures are labelled in the scene, the summary and the results. When the map providers or Places return nothing, the panel shows the backend's own wording and an empty-state scene instead of breaking.
+- The 3D scene uses one finger to scroll the page and two fingers to rotate (`touch-action: pan-y`).
+- The Integrations test-result notice no longer assumes `integration.label` is present.
+- Website audits with a successful analysis step were not verified. The step needs a Groq or Claude key, and this environment has neither.

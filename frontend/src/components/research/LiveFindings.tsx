@@ -129,36 +129,46 @@ function SideLists({ steps, warnings, sources, columns }: { steps: Step[]; warni
   );
 }
 
-const TONE_MARK: Record<DigestItem["tone"], [string, string]> = {
-  finding: ["bg-brand-600", "Finding"], gap: ["bg-amber-500", "Gap to fix"], limit: ["bg-slate-400", "Limitation"],
-};
+const GROUPS: { tone: DigestItem["tone"]; title: string; live: string; mark: string }[] = [
+  { tone: "finding", title: "What was found", live: "Found so far", mark: "bg-brand-600" },
+  { tone: "gap", title: "Needs attention", live: "Needs attention", mark: "bg-amber-500" },
+  { tone: "limit", title: "Could not be verified", live: "Not verified so far", mark: "bg-slate-400" },
+];
 
-/** The discoveries, in plain language, ahead of the step log. Hovering a line lights the matching point in the scene. */
-function Digest({ items, live, focus, onHover }: { items: DigestItem[]; live: boolean; focus: string | null; onHover: (k: string | null) => void }) {
+/** The discoveries in plain language, ahead of the step log: what was found, what needs attention, what could not be verified.
+ *  Each line names what it rests on. Hovering a line lights the matching point in the scene. */
+function Digest({ items, live, focus, onHover, fixture }: { items: DigestItem[]; live: boolean; focus: string | null; onHover: (k: string | null) => void; fixture?: boolean }) {
   const [all, setAll] = useState(false);
-  const shown = all ? items : items.slice(0, 9);
+  const CAP = 10;
+  let budget = all ? Infinity : CAP;
   return (
-    <section aria-label="What was found" className="border-b border-slate-200 px-5 pb-4 pt-4">
-      <div className="mb-2.5 flex items-baseline justify-between gap-3">
-        <h3 className="text-sm font-semibold text-slate-900">{live ? "Found so far" : "What was found"}</h3>
-        <span className="text-2xs text-slate-400">from recorded research{live ? ", updating" : ""}</span>
+    <section aria-label="What was found" className="space-y-4 border-b border-slate-200 px-5 pb-4 pt-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">Summary</h3>
+        <span className="text-2xs text-slate-400">{fixture ? "from a test fixture" : "from recorded research"}{live ? ", updating" : ""}</span>
       </div>
-      <ul className="space-y-0.5">
-        {shown.map((it) => (
-          <li key={it.key} onMouseEnter={it.ref ? () => onHover(it.ref!) : undefined} onMouseLeave={it.ref ? () => onHover(null) : undefined}
-            className={cx("lf-enter -mx-2 flex gap-2.5 rounded-md px-2 py-1.5", it.ref && "cursor-default", it.ref && focus === it.ref && "bg-brand-50")}>
-            <span aria-hidden className={cx("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-sm", TONE_MARK[it.tone][0])} />
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium leading-5 text-slate-900"><span className="sr-only">{TONE_MARK[it.tone][1]}: </span>{it.title}</div>
-              {it.body && <div className="text-xs leading-5 text-slate-600">{it.body}</div>}
-              {!!it.chips?.length && <div className="mt-1 flex flex-wrap gap-1">{it.chips.map((c) => <span key={c} className="rounded bg-slate-100 px-1.5 py-px text-2xs text-slate-700">{c}</span>)}</div>}
-            </div>
-          </li>))}
-      </ul>
-      {items.length > 9 && <button type="button" onClick={() => setAll(!all)} className="mt-1.5 text-xs font-medium text-brand-700 hover:underline">{all ? "Show fewer" : `Show all ${items.length}`}</button>}
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-2xs text-slate-500" aria-hidden>
-        {(["finding", "gap", "limit"] as const).filter((t) => items.some((i) => i.tone === t)).map((t) => <span key={t} className="inline-flex items-center gap-1.5"><span className={cx("h-1.5 w-1.5 rounded-sm", TONE_MARK[t][0])} />{TONE_MARK[t][1]}</span>)}
-      </div>
+      {GROUPS.map((g) => {
+        const list = items.filter((i) => i.tone === g.tone);
+        if (!list.length || budget <= 0) return null;
+        const shown = list.slice(0, budget);
+        budget -= shown.length;
+        return (
+          <div key={g.tone} aria-label={g.title}>
+            <h4 className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-500"><span aria-hidden className={cx("h-1.5 w-1.5 rounded-sm", g.mark)} />{live ? g.live : g.title}<span className="font-normal text-slate-400">· {list.length}</span></h4>
+            <ul className="space-y-0.5">
+              {shown.map((it) => (
+                <li key={it.key} onMouseEnter={it.ref ? () => onHover(it.ref!) : undefined} onMouseLeave={it.ref ? () => onHover(null) : undefined}
+                  className={cx("lf-enter -mx-2 rounded-md px-2 py-1.5", it.ref && focus === it.ref && "bg-brand-50")}>
+                  <div className="text-[13px] font-medium leading-5 text-slate-900">{it.title}</div>
+                  {it.body && <div className="text-xs leading-5 text-slate-600">{it.body}</div>}
+                  {!!it.points?.length && <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-xs leading-5 text-slate-600 marker:text-slate-300">{it.points.map((p) => <li key={p}>{p}</li>)}</ul>}
+                  {!!it.chips?.length && <div className="mt-1 flex flex-wrap gap-1">{it.chips.map((c) => <span key={c} className="rounded bg-slate-100 px-1.5 py-px text-2xs text-slate-700">{c}</span>)}</div>}
+                  <div className="mt-0.5 text-2xs text-slate-400">Based on: {it.basis}</div>
+                </li>))}
+            </ul>
+          </div>);
+      })}
+      {items.length > CAP && <button type="button" onClick={() => setAll(!all)} className="text-xs font-medium text-brand-700 hover:underline">{all ? "Show fewer" : `Show all ${items.length}`}</button>}
     </section>
   );
 }
@@ -167,7 +177,8 @@ function Digest({ items, live, focus, onHover }: { items: DigestItem[]; live: bo
  *  failure in place. Built only from recorded backend events; when nothing is running it says so.
  *  With `kind`, a scene of what is being researched sits beside the findings. Both read the same single event stream, and hovering
  *  an item in one highlights it in the other. */
-export function LiveFindings({ url, active, steps: givenSteps, title = "Research activity", kind, subject, result }: { url: string; active: boolean; steps?: Step[]; title?: string; kind?: SceneKind; subject?: { website?: string; business?: string }; result?: any }) {
+export function LiveFindings({ url, active, steps: givenSteps, title = "Research activity", kind, subject, result, audit }: { url: string; active: boolean; steps?: Step[]; title?: string; kind?: SceneKind; subject?: { website?: string; business?: string }; result?: any;
+  audit?: { status?: string; error?: string; simulated?: boolean } }) {
   const { events, steps: streamSteps, done, error } = useEventStream(url, active);
   const stream = useMemo(() => buildStream(events), [events]);
   const model = useMemo(() => {
@@ -185,7 +196,7 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
   const sources = model.sources;
   const warnings = model.warnings;
   const [focus, setFocus] = useState<string | null>(null);
-  const digest = useMemo(() => (kind ? buildDigest(kind, model, result) : []), [kind, model, result]);
+  const digest = useMemo(() => (kind ? buildDigest(kind, model, result, audit) : []), [kind, model, result, audit?.status, audit?.error, audit?.simulated]);
   const stages = useMemo<StageState>(() => {
     const st: StageState = {};
     for (const s of stream) st[s.stage] = s.state;
@@ -233,12 +244,12 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
       <div className="grid xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,1fr)]">
         <div className="min-w-0 border-b border-slate-100 p-3 xl:border-b-0 xl:border-r">
           <div className="xl:sticky xl:top-[64px]">
-            <ResearchScene kind={kind} model={model} stages={stages} live={live} focus={focus} onFocus={setFocus} className="h-[340px] sm:h-[440px] xl:h-[min(520px,calc(100vh-150px))]" />
+            <ResearchScene kind={kind} model={model} stages={stages} live={live} focus={focus} onFocus={setFocus} fixture={audit?.simulated} queued={audit?.status === "QUEUED"} className="h-[340px] sm:h-[440px] xl:h-[min(520px,calc(100vh-150px))]" />
             {sources.length > 0 && <div className="pane-scroll hidden max-h-[calc(100vh-700px)] min-h-[140px] overflow-y-auto px-2 pb-2 pt-5 xl:block"><SideLists steps={[]} warnings={[]} sources={sources} /></div>}
           </div>
         </div>
         <div className="min-w-0">
-          {digest.length > 0 && <Digest items={digest} live={live} focus={focus} onHover={setFocus} />}
+          {digest.length > 0 && <Digest items={digest} live={live} focus={focus} onHover={setFocus} fixture={audit?.simulated} />}
           <div className="flex items-center justify-between px-5 pt-4 text-xs text-slate-500">
             <span className="font-medium text-slate-700">Step by step</span>
             <span>{events.length} recorded step(s) · {warnings.length} limitation(s)</span>
