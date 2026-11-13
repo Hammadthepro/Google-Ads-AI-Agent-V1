@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction, useClients } from "../lib/hooks";
 import { IntelligencePanel } from "../components/IntelligencePanel";
-import { Badge, Button, Card, dt, ErrorBox, Field, Input, KV, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
+import { Badge, Button, Card, dt, EmptyState, ErrorBox, Field, Input, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
 
 export function Clients() {
   const { data, isLoading } = useClients();
@@ -86,10 +86,33 @@ export function ClientDetail() {
         {c.automation_frozen && can("killswitch.client") && <Button size="sm" onClick={() => unfreeze.mutate({})}>Unfreeze automation</Button>}
         <Link to={`/?client=${c.id}`}><Button variant="primary">Ask the agent</Button></Link>
         <Link to={`/tasks?client=${c.id}`}><Button>Run a task</Button></Link></>} />
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Contacts">
-          <KV items={[["Owner", c.owner_contact || "—"], ["Backup", c.backup_contact || "—"], ["Website / tag access", c.tag_access_contact || "—"]]} />
+      <div className="grid items-start gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-8">
+        <Card title="Businesses">
+          <Table rows={c.businesses} columns={[
+            { key: "name", label: "Business", render: (x) => <Link className="font-medium text-brand-700 hover:underline" to={`/businesses/${x.id}`}>{x.name}</Link> },
+            { key: "website_url", label: "Website" },
+            { key: "services", label: "Services", render: (x) => x.services.filter((s: any) => !s.is_excluded).map((s: any) => s.name).join(", ") },
+            { key: "measurement", label: "Measurement", render: (x) => { const m = c.measurement?.[x.id]; return !m?.evaluated_at ? <span className="text-slate-400">not audited</span> : m.counts.issue ? `${m.counts.issue} problem(s)` : "no problems found"; } },
+          ]} />
         </Card>
+        <IntelligencePanel clientId={c.id} canRun={can("audits.run")} />
+        <AuditReports clientId={c.id} canRun={can("audits.run")} highlight={params.get("report")} />
+        <Card title="Campaign structure" actions={structure.data && <Badge tone="violet">{structure.data.source} DATA</Badge>}>
+          {structure.isLoading ? <Spinner /> : (
+            <Table rows={structure.data?.campaigns ?? []} empty="No campaigns." columns={[
+              { key: "name", label: "Campaign", render: (x) => <span className="font-medium">{x.name}</span> },
+              { key: "campaign_type", label: "Type", render: (x) => <>{x.campaign_type} {x.read_only && <Badge>read-only in V1</Badge>}</> },
+              { key: "status", label: "Status", render: (x) => <StatusBadge value={x.status} /> },
+              { key: "daily_budget", label: "Daily budget", render: (x) => `$${x.daily_budget.toFixed(2)}` },
+              { key: "weekly_target", label: "Weekly target" },
+              { key: "ad_groups", label: "Ad groups", render: (x) => x.ad_groups.length },
+              { key: "created_by_app", label: "Created here", render: (x) => x.created_by_app ? <Badge tone="blue">yes</Badge> : "" },
+            ]} />
+          )}
+        </Card>
+        </div>
+        <aside className="space-y-5 xl:sticky xl:top-[76px]" aria-label="Client facts">
         <Card title="Weekly lead target & budget">
           <p className="mb-3 text-xs text-slate-500">Client-level target for all campaigns combined. Weekly reports compare against this and against each campaign's own target.</p>
           <div className="grid gap-3">
@@ -103,36 +126,20 @@ export function ClientDetail() {
               <ErrorBox error={saveTargets.error} />
             </div>)}
         </Card>
-        <Card title="Google Ads accounts" className="lg:col-span-2" actions={<Link className="text-xs text-brand-700" to="/accounts">Manage →</Link>}>
-          <Table rows={c.accounts} empty="No Google Ads account linked yet — link one on the Google Ads Accounts page." columns={[
-            { key: "customer_id", label: "Customer ID" }, { key: "descriptive_name", label: "Name" },
-            { key: "auto_tagging_enabled", label: "Auto-tagging" }, { key: "integration_mode", label: "Mode", render: (a) => <Badge tone="violet">{a.integration_mode}</Badge> },
-          ]} />
+        <Card title="Google Ads accounts" actions={<Link className="font-medium text-brand-700 hover:underline" to="/accounts">Manage →</Link>}>
+          {c.accounts?.length ? (
+            <ul className="-my-1 divide-y divide-slate-100">{c.accounts.map((a: any) => (
+              <li key={a.id ?? a.customer_id} className="py-2.5 text-[13px]">
+                <div className="flex items-center justify-between gap-2"><span className="truncate font-medium text-slate-900">{a.descriptive_name || "Unnamed account"}</span><Badge tone="violet">{a.integration_mode}</Badge></div>
+                <div className="mt-0.5 flex justify-between gap-2 text-xs text-slate-500"><code className="font-mono">{a.customer_id}</code><span>Auto-tagging {a.auto_tagging_enabled === true ? "on" : a.auto_tagging_enabled === false ? "off" : "unknown"}</span></div>
+              </li>))}</ul>
+          ) : <EmptyState message="No Google Ads account linked yet — link one on the Google Ads Accounts page." />}
         </Card>
+        <Card title="Contacts">
+          <dl className="-my-1 divide-y divide-slate-100 text-[13px]">{([["Owner", c.owner_contact], ["Backup", c.backup_contact], ["Website / tag access", c.tag_access_contact]] as [string, string][]).map(([k, v]) => <div key={k} className="flex justify-between gap-4 py-2"><dt className="text-slate-500">{k}</dt><dd className="min-w-0 break-words text-right font-medium text-slate-800">{v || "—"}</dd></div>)}</dl>
+        </Card>
+        </aside>
       </div>
-      <Card title="Businesses">
-        <Table rows={c.businesses} columns={[
-          { key: "name", label: "Business", render: (x) => <Link className="font-medium text-brand-700 hover:underline" to={`/businesses/${x.id}`}>{x.name}</Link> },
-          { key: "website_url", label: "Website" },
-          { key: "services", label: "Services", render: (x) => x.services.filter((s: any) => !s.is_excluded).map((s: any) => s.name).join(", ") },
-          { key: "measurement", label: "Measurement", render: (x) => { const m = c.measurement?.[x.id]; return !m?.evaluated_at ? <span className="text-slate-400">not audited</span> : m.counts.issue ? `${m.counts.issue} problem(s)` : "no problems found"; } },
-        ]} />
-      </Card>
-      <IntelligencePanel clientId={c.id} canRun={can("audits.run")} />
-      <AuditReports clientId={c.id} canRun={can("audits.run")} highlight={params.get("report")} />
-      <Card title="Campaign structure" actions={structure.data && <Badge tone="violet">{structure.data.source} DATA</Badge>}>
-        {structure.isLoading ? <Spinner /> : (
-          <Table rows={structure.data?.campaigns ?? []} empty="No campaigns." columns={[
-            { key: "name", label: "Campaign", render: (x) => <span className="font-medium">{x.name}</span> },
-            { key: "campaign_type", label: "Type", render: (x) => <>{x.campaign_type} {x.read_only && <Badge>read-only in V1</Badge>}</> },
-            { key: "status", label: "Status", render: (x) => <StatusBadge value={x.status} /> },
-            { key: "daily_budget", label: "Daily budget", render: (x) => `$${x.daily_budget.toFixed(2)}` },
-            { key: "weekly_target", label: "Weekly target" },
-            { key: "ad_groups", label: "Ad groups", render: (x) => x.ad_groups.length },
-            { key: "created_by_app", label: "Created here", render: (x) => x.created_by_app ? <Badge tone="blue">yes</Badge> : "" },
-          ]} />
-        )}
-      </Card>
     </div>
   );
 }

@@ -16,9 +16,10 @@ Stack: React 18 + TypeScript + Vite + Tailwind 3 + TanStack Query + React Router
 6. Estimates are labelled as estimates. AI text is labelled as AI-written.
 
 ## Design tokens & components
-- Tokens: `frontend/tailwind.config.js` (`brand` scale; Tailwind slate for neutrals) and `frontend/src/index.css`.
-- Kit: `frontend/src/components/ui.tsx` — `PageHeader`, `Card`, `Stat`, `Table`, `Badge`, `StatusBadge`, `DataSourceBadge`, `Button`, `Field`, `FieldGroup`, `Input`, `Select`, `Textarea`, `Tabs`, `ConfirmDialog`, `Notice`, `KV`, `JsonBlock`, `EmptyState`, `Spinner`.
-- Layout: `components/Layout.tsx` (sidebar groups, mode banner, user menu).
+- Tokens ("Ink & Petrol"): `frontend/tailwind.config.js` — `slate` is redefined as the ink neutral scale, `brand` is petrol (the only accent: primary actions, active nav, links, focus), `saffron`/`plum` are for data series only, `ink` for dark surfaces. Radius follows hierarchy: 4 px badges, 6 px controls, 10 px panels. Type: IBM Plex Sans (self-hosted via `@fontsource`), IBM Plex Mono only for real identifiers. Sentence-case labels; no tracked all-caps eyebrows.
+- Kit: `frontend/src/components/ui.tsx` — `PageHeader` (optional `meta`), `Section`, `Card`/`Panel` (optional `flush`, `description`), `MetricStrip` (prefer over a row of `Stat` tiles), `Stat`, `Table`, `Badge` (optional `dot`), `StatusBadge`, `DataSourceBadge`, `Button`, `Field`, `FieldGroup`, `Input`, `Select`, `Textarea`, `Tabs`, `ConfirmDialog`, `useDialogKeys` (Escape + focus return), `Notice`, `KV`, `JsonBlock`, `EmptyState` (optional `title`/`action`), `Skeleton`, `Spinner`, `since()` relative time.
+- Layout: `components/Layout.tsx` (ink sidebar with icon-rail collapse, route breadcrumb, write-safety pill, account chip, user menu).
+- Live research: `components/research/` — `LiveFindings` (pass `kind` to get the scene beside the findings), `ResearchScene` (WebGL detection, flat/3D toggle, legend), `Scene3D` (three.js, lazy chunk), `sceneLayout.ts` (pure, unit-tested layouts: website, local, competitors, keywords, combined). Scenes draw only from recorded research events; node ids equal findings-stream keys so hover is shared.
 - Feature components: `components/PlanReview.tsx` (AI competition, diff, versions, structured editor); Integrations cards in `pages/Integrations.tsx`.
 - Charts: no chart library is installed; if one is needed, keep it lightweight and label axes and units.
 

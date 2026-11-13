@@ -3,14 +3,29 @@
 @tailwind utilities;
 
 @layer base {
-  html { font-feature-settings: "cv11", "ss01"; -webkit-text-size-adjust: 100%; }
-  body { @apply bg-canvas text-slate-900 antialiased; }
+  html { -webkit-text-size-adjust: 100%; text-rendering: optimizeLegibility; }
+  body { @apply bg-canvas text-[13px] leading-5 text-slate-900 antialiased; }
+  h1, h2, h3, h4 { text-wrap: balance; }
   /* numbers line up in tables and stats */
   table, .tabular { font-variant-numeric: tabular-nums; }
   /* one visible, consistent keyboard focus everywhere */
   :focus-visible { @apply outline-none ring-2 ring-brand-500 ring-offset-1 ring-offset-white; }
-  ::selection { @apply bg-brand-100; }
+  ::selection { @apply bg-brand-100 text-slate-900; }
+  a { text-underline-offset: 2px; }
+  details > summary { list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+}
+
+@layer components {
+  /* thin, quiet scrollbars in panes that scroll on their own */
+  .pane-scroll { scrollbar-width: thin; scrollbar-color: theme("colors.slate.300") transparent; }
+  .pane-scroll-dark { scrollbar-width: thin; scrollbar-color: theme("colors.ink.line") transparent; }
+  /* long-form AI and report text */
+  .prose-read { @apply max-w-read text-sm leading-6 text-slate-700; }
+  .prose-read ul { @apply list-disc space-y-1 pl-5; }
+  .prose-read ol { @apply list-decimal space-y-1 pl-5; }
+  .skeleton { background: linear-gradient(90deg, theme("colors.slate.100") 0%, theme("colors.slate.50") 50%, theme("colors.slate.100") 100%); background-size: 200% 100%; @apply animate-shimmer rounded; }
 }
 
 /* ---- live findings: one gentle entrance for new lines; nothing moves for users who ask for reduced motion ---- */

@@ -17,7 +17,7 @@ export function Approvals() {
   return (
     <div className="space-y-6">
       <PageHeader title="Approvals" subtitle="Every proposed change. An approval covers only the exact version reviewed; editing creates a new version."
-        actions={<div className="w-56"><Select value={status} onChange={(e) => setStatus(e.target.value)} options={STATUSES.map((s) => ({ value: s, label: s ? s.replace(/_/g, " ") : "All statuses" }))} /></div>} />
+        actions={<div className="w-56"><Select value={status} onChange={(e) => setStatus(e.target.value)} options={STATUSES.map((s) => ({ value: s, label: s ? s.charAt(0) + s.slice(1).replace(/_/g, " ").toLowerCase() : "All statuses" }))} /></div>} />
       <Card>
         {q.isLoading ? <Spinner /> : (
           <Table rows={q.data ?? []} onRowClick={(a) => nav(`/approvals/${a.id}`)} empty="No approvals in this state." columns={[

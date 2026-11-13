@@ -6,7 +6,7 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { useAction } from "../lib/hooks";
 import { checkAuthorizationUrl } from "../lib/oauth";
-import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, Notice, PageHeader, Select, Spinner, Stat, Textarea } from "../components/ui";
+import { Badge, Button, Card, ConfirmDialog, cx, dt, ErrorBox, Field, Input, MetricStrip, Notice, PageHeader, Select, since, Spinner, Textarea } from "../components/ui";
 
 const MODES: { value: string; label: string; text: string }[] = [
   { value: "read_only", label: "Real account — read-only", text: "Real Google Ads data is read. No campaign write is possible in this mode. This is the default." },
@@ -84,7 +84,7 @@ function SubtestRows({ item, run, canManage, busy }: { item: any; run: (target: 
   if (!item.subtests?.length) return null;
   return (
     <div className="mt-3" aria-label="Individual checks">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Individual checks</div>
+      <div className="mb-1.5 text-xs font-medium text-slate-500">Individual checks</div>
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
         {item.subtests.map((t: any) => {
           const target = Object.keys(item.targets || {}).find((k) => k === t.key);
@@ -212,7 +212,7 @@ function DependencyList({ item }: { item: any }) {
   if (!item.dependencies?.length) return null;
   return (
     <div className="mt-3" aria-label="Dependencies">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Depends on</div>
+      <div className="mb-1.5 text-xs font-medium text-slate-500">Depends on</div>
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 text-sm">
         {item.dependencies.map((d: any) => (
           <li key={d.key} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
@@ -243,9 +243,12 @@ function SmtpTestEmail() {
   );
 }
 
-function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: boolean; resultOf?: any }) {
+type QuickTest = { run: (provider: string) => void; busy: string | null };
+
+/** One provider as an accordion item. The panel stays mounted when collapsed (hidden and inert), so a half-typed draft is kept
+ *  and every control still exists for the page; it is simply out of the way until the provider is opened. */
+function IntegrationCard({ item, canManage, resultOf, open, onToggle, quickTest }: { item: any; canManage: boolean; resultOf?: any; open: boolean; onToggle: () => void; quickTest?: QuickTest }) {
   const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
-  const [open, setOpen] = useState(true); // every integration shows its fields, status, dependencies and instructions by default
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<"" | "disconnect" | "enable" | "disable">("");
@@ -271,25 +274,43 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
     security: item.provider === "smtp" ? [{ value: "starttls", label: "STARTTLS (port 587)" }, { value: "ssl", label: "SSL/TLS (port 465)" }, { value: "none", label: "None (not recommended)" }] : [],
   };
   const unsaved = Object.entries(settings).some(([k, v]) => v !== (item.settings[k]?.value ?? "")) || Object.values(secrets).some(Boolean);
+  const p = item.provider;
+  const testing = quickTest?.busy === p;
   return (
-    <Card title={<span id={`card-${item.provider}`} className="flex flex-wrap items-center gap-2">{item.label}<StatusPills item={item} />{item.enabled && <Badge tone="green">Enabled in app</Badge>}</span>}
-      actions={<Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide details" : "Details"}</Button>}>
-      <p className="text-sm text-slate-600">{item.description}</p>
+    <section id={`card-${p}`} className="scroll-mt-20" aria-labelledby={`h-${p}`}>
+      <div className={cx("flex items-center gap-3 px-4 py-3 transition-colors sm:px-5", open ? "bg-slate-50/70" : "hover:bg-slate-50/50")}>
+        <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={`panel-${p}`} className="flex min-w-0 flex-1 items-center gap-3 rounded text-left">
+          <svg aria-hidden viewBox="0 0 16 16" className={cx("h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform", open && "rotate-90")} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3.5l4.5 4.5-4.5 4.5" /></svg>
+          <span aria-hidden className={cx("h-2 w-2 shrink-0 rounded-full", DOT_TONE[LABEL_TONE[d.label] ?? "slate"] ?? "bg-slate-300")} />
+          <span className="min-w-0">
+            <span id={`h-${p}`} className="block truncate text-[13px] font-semibold text-slate-900">{item.label}</span>
+            <span className="block truncate text-xs text-slate-500"><span className="md:hidden">{d.label}{open ? "" : " · "}</span>{!open && item.description}</span>
+          </span>
+        </button>
+        <div className="hidden shrink-0 items-center gap-1.5 md:flex"><StatusPills item={item} />{item.enabled && <Badge tone="green">Enabled in app</Badge>}</div>
+        <span className="hidden w-24 shrink-0 text-right text-2xs text-slate-400 lg:block" title={item.last_test_at ? dt(item.last_test_at) : undefined}>{d.testable ? (item.last_test_at ? `tested ${since(item.last_test_at)}` : "never tested") : "sign-in only"}</span>
+        {quickTest && canManage && testable && !open && (
+          <Button size="sm" disabled={testing} onClick={() => quickTest.run(p)}>{testing ? "Testing…" : "Test Connection"}</Button>)}
+      </div>
+      <div id={`panel-${p}`} role="region" aria-labelledby={`h-${p}`} className={cx("grid transition-[grid-template-rows] duration-200 ease-out", open ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
+        {...(open ? {} : { inert: "" as any, "aria-hidden": true })}>
+      <div className="min-h-0 overflow-hidden"><div className="border-t border-slate-100 px-4 pb-5 pt-3 sm:px-5 sm:pl-[52px]">
+      <p className="text-[13px] leading-5 text-slate-600">{item.description}</p>
       <TestFacts item={item} />
       {item.last_error && d.label === "Connection failed" && <div className="mt-3"><Notice tone="red"><b>Last error:</b> {item.last_error}</Notice></div>}
       {item.credentials_unreadable && <div className="mt-3"><Notice tone="red"><b>Saved credentials cannot be decrypted.</b> TOKEN_ENCRYPTION_KEY has changed since they were saved, so they are treated as missing. Re-enter them (or restore the previous key).</Notice></div>}
-      {open && item.deployment_managed && (
+      {item.deployment_managed && (
         <div className="mt-3"><Notice tone="blue"><b>Deployment-managed.</b> This is infrastructure configuration set by whoever deploys the app; it is not editable here and its values are never shown.
           <ul className="mt-1 list-disc pl-5">{(DEPLOY_HELP[item.provider] ?? []).map((t) => <li key={t}>{t}</li>)}</ul></Notice></div>)}
-      {open && <DependencyList item={item} />}
-      {open && item.provider === "ga4" && <div className="mt-3"><Notice tone="blue">Needs the <b>Google Analytics Admin API</b> and the <b>Analytics Data API</b> enabled in your Cloud project, the analytics.readonly scope (use “Connect with Google” here) and Viewer access to the property. GA4 data is never mixed into Ads conversion counts.</Notice></div>}
-      {open && item.provider === "places" && <div className="mt-3"><Notice tone="blue">Enable <b>Places API (New)</b> and billing in the key's Google Cloud project, and restrict the key to that API.</Notice></div>}
-      {open && item.provider === "claude" && item.info?.usage && <p className="mt-3 text-xs text-slate-500">Last {item.info.usage.window_days} days: {item.info.usage.runs} runs, {item.info.usage.tokens_in.toLocaleString()} tokens in / {item.info.usage.tokens_out.toLocaleString()} out. {item.info.usage.cost_note} {item.info.independent}</p>}
-      {open && item.provider === "crawler" && <ul className="mt-3 list-disc pl-5 text-xs text-slate-500">{(item.info?.guarantees ?? []).map((g: string) => <li key={g}>{g}</li>)}</ul>}
-      {open && <ProviderFacts item={item} />}
-      {open && <SubtestRows item={item} busy={test.isPending} canManage={canManage} run={(t) => test.mutate(t)} />}
-      {open && item.provider === "google_ads" && !item.missing.length && <ManagerPicker canManage={canManage} />}
-      {open && hasFields && (
+      {<DependencyList item={item} />}
+      {item.provider === "ga4" && <div className="mt-3"><Notice tone="blue">Needs the <b>Google Analytics Admin API</b> and the <b>Analytics Data API</b> enabled in your Cloud project, the analytics.readonly scope (use “Connect with Google” here) and Viewer access to the property. GA4 data is never mixed into Ads conversion counts.</Notice></div>}
+      {item.provider === "places" && <div className="mt-3"><Notice tone="blue">Enable <b>Places API (New)</b> and billing in the key's Google Cloud project, and restrict the key to that API.</Notice></div>}
+      {item.provider === "claude" && item.info?.usage && <p className="mt-3 text-xs text-slate-500">Last {item.info.usage.window_days} days: {item.info.usage.runs} runs, {item.info.usage.tokens_in.toLocaleString()} tokens in / {item.info.usage.tokens_out.toLocaleString()} out. {item.info.usage.cost_note} {item.info.independent}</p>}
+      {item.provider === "crawler" && <ul className="mt-3 list-disc pl-5 text-xs text-slate-500">{(item.info?.guarantees ?? []).map((g: string) => <li key={g}>{g}</li>)}</ul>}
+      {<ProviderFacts item={item} />}
+      {<SubtestRows item={item} busy={test.isPending} canManage={canManage} run={(t) => test.mutate(t)} />}
+      {item.provider === "google_ads" && !item.missing.length && <ManagerPicker canManage={canManage} />}
+      {hasFields && (
         <div className="mt-4 space-y-3 border-t border-slate-100 pt-4">
           <div className="grid gap-3 md:grid-cols-2">
             {Object.entries(item.settings).map(([k, f]: any) => {
@@ -334,16 +355,18 @@ function IntegrationCard({ item, canManage, resultOf }: { item: any; canManage: 
       <div className="mt-2"><ErrorBox error={err || opts.error} /></div>
       {oauthProblem && <div className="mt-2"><Notice tone="red"><b>Google sign-in was not started.</b> {oauthProblem} Nothing was sent to Google.</Notice></div>}
       {opts.data && !opts.data.ok && opts.data.error && <div className="mt-2"><Notice tone="amber"><b>{opts.data.error.step}:</b> {opts.data.error.detail} {opts.data.error.hint}</Notice></div>}
-      {open && item.provider === "smtp" && canManage && <SmtpTestEmail />}
-      {open && <StepList steps={steps} />}
-      {open && item.last_test_at && <p className="mt-2 text-xs text-slate-400">Last test {dt(item.last_test_at)} — every step is a real request; nothing is marked Connected unless all required steps pass.</p>}
+      {item.provider === "smtp" && canManage && <SmtpTestEmail />}
+      {<StepList steps={steps} />}
+      {item.last_test_at && <p className="mt-2 text-xs text-slate-400">Last test {dt(item.last_test_at)} — every step is a real request; nothing is marked Connected unless all required steps pass.</p>}
       <ConfirmDialog open={confirm === "enable"} title={`Enable ${item.label}?`} confirmLabel="Enable" body={item.provider === "groq" ? "The application will use Groq for AI drafting and critique. Google Ads is not touched." : "Enabling lets the app use this integration. It does not by itself allow any Google Ads write."}
         onCancel={() => setConfirm("")} onConfirm={() => enable.mutate(true, { onSettled: () => setConfirm("") })} />
       <ConfirmDialog open={confirm === "disable"} title={`Disable ${item.label}?`} confirmLabel="Disable" body={item.provider === "google_ads" ? "Google Ads features report “not configured” until you enable it again, and the operating mode returns to read-only." : "Features that need this integration report “not configured” until you enable it again. Nothing is simulated in its place."}
         onCancel={() => setConfirm("")} onConfirm={() => enable.mutate(false, { onSettled: () => setConfirm("") })} />
       <ConfirmDialog open={confirm === "disconnect"} title={`Disconnect ${item.label}?`} tone="danger" confirmLabel="Disconnect" body="Credentials saved on this page and discovered data are deleted. Values from .env are not changed."
         onCancel={() => setConfirm("")} onConfirm={() => disconnect.mutate({}, { onSettled: () => setConfirm("") })} />
-    </Card>
+      </div></div>
+      </div>
+    </section>
   );
 }
 
@@ -379,39 +402,22 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
   );
 }
 
-function Overview({ items, canManage }: { items: any[]; canManage: boolean }) {
-  const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
-  const test = useAction((p: string) => api.post(`/integrations/${p}/test`), inv);
-  const [busy, setBusy] = useState("");
-  return (
-    <Card title="Overview">
-      <div className="-mx-5 overflow-x-auto">
-        <table className="min-w-full divide-y divide-slate-200 text-sm" aria-label="Integration overview">
-          <thead><tr>{["Integration", "Configuration", "Connection", "Last test", "Last success", ""].map((h) => <th key={h} className="whitespace-nowrap px-5 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{h}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {items.map((i) => (
-              <tr key={i.provider} data-provider={i.provider}>
-                <td className="px-5 py-2.5"><a href={`#card-${i.provider}`} className="font-medium text-slate-900 hover:underline">{i.label}</a><div className="text-xs text-slate-500">{i.group}</div></td>
-                <td className="px-5 py-2.5"><Badge tone={i.display.config === "Configured" ? "green" : "slate"}>{i.display.config}</Badge></td>
-                <td className="px-5 py-2.5">{i.display.testable ? <Badge tone={LABEL_TONE[i.display.label]}>{i.display.label}</Badge> : <span className="text-xs text-slate-500">Verified by signing in</span>}</td>
-                <td className="px-5 py-2.5 text-xs text-slate-600">{dt(i.last_test_at)}</td>
-                <td className="px-5 py-2.5 text-xs text-slate-600">{i.last_success_at ? dt(i.last_success_at) : "—"}</td>
-                <td className="px-5 py-2.5 text-right">{canManage && i.display.testable && <Button size="sm" disabled={test.isPending && busy === i.provider}
-                  onClick={() => { setBusy(i.provider); test.mutate(i.provider); }}>{test.isPending && busy === i.provider ? "Testing…" : "Test Connection"}</Button>}</td>
-              </tr>))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-2"><ErrorBox error={test.error} /></div>
-      {test.data && <p className="mt-2 text-sm"><b>{test.data.integration.label}:</b> {test.data.connected ? "Connected — real request succeeded." : `Not connected — ${(test.data.steps.find((s: any) => s.status === "FAILED")?.detail) ?? "see details below"}`}</p>}
-    </Card>
-  );
-}
+const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]];
+const DOT_TONE: Record<string, string> = { green: "bg-emerald-500", red: "bg-rose-500", amber: "bg-amber-500", blue: "bg-brand-500", slate: "bg-slate-300", violet: "bg-plum-500" };
 
 export default function Integrations() {
   const { can } = useAuth();
   const [params] = useSearchParams();
   const q = useQuery({ queryKey: ["integrations"], queryFn: () => api.get("/integrations") });
+  const inv = [["integrations"], ["integrations-mode"], ["integrations-health"], ["integration-banner"]];
+  const test = useAction((p: string) => api.post(`/integrations/${p}/test`), inv);
+  const [busy, setBusy] = useState("");
+  // Which providers are open. Starts with the one named in the address (#card-…, or the providers just authorised with Google).
+  const [opened, setOpened] = useState<Set<string>>(() => new Set([
+    ...(typeof window !== "undefined" && window.location.hash.startsWith("#card-") ? [window.location.hash.slice(6)] : []),
+    ...((params.get("providers") ?? "").split(",").filter(Boolean))]));
+  const toggle = (p: string) => setOpened((o) => { const n = new Set(o); n.has(p) ? n.delete(p) : n.add(p); return n; });
+  const reveal = (p: string) => { setOpened((o) => new Set(o).add(p)); requestAnimationFrame(() => document.getElementById(`card-${p}`)?.scrollIntoView({ behavior: "smooth", block: "start" })); };
   const testAll = useAction(() => api.post("/integrations/test-all"), [["integrations"], ["integrations-mode"], ["integration-banner"]]);
   if (q.isLoading || !q.data) return <Spinner />;
   const items: any[] = q.data.integrations;
@@ -419,6 +425,7 @@ export default function Integrations() {
   const canManage = can("integrations.manage");
   const googleOk = !!items.find((i) => i.provider === "google_ads")?.last_test_ok;
   const results: Record<string, any> = Object.fromEntries((testAll.data?.results ?? []).map((r: any) => [r.provider, r]));
+  const needsAttention = (i: any) => ["Connection failed", "Blocked by dependency", "Requires approval"].includes(i.display.label);
   return (
     <div className="space-y-6">
       <PageHeader title="Integrations" subtitle="Credentials come from .env or are saved here (encrypted, write-only). Connected appears only after a real request succeeds."
@@ -426,25 +433,62 @@ export default function Integrations() {
       {params.get("oauth") === "connected" && <Notice tone="green">Google authorization saved for: {params.get("providers")}. Now run Test Connection.</Notice>}
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="Integration health">
-        {["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0)} />)}
+      <div aria-label="Integration health">
+        <MetricStrip items={["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => ({ label: s,
+          value: <span className={(counts[s] ?? 0) && s === "Connected" ? "text-emerald-700" : (counts[s] ?? 0) && s === "Connection failed" ? "text-rose-700" : ""}>{counts[s] ?? 0}</span> }))} />
       </div>
-      <Overview items={items} canManage={canManage} />
+      {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
+        ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code className="break-all font-mono text-xs">{q.data.redirect_uri}</code></Notice>
+        : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code className="break-all font-mono text-xs">{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
+      <div className="grid gap-8 xl:grid-cols-[208px_minmax(0,1fr)]">
+        <nav aria-label="Providers" className="hidden xl:block">
+          <div className="sticky top-[76px] space-y-5 text-[13px]">
+            {GROUPS.map(([g, title]) => {
+              const list = items.filter((i) => i.group === g);
+              if (!list.length) return null;
+              return (
+                <div key={g}>
+                  <div className="mb-1.5 px-2 text-xs font-medium text-slate-500">{title}</div>
+                  <ul className="space-y-px">{list.map((i) => (
+                    <li key={i.provider}><a href={`#card-${i.provider}`} onClick={(e) => { e.preventDefault(); reveal(i.provider); history.replaceState(null, "", `#card-${i.provider}`); }}
+                      aria-current={opened.has(i.provider) ? "true" : undefined}
+                      className={cx("flex items-center gap-2 rounded-md px-2 py-1 transition-colors", opened.has(i.provider) ? "bg-white font-medium text-slate-900 shadow-inset" : "text-slate-700 hover:bg-white/70 hover:text-slate-900")}>
+                      <span aria-hidden className={cx("h-1.5 w-1.5 shrink-0 rounded-full", DOT_TONE[LABEL_TONE[i.display.label] ?? "slate"] ?? "bg-slate-300")} />
+                      <span className="truncate">{i.label}</span></a></li>))}</ul>
+                </div>);
+            })}
+          </div>
+        </nav>
+        <div className="min-w-0 space-y-7">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-slate-500">{items.length} providers · {items.filter(needsAttention).length} need attention · open one to see its settings, checks and actions.</p>
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setOpened(new Set(items.map((i) => i.provider)))}>Expand all</Button>
+              <Button size="sm" variant="ghost" onClick={() => setOpened(new Set())}>Collapse all</Button>
+            </div>
+          </div>
+          <ErrorBox error={test.error} />
+          {test.data && <Notice tone={test.data.connected ? "green" : "amber"}><b>{test.data.integration?.label ?? test.data.provider ?? "Connection test"}:</b> {test.data.connected ? "Connected — real request succeeded." : `Not connected — ${(test.data.steps?.find((s: any) => s.status === "FAILED")?.detail) ?? "open it for the step-by-step result"}`}</Notice>}
+          {GROUPS.map(([g, title]) => {
+            const list = items.filter((i) => i.group === g);
+            if (!list.length) return null;
+            return (
+              <section key={g} aria-label={title}>
+                <div className="mb-2 flex items-baseline justify-between gap-3">
+                  <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+                  <span className="text-2xs text-slate-400">{list.filter((i) => i.display.label === "Connected").length} of {list.length} connected</span>
+                </div>
+                {g === "System" && <p className="mb-2 text-xs leading-5 text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
+                <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  {list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} open={opened.has(i.provider)} onToggle={() => toggle(i.provider)}
+                    quickTest={{ busy: test.isPending ? busy : null, run: (p) => { setBusy(p); test.mutate(p); } }} />)}
+                </div>
+              </section>);
+          })}
+        </div>
+      </div>
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
       <WriteReadiness />
-      {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
-        ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code>{q.data.redirect_uri}</code></Notice>
-        : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
-      {[["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]].map(([g, title]) => {
-        const list = items.filter((i) => i.group === g);
-        if (!list.length) return null;
-        return (
-          <section key={g} className="space-y-4" aria-label={title}>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
-            {g === "System" && <p className="text-xs text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
-            <div className="grid gap-4 xl:grid-cols-2">{list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} />)}</div>
-          </section>);
-      })}
     </div>
   );
 }

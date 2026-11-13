@@ -20,7 +20,7 @@ export function Planner() {
             { key: "ai", label: "Model", render: (p) => <span className="text-xs">{p.draft_ai?.model} · {p.draft_ai?.prompt}</span> },
             { key: "status", label: "Status", render: (p) => <StatusBadge value={p.status} /> },
             { key: "created_at", label: "Created", render: (p) => dt(p.created_at) },
-          ]} />
+          ]} empty="No campaign plans yet. A plan starts from a campaign task in the Work queue; the AI draft and its challenger appear here." />
         )}
       </Card>
     </div>

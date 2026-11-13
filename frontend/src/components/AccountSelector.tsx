@@ -55,7 +55,7 @@ export default function AccountSelector({ canRefresh }: { canRefresh: boolean })
         {sel && (
           <div className="rounded-lg border border-brand-100 bg-brand-50 px-4 py-3 text-sm" aria-label="Selected account">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div><span className="text-xs uppercase tracking-wide text-brand-700">Working in</span><div className="font-semibold">{sel.name || "(unnamed)"} <span className="font-mono text-xs font-normal">{sel.customer_id_display ?? sel.customer_id}</span></div>
+              <div><span className="text-xs font-medium text-brand-700">Working in</span><div className="font-semibold">{sel.name || "(unnamed)"} <span className="font-mono text-xs font-normal">{sel.customer_id_display ?? sel.customer_id}</span></div>
                 {!sel.selectable && <div className="text-xs text-amber-800">{sel.unavailable_reason}</div>}</div>
               <div className="flex gap-2">{sel.client_id ? <Link to={`/clients/${sel.client_id}`}><Button>Open workspace</Button></Link>
                 : <Link to={`/clients/new?customer_id=${sel.customer_id}`}><Button>Create a client, then link it below</Button></Link>}</div>
