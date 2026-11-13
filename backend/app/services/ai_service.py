@@ -15,6 +15,9 @@ from app.adapters.base import AdapterError
 from app.core.errors import AppError
 from app.core.util import payload_hash
 from app.models import AIRun
+from app.services import research_events
+
+RATE_WAIT_MAX = 65.0  # Groq's per-minute windows: wait for the window it names (up to a minute), never forever
 
 
 class AIOutputInvalid(AppError):
@@ -58,6 +61,10 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         run = AIRun(task_id=task_id, purpose=purpose, provider=label or provider.name[:20], prompt_template_id=spec["id"],
                     prompt_version=spec["version"], input_hash=payload_hash(payload), attempt=attempt)
         db.add(run)
+        model = getattr(provider, "challenger_model" if model_role == "challenger" else "model", None) or getattr(provider, "name", "")
+        research_events.emit("ai_request", f"Asking {label or provider.name} ({model}) for {purpose.replace('_', ' ').lower()}",
+                             purpose=purpose, provider=label or provider.name, model=model, attempt=attempt,
+                             approx_input=(len(system) + len(json.dumps(user, default=str))) // 4)
         try:
             raw = provider.complete(purpose, system, user, model_role=model_role)
         except AdapterError as exc:
@@ -67,12 +74,26 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                 max_attempts = max(max_attempts, 3)  # a per-minute window usually clears: wait for it instead of failing instantly
                 if attempt < max_attempts:
                     last_error = run.error
-                    time.sleep(min(max(float(exc.details.get("retry_after") or 0), 2.0 * attempt), 30.0))
+                    wait = min(max(float(exc.details.get("retry_after") or 0), 2.0 * attempt), RATE_WAIT_MAX)
+                    research_events.emit("ai_waiting", f"{label or provider.name} is rate-limited; waiting {wait:.0f}s before attempt {attempt + 1}",
+                                         level="warn", purpose=purpose, provider=label or provider.name, model=model, seconds=round(wait, 1),
+                                         reason=exc.message)
+                    time.sleep(wait)
                     continue
+            if exc.kind == "invalid_response" and attempt < max_attempts:
+                # the provider produced unusable output (e.g. JSON cut off at the output limit): re-ask with that feedback
+                last_error = f"{exc.message}. Return a complete, compact JSON object: keep text fields short and do not repeat content."
+                research_events.emit("ai_failed", f"{label or provider.name}: {exc.message} (attempt {attempt}); asking again",
+                                     level="warn", purpose=purpose, provider=label or provider.name, model=model, error_kind="invalid_output", reason=exc.message)
+                continue
             if exc.retryable and attempt < max_attempts and exc.kind != "rate_limited":
                 last_error = run.error
                 continue
-            raise AIOutputInvalid(f"AI provider error ({exc.kind}); nothing was executed", details=exc.to_dict()) from exc
+            research_events.emit("ai_failed", f"{label or provider.name}: {exc.message}", level="error", purpose=purpose,
+                                 provider=label or provider.name, model=model, error_kind=exc.kind, reason=exc.message,
+                                 limit=exc.details.get("limit") or None, requested=exc.details.get("requested") or None)
+            reason = exc.message if exc.details.get("too_large") or exc.kind in ("auth_failure", "invalid_input", "invalid_response") else f"AI provider error ({exc.kind}): {exc.message}"
+            raise AIOutputInvalid(f"{reason}; nothing was executed", details=exc.to_dict()) from exc
         run.model, run.raw_output = raw.model, raw.text[:60000]
         run.tokens_in, run.tokens_out, run.latency_ms = raw.tokens_in, raw.tokens_out, raw.latency_ms
         try:
@@ -82,10 +103,15 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
             run.validation_ok = False
             db.flush()
             last_error = run.error
+            research_events.emit("ai_failed", f"{label or provider.name} returned output that does not match the required format (attempt {attempt})",
+                                 level="warn", purpose=purpose, provider=label or provider.name, model=raw.model, error_kind="invalid_output",
+                                 detail=str(exc)[:300], reason="returned output that does not match the required format")
             continue
         run.parsed_output = parsed.model_dump()
         run.validation_ok = True
         db.flush()
+        research_events.emit("ai_result", f"{label or provider.name} returned a valid {purpose.replace('_', ' ').lower()}", purpose=purpose,
+                             provider=label or provider.name, model=raw.model, usage_in=raw.tokens_in, usage_out=raw.tokens_out, attempt=attempt)
         return parsed, run
     raise AIOutputInvalid(f"AI output for {purpose} failed schema validation after {max_attempts} attempts; "
                           "nothing was executed", details={"last_error": last_error[:500]})

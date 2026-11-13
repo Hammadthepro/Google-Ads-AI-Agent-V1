@@ -537,6 +537,7 @@ def save_keyword_audit(db: Session, business: Business, task_id: str | None, act
                 finished_at=clock.real_now(), created_by_id=actor_id, source_type=result.get("source", "NONE"))
     db.add(row)
     db.flush()
+    research_events.attach_stage(STAGE_OF["KEYWORD"], row.id)
     return row
 
 

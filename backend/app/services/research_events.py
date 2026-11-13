@@ -31,6 +31,8 @@ KINDS = {
     "source_discovered", "url_crawling", "page_extracted", "page_failed", "crawl_blocked",
     "competitor_identified", "keyword_discovery", "location_identified", "web_result",
     "research_stored", "evidence_validated", "provider_unavailable", "provider_failed", "note",
+    # campaign build: what the AI is asked, when it is waiting on a provider, and what came back
+    "ai_request", "ai_waiting", "ai_failed", "ai_result", "plan_stored", "metric_computed",
 }
 LEVELS = ("info", "warn", "error")
 
@@ -126,6 +128,23 @@ def emit(kind: str, title: str, *, stage: str = "", level: str = "info", **data:
             logger.exception("research event not recorded (%s)", kind)
             return
     logger.warning("research event %s dropped after sequence conflicts", kind)
+
+
+def attach_stage(stage: str, audit_id: str) -> int:
+    """Link the bound run's events of `stage` that belong to no audit yet to `audit_id` (an audit row created after its research ran,
+    such as keyword research), so that audit's own live view shows them. Returns the number of events linked."""
+    b = _binding.get()
+    if b is None or not audit_id:
+        return 0
+    from sqlalchemy import update
+    try:
+        with session_scope() as db:
+            res = db.execute(update(ResearchEvent).where(ResearchEvent.run_id == b["run_id"], ResearchEvent.stage == stage,
+                                                         ResearchEvent.audit_id.is_(None)).values(audit_id=audit_id))
+            return res.rowcount or 0
+    except Exception:  # noqa: BLE001
+        logger.exception("research events not linked to audit %s", audit_id)
+        return 0
 
 
 def forget(report_id: str) -> None:

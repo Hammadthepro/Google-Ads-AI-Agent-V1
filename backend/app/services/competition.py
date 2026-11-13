@@ -208,13 +208,22 @@ def compare(drafts: dict[str, dict]) -> dict:
 
 
 # ------------------------------------------------------------------------------------------ run
+def _reason(exc: Exception) -> str:
+    """A provider's failure in plain words: the app's own message as written (it already names the provider and the cause);
+    the exception type only for unexpected errors."""
+    from app.core.errors import AppError
+    if isinstance(exc, AppError):
+        return exc.message.removesuffix("; nothing was executed")[:600]
+    return f"{type(exc).__name__}: {str(exc)[:500]}"
+
+
 def _draft_side(db, side, provider, purpose, payload, task_id):
     try:
         parsed, run = ai_service.generate(db, purpose, payload, task_id=task_id, provider=provider,
                                           model_role="draft", label=_label(side, provider))
         return parsed.model_dump(), run, None
     except Exception as exc:  # noqa: BLE001 - a failing side must not abort the other
-        return None, None, f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))[:300]}"
+        return None, None, _reason(exc)
 
 
 def _challenge_side(db, challenger_side, provider, target_draft, ctx, task_id):
@@ -224,7 +233,7 @@ def _challenge_side(db, challenger_side, provider, target_draft, ctx, task_id):
                                           model_role="challenger", label=_label(challenger_side, provider))
         return parsed.model_dump(), run, None
     except Exception as exc:  # noqa: BLE001
-        return None, None, f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))[:300]}"
+        return None, None, _reason(exc)
 
 
 def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: list[dict], verified_claims: list[str],
@@ -243,7 +252,10 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
         else:
             errors[side] = e
     if "internal" not in drafts and "claude" not in drafts:
-        raise ai_service.AIOutputInvalid("Neither AI produced a valid draft; nothing was created", details=errors)
+        who = {"internal": "Groq (internal AI)", "claude": "Claude"}
+        reasons = "; ".join(f"{who.get(k, k)}: {v}" for k, v in errors.items())
+        raise ai_service.AIOutputInvalid(f"Neither AI produced a valid draft; nothing was created. {reasons}",
+                                         details={"providers": errors})
 
     challenges = {}
     if len(drafts) == 2:  # cross-challenge: each side reviews the OTHER side's draft

@@ -23,6 +23,12 @@ def run_task_job(task_id: str) -> str:
     return tasks_service.run_task(task_id)
 
 
+@celery.task(name="gaa.retry_draft")
+def retry_draft_job(task_id: str) -> str:
+    from app.services import tasks_service
+    return tasks_service.run_retry_draft(task_id)
+
+
 for _name in ("daily_sync", "audit_measurement", "hourly_brake", "optimize_all", "insights_all", "recheck_fixes", "approvals_sweep",
               "weekly_reports", "evaluate_predictions"):
     celery.task(name=f"gaa.{_name}")(getattr(jobs, _name))

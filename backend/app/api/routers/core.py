@@ -280,7 +280,8 @@ def audit_events(audit_id: str, after: int = 0, user: User = Depends(require("cl
         raise NotFound("Audit not found")
     auth_service.require_client_access(db, user, a.client_id)
     events = research_events.list_events(db, audit_id=a.id, after=after)
-    return {"audit_id": a.id, "status": a.status, "done": a.status not in audit_jobs.ACTIVE, "events": events,
+    # a finished audit with more events than one page is not "done" until the caller has read them all
+    return {"audit_id": a.id, "status": a.status, "done": a.status not in audit_jobs.ACTIVE and len(events) < 500, "events": events,
             "last_seq": events[-1]["seq"] if events else after}
 
 

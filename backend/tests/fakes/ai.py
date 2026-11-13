@@ -119,13 +119,18 @@ class MockAIProvider(AIProvider):
     def _ad_group(self, u, svc: dict, include_unverified=False) -> dict:
         city, biz = u.get("city", "your area"), u.get("business_name", "Our team")
         claims = [c for c in u.get("verified_claims", []) if len(c) <= 30]
-        rows = [r for r in u.get("keyword_table", []) if r.get("label") == "SERVICE" and r.get("service") == svc["name"]]
-        rows.sort(key=lambda r: -(r.get("avg_monthly_searches") or 0))
+        table = u.get("keyword_table") or []
+        if isinstance(table, dict):  # the compact draft input: keywords grouped by service, strongest first
+            texts = list((table.get("keywords_by_service") or {}).get(svc["name"], []))
+        else:
+            rows = [r for r in table if r.get("label") == "SERVICE" and r.get("service") == svc["name"]]
+            rows.sort(key=lambda r: -(r.get("avg_monthly_searches") or 0))
+            texts = [r["keyword"] for r in rows]
         kws = []
-        for r in rows[:6]:
-            kws.append({"text": r["keyword"], "match_type": "EXACT"})
+        for t in texts[:6]:
+            kws.append({"text": t, "match_type": "EXACT"})
             if len(kws) < 10:
-                kws.append({"text": r["keyword"], "match_type": "PHRASE"})
+                kws.append({"text": t, "match_type": "PHRASE"})
         if not kws:
             kws = [{"text": svc["name"].lower(), "match_type": "EXACT"}, {"text": svc["name"].lower(), "match_type": "PHRASE"}]
         return {"name": svc["name"], "service": svc["name"], "landing_page": svc.get("landing_page") or u.get("website", ""),
@@ -149,7 +154,9 @@ class MockAIProvider(AIProvider):
         groups = [self._ad_group(u, s, include_unverified=(i == 0 and self.variant == "a")) for i, s in enumerate(services)]
         if self.variant == "b":
             groups = [self._variant_b(g) for g in groups]
-        negatives = sorted({r["keyword"] for r in u.get("keyword_table", []) if r.get("label") == "IRRELEVANT"})
+        table = u.get("keyword_table") or []
+        negatives = sorted(set(table.get("irrelevant_terms") or []) if isinstance(table, dict) else
+                           {r["keyword"] for r in table if r.get("label") == "IRRELEVANT"})
         negatives = sorted(set(negatives) | {"jobs", "diy", "free"})
         share = round(100 / max(1, len(groups)), 1)
         m = u.get("measurement") or {}

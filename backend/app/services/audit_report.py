@@ -821,8 +821,12 @@ def _run(db, report_id: str) -> str:
         w, g, comp = par["website"], par["gbp"], par["competitor"]
         _step(rep.id, "keywords", "RUNNING")
         budget = (biz.monthly_budget_usd or 0) / 30.4 or None
-        kw = audits.keyword_research(db, ctx, w if not w.get("error") else {}, comp, None, daily_budget=budget)
+        with research_events.staged("keywords"):
+            research_events.emit("stage_started", audits.STAGE_TITLE["KEYWORD"], stage="keywords")
+            kw = audits.keyword_research(db, ctx, w if not w.get("error") else {}, comp, None, daily_budget=budget)
         audits.save_keyword_audit(db, biz, None, rep.created_by_id, kw)
+        research_events.emit("stage_failed" if kw.get("error") else "stage_completed", audits.STAGE_TITLE["KEYWORD"], stage="keywords",
+                             level="error" if kw.get("error") else "info", summary=(kw.get("error") or audits._summary("KEYWORD", kw))[:300])
         _step(rep.id, "keywords", "DONE", audits._summary("KEYWORD", kw))
         db.commit()
         sections = {}

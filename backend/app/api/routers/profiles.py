@@ -99,7 +99,7 @@ def report_events(report_id: str, after: int = 0, limit: int = 500, user: User =
     r = audit_report.get_for_user(db, report_id)
     auth_service.require_client_access(db, user, r.client_id)
     events = research_events.list_events(db, report_id, after=after, limit=limit)
-    return {"report_id": r.id, "status": r.status, "steps": r.steps, "done": r.status != "RUNNING", "events": events,
+    return {"report_id": r.id, "status": r.status, "steps": r.steps, "done": r.status != "RUNNING" and len(events) < max(1, min(limit, 2000)), "events": events,
             "last_seq": events[-1]["seq"] if events else after}
 
 

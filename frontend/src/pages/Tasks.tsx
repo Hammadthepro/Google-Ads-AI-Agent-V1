@@ -5,6 +5,8 @@ import { api } from "../api/client";
 import { useAuth } from "../lib/auth";
 import { clientOptions, useAction, useClients } from "../lib/hooks";
 import { Badge, Button, Card, DataSourceBadge, dt, ErrorBox, Field, FieldGroup, Input, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
+import { BuildWorkspace } from "../components/campaignBuild/BuildWorkspace";
+import { DraftFailure } from "../components/campaignBuild/DraftRetry";
 
 const TASKS: { value: string; label: string; needs: "business" | "campaign" | "ad_group" | "ad" }[] = [
   { value: "BUILD_CAMPAIGN", label: "Build a new campaign", needs: "business" },
@@ -18,6 +20,7 @@ const TASKS: { value: string; label: string; needs: "business" | "campaign" | "a
   { value: "CHANGE_LOCATIONS", label: "Change locations", needs: "campaign" },
   { value: "AUDIT_ONLY", label: "Audit only", needs: "business" },
 ];
+const WORKSPACE_TYPES = ["BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_AD", "EDIT_AD", "ADD_KEYWORDS", "AUDIT_ONLY"];
 const TERMINAL = ["AWAITING_APPROVAL", "AWAITING_BUDGET_DECISION", "COMPLETED", "FAILED", "VALIDATION_FAILED", "EXECUTED", "EXECUTED_PAUSED", "ENABLED", "EXECUTION_FAILED"];
 
 export function IntakeReport({ report, clar, setClar }: { report: any; clar: Record<string, string>; setClar: (c: Record<string, string>) => void }) {
@@ -237,9 +240,12 @@ export function TaskDetail() {
           {t.approval_id && <Link to={`/approvals/${t.approval_id}`}><Button variant="primary">Open approval →</Button></Link>}
           {t.plan_id && <Link to={`/planner/${t.plan_id}`}><Button>View plan</Button></Link>}</>} />
       {t.status === "VALIDATION_FAILED" && <Notice tone="red">{t.error}</Notice>}
-      {t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
+      {(t.draft_retry?.available || t.status === "RETRYING_DRAFT" || (t.status === "RUNNING" && t.draft_attempts?.at(-1)?.kind === "retry")
+        || (t.status === "FAILED" && t.draft_attempts?.at(-1)?.status === "failed")) ? <DraftFailure task={t} />
+        : t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
       {t.status === "AWAITING_BUDGET_DECISION" && <BudgetDecision task={t} />}
       {t.status === "AWAITING_APPROVAL" && <Notice tone="amber">The workflow stopped at the approval stage. Nothing has been changed in Google Ads.</Notice>}
+      {WORKSPACE_TYPES.includes(t.task_type) && <BuildWorkspace task={t} active={!TERMINAL.includes(t.status)} />}
       <Card title="Workflow steps">
         <ol className="space-y-3">
           {t.steps.map((s: any, i: number) => (
@@ -255,7 +261,7 @@ export function TaskDetail() {
           {!TERMINAL.includes(t.status) && <Spinner label="Running…" />}
         </ol>
       </Card>
-      <Card title="Task input"><pre className="whitespace-pre-wrap text-xs text-slate-600">{JSON.stringify({ fields: t.fields, human_plan: t.human_plan, note: t.note }, null, 2)}</pre></Card>
+      <Card title="Task input"><pre className="whitespace-pre-wrap text-xs text-slate-600">{JSON.stringify({ fields: { ...t.fields, draft_attempts: undefined }, human_plan: t.human_plan, note: t.note }, null, 2)}</pre></Card>
     </div>
   );
 }

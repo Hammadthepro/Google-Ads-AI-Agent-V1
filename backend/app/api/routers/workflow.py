@@ -21,16 +21,18 @@ router = APIRouter()
 log = logging.getLogger("gaa.workflow")
 
 
-def dispatch(task_id: str) -> str:
-    """Run via Celery when a broker is configured; otherwise (or on broker failure) run in a background thread."""
+def dispatch(task_id: str, job: str = "run") -> str:
+    """Run via Celery when a broker is configured; otherwise (or on broker failure) run in a background thread.
+    `job` is "run" (the whole task) or "retry_draft" (only the failed drafting stage onward)."""
     if not get_settings().CELERY_TASK_ALWAYS_EAGER:
         try:
-            from app.workers.celery_app import run_task_job
-            run_task_job.apply_async(args=[task_id], retry=False, ignore_result=True)
+            from app.workers.celery_app import retry_draft_job, run_task_job
+            (retry_draft_job if job == "retry_draft" else run_task_job).apply_async(args=[task_id], retry=False, ignore_result=True)
             return "celery"
         except Exception as exc:  # noqa: BLE001
             log.warning("Celery dispatch failed (%s); running task inline", type(exc).__name__)
-    threading.Thread(target=tasks_service.run_task, args=(task_id,), daemon=True).start()
+    target = tasks_service.run_retry_draft if job == "retry_draft" else tasks_service.run_task
+    threading.Thread(target=target, args=(task_id,), daemon=True).start()
     return "thread"
 
 
@@ -119,7 +121,36 @@ def get_task(task_id: str, user: User = Depends(require("clients.view")), db: Se
     if not t:
         raise NotFound("Task not found")
     auth_service.require_client_access(db, user, t.client_id)
-    return tasks_service.serialize(t)
+    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t)}
+
+
+@router.post("/tasks/{task_id}/retry-draft", tags=["tasks"])
+def retry_draft(task_id: str, sync: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Retry only the failed AI drafting stage, reusing this task's stored research. Never creates anything in Google Ads:
+    a successful draft goes through challenge, validation and the approval request like any other draft."""
+    t, attempt = tasks_service.retry_draft(db, user, task_id)
+    db.commit()
+    if sync:
+        tasks_service.run_retry_draft(t.id)
+        db.expire_all()
+        t = db.get(Task, t.id)
+        return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "attempt": attempt}
+    runner = dispatch(t.id, "retry_draft")
+    return {**tasks_service.serialize(t), "attempt": attempt, "runner": runner}
+
+
+@router.get("/tasks/{task_id}/events", tags=["tasks"])
+def task_events(task_id: str, after: int = 0, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The live activity of a task run (every step, every research source, every AI request), in order.
+    Poll with `after` = the last `seq` received; `done` once the task is no longer running."""
+    from app.services import research_events
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, user, t.client_id)
+    events = research_events.list_events(db, run_id=t.id, after=after)
+    return {"task_id": t.id, "status": t.status, "current_step": t.current_step, "done": t.status not in tasks_service.ACTIVE_STATUSES and len(events) < 500,
+            "events": events, "last_seq": events[-1]["seq"] if events else after}
 
 
 # ------------------------------------------------------------------ plans

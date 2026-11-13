@@ -100,6 +100,10 @@ export function describe(e: ResearchEvent): string {
 export const STAGE_TITLE: Record<string, string> = {
   client: "Client & business", website: "Website & landing pages", gbp: "Business presence", geo: "Local market",
   competitors: "Competitors", keywords: "Keyword research & search intent", report: "Scoring & recommendations", "": "Research",
+  // campaign build stages (task runs)
+  account: "Google Ads account", measurement: "Conversion measurement", research: "Research audits", overlap: "Overlap check",
+  feasibility: "Feasibility", intelligence: "Intelligence record", draft: "AI draft", challenge: "AI challenger", human: "Human plan comparison",
+  validate: "Validation", approval: "Approval request",
 };
 export type StreamItem = { key: string; type: "activity" | "finding" | "warning" | "note"; text: string; detail?: string; url?: string;
   chips?: string[]; state?: "working" | "done" | "failed"; seq: number; at: string };
@@ -125,6 +129,7 @@ export function buildStream(events: ResearchEvent[]): StreamStage[] {
       case "stage_completed": s.state = "done"; s.summary = d.summary; break;
       case "stage_failed": s.state = "failed"; s.summary = d.summary; break;
       case "stage_skipped": s.state = "skipped"; s.summary = d.summary || e.title; break;
+      case "stage_waiting": s.state = "waiting"; s.summary = d.summary; push({ key: `n:${e.seq}`, type: "warning", text: d.summary || e.title }); break;
       case "url_crawling": push({ key: `p:${d.url}`, type: "activity", text: `Reading ${hostOf(d.url)}${pathOf(d.url) === "/" ? "" : pathOf(d.url)}`, url: d.url, state: "working" }); break;
       case "page_extracted": {
         const existing = find(`p:${d.url}`);
