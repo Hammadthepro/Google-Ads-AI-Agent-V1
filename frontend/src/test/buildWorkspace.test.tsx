@@ -146,7 +146,8 @@ describe("BuildWorkspace", () => {
 describe("DraftFailure", () => {
   const task = { id: "t9", status: "FAILED", error: "Neither AI…", draft_retry: { available: true },
     draft_attempts: [{ attempt: 1, kind: "initial", status: "failed", finished_at: new Date().toISOString(),
-      calls: [{ provider: "internal:GroqAIProvider", model: "openai/gpt-oss-120b", attempt: 1, ok: false, error: "rate_limited: Groq rejected the request as too large (HTTP 413)" }] }] };
+      calls: [{ provider: "internal:GroqAIProvider", model: "openai/gpt-oss-120b", attempt: 1, ok: false, error: "tpm_exceeded: Groq rejected the request as too large (HTTP 413)", error_kind: "tpm_exceeded",
+        stage: "campaign plan", tokens_in: 0, prompt_estimate: 8636 }] }] };
 
   it("names each provider's error and retries once per click", async () => {
     const posts: string[] = [];
@@ -159,6 +160,9 @@ describe("DraftFailure", () => {
     expect(screen.getByText("Groq (internal AI)")).toBeInTheDocument();
     expect(screen.getByText("Groq rejected the request as too large (HTTP 413)")).toBeInTheDocument();
     expect(screen.getByText("Attempt 1")).toBeInTheDocument();
+    expect(screen.getByText("Request larger than the per-minute token limit")).toBeInTheDocument();
+    expect(screen.getByText("~8,636 tokens estimated, not sent")).toBeInTheDocument();
+    expect(screen.getByText(/campaign plan · call 1/)).toBeInTheDocument();
     const btn = screen.getByRole("button", { name: "Retry draft" });
     fireEvent.click(btn);
     await waitFor(() => expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled());

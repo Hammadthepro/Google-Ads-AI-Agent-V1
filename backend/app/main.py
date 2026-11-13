@@ -140,8 +140,9 @@ def create_app() -> FastAPI:
         ok = checks["database"] == "ok"
         return JSONResponse({"status": "ready" if ok else "not_ready", "checks": checks}, status_code=200 if ok else 503)
 
-    from app.api.routers import agent, auth_users, core, integrations, mcc, ops, profiles, workflow
-    for r in (auth_users.router, core.router, workflow.router, ops.router, integrations.router, profiles.router, mcc.router, agent.router):
+    from app.api.routers import agent, ai_config, auth_users, core, integrations, mcc, ops, profiles, workflow
+    for r in (auth_users.router, core.router, workflow.router, ops.router, integrations.router, profiles.router, mcc.router, agent.router,
+              ai_config.router):
         app.include_router(r, prefix="/api/v1")
     return app
 

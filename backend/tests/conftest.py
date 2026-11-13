@@ -78,6 +78,7 @@ def install_fakes() -> None:
     registry.override("crawler", FixtureCrawlerAdapter())
     registry.override("ai", MockAIProvider())
     registry.override("claude_ai", MockAIProvider(variant="b"))
+    registry.override("challenger_ai", MockAIProvider())
     registry.override("notifier", MockNotifier())
     from tests.fakes.research import FakeOSM, FakeSuggestions
     registry.override("search_suggestions", FakeSuggestions())

@@ -394,6 +394,8 @@ _cache: dict[str, tuple[float, dict]] = {}
 
 def invalidate() -> None:
     _cache.clear()
+    from app.services import ai_roles  # AI roles can borrow an integration's key: their resolution is stale too
+    ai_roles._cache.clear()
     from app.adapters import registry
     registry.reset()
 

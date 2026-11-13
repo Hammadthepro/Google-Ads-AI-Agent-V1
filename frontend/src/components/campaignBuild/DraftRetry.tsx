@@ -6,7 +6,16 @@ import { Badge, Button, dt, ErrorBox } from "../ui";
 import { providerName } from "./buildModel";
 
 type Attempt = { attempt: number; kind: string; status: string; error?: string; started_at?: string; finished_at?: string; requested_at?: string;
-  calls?: { provider: string; model: string; attempt: number; ok: boolean; error: string; tokens_out?: number }[] };
+  calls?: { provider: string; model: string; attempt: number; ok: boolean; error: string; error_kind?: string; stage?: string; finish_reason?: string;
+    tokens_in?: number; tokens_out?: number; prompt_estimate?: number }[] };
+
+/** What each failure kind means, so the cause is named rather than guessed at. */
+export const KIND_LABEL: Record<string, string> = {
+  tpm_exceeded: "Request larger than the per-minute token limit", rate_limited: "Per-minute token budget used up",
+  context_length: "Longer than the model's context window", output_truncated: "Answer cut off at the output-token limit",
+  malformed_json: "Malformed JSON", schema_invalid: "Did not match the campaign schema", auth_failure: "API key rejected",
+  outage: "Provider unavailable", timeout: "Provider timed out", invalid_input: "Request rejected by the provider",
+};
 
 const TONE: Record<string, string> = { failed: "red", succeeded: "green", running: "blue", queued: "amber" };
 
@@ -44,8 +53,10 @@ export function DraftFailure({ task }: { task: any }) {
               <li key={i} className="border-l-2 border-rose-300 pl-2.5">
                 <span className="font-medium text-slate-900">{providerName(c.provider)}</span>
                 {c.model && <span className="ml-1 font-mono text-2xs text-slate-500">{c.model}</span>}
-                <span className="ml-1 text-2xs text-slate-400">call {c.attempt}</span>
+                <span className="ml-1 text-2xs text-slate-400">{c.stage ? `${c.stage} · ` : ""}call {c.attempt}</span>
+                {c.error_kind && <Badge tone={c.error_kind === "rate_limited" ? "amber" : "red"}>{KIND_LABEL[c.error_kind] ?? c.error_kind.replace(/_/g, " ")}</Badge>}
                 <div className="break-words text-slate-700">{c.error.replace(/^[a-z_]+: /, "")}</div>
+                {(c.tokens_in || c.prompt_estimate) ? <div className="tabular text-2xs text-slate-400">{c.tokens_in ? `${c.tokens_in.toLocaleString()} prompt + ${(c.tokens_out ?? 0).toLocaleString()} completion tokens` : `~${c.prompt_estimate?.toLocaleString()} tokens estimated, not sent`}{c.finish_reason ? ` · finish: ${c.finish_reason}` : ""}</div> : null}
               </li>))}
           </ul>)}
         {!busy && !failedCalls.length && task.error && <p className="break-words text-slate-700">{task.error}</p>}

@@ -98,3 +98,34 @@ class IntelligenceRun(TimestampMixin, Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class AIRoleConfig(TimestampMixin, Base):
+    """One AI role of a workspace: the Main AI (does the work) or the Challenger AI (independently reviews important outputs).
+    The API key is stored encrypted (same Fernet key as every other credential) and is never returned; only a fingerprint is.
+    `credential_ref` lets a role use an existing integration's key (e.g. the Groq integration) without copying it."""
+
+    __tablename__ = "ai_role_configs"
+    __table_args__ = (UniqueConstraint("workspace_id", "role", name="uq_ai_role_workspace"),)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(16))                       # main | challenger
+    provider: Mapped[str] = mapped_column(String(20), default="")       # openai | anthropic | groq | gemini | mistral | deepseek | xai | openrouter
+    model: Mapped[str] = mapped_column(String(200), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    secrets_ciphertext: Mapped[str] = mapped_column(Text, default="")   # Fernet(api key)
+    key_fingerprint: Mapped[str] = mapped_column(String(32), default="")
+    credential_ref: Mapped[str] = mapped_column(String(40), default="")  # "integration:groq" = use that integration's key
+    source: Mapped[str] = mapped_column(String(30), default="configured")  # configured | migrated_from_groq
+    status: Mapped[str] = mapped_column(String(30), default="NOT_CONFIGURED")  # NOT_CONFIGURED | UNTESTED | CONNECTED | FAILED
+    model_meta: Mapped[dict] = mapped_column(JSONType, default=dict)    # the selected model's provider-stated metadata
+    models_cache: Mapped[list] = mapped_column(JSONType, default=list)  # last discovery result for this provider + key
+    models_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    models_error: Mapped[str] = mapped_column(String(300), default="")
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_test_steps: Mapped[list] = mapped_column(JSONType, default=list)
+    last_error: Mapped[str] = mapped_column(String(500), default="")
+    last_error_kind: Mapped[str] = mapped_column(String(40), default="")
+    pricing: Mapped[dict] = mapped_column(JSONType, default=dict)       # optional USD per 1M tokens {input, output} entered by an admin
+    review_policy: Mapped[dict] = mapped_column(JSONType, default=dict)  # challenger: which outputs it reviews
+    updated_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

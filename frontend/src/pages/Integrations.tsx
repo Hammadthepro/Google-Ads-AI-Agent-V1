@@ -1,5 +1,6 @@
 import { ReactNode, useState } from "react";
 import { WriteReadiness } from "../components/WriteReadiness";
+import { AIRoles } from "../components/AIRoles";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -402,7 +403,7 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
   );
 }
 
-const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "Other AI"], ["Research", "Web search & research"], ["Website research", "Website research"], ["System", "System"]];
+const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "AI provider integrations"], ["Research", "Web search & research"], ["Website research", "Website research"], ["System", "System"]];
 const DOT_TONE: Record<string, string> = { green: "bg-emerald-500", red: "bg-rose-500", amber: "bg-amber-500", blue: "bg-brand-500", slate: "bg-slate-300", violet: "bg-plum-500" };
 
 export default function Integrations() {
@@ -440,6 +441,7 @@ export default function Integrations() {
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
         ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code className="break-all font-mono text-xs">{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code className="break-all font-mono text-xs">{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
+      <AIRoles canManage={canManage} />
       <div className="grid gap-8 xl:grid-cols-[208px_minmax(0,1fr)]">
         <nav aria-label="Providers" className="hidden xl:block">
           <div className="sticky top-[76px] space-y-5 text-[13px]">
@@ -478,6 +480,7 @@ export default function Integrations() {
                   <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
                   <span className="text-2xs text-slate-400">{list.filter((i) => i.display.label === "Connected").length} of {list.length} connected</span>
                 </div>
+                {g === "AI" && <p className="mb-2 text-xs leading-5 text-slate-500">The Main AI and Challenger AI above decide which models do the work. The Groq integration's key can be used by a role without entering it again; the Claude integration is the optional second drafter of the AI competition.</p>}
                 {g === "System" && <p className="mb-2 text-xs leading-5 text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
                 <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
                   {list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} open={opened.has(i.provider)} onToggle={() => toggle(i.provider)}

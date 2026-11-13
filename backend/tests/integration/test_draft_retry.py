@@ -16,7 +16,7 @@ from app.services import tasks_service
 from tests.conftest import ADMIN, Api
 from tests.fakes.ai import MockAIProvider
 
-DRAFTS = ("DRAFT_CAMPAIGN", "DRAFT_AD_GROUP", "DRAFT_AD")
+DRAFTS = ("DRAFT_CAMPAIGN", "DRAFT_CAMPAIGN_SPEC", "DRAFT_AD_GROUP_CONTENT", "DRAFT_AD_GROUP", "DRAFT_AD")
 
 
 class Flaky(MockAIProvider):
@@ -24,7 +24,7 @@ class Flaky(MockAIProvider):
     down = True
 
     def complete(self, purpose, system, user, *, model_role="draft"):
-        if purpose in DRAFTS and Flaky.down:
+        if purpose.startswith("DRAFT") and Flaky.down:
             raise RateLimited("Groq rejected the request as too large for m's per-minute token limit on this plan (HTTP 413).",
                               adapter=self.name, details={"too_large": True, "status": 413})
         return super().complete(purpose, system, user, model_role=model_role)
@@ -79,7 +79,7 @@ def test_failed_draft_records_provider_details_and_offers_a_retry(flaky, busines
     a = t["draft_attempts"]
     assert len(a) == 1 and a[0]["attempt"] == 1 and a[0]["kind"] == "initial" and a[0]["status"] == "failed"
     assert {c["provider"].split(":")[0] for c in a[0]["calls"]} == {"internal", "claude"}
-    assert all(not c["ok"] and "HTTP 413" in c["error"] and c["model"] == "" for c in a[0]["calls"])
+    assert all(not c["ok"] and "HTTP 413" in c["error"] and c["error_kind"] == "tpm_exceeded" for c in a[0]["calls"])
     d = Api(ADMIN).get(f"/tasks/{t['id']}").json()
     assert d["draft_retry"]["available"] is True and d["draft_retry"]["researched_at"]
 
@@ -231,7 +231,7 @@ def test_a_failed_draft_is_shown_as_failed_with_the_provider_reason(flaky, busin
     ev = _events(t["id"])
     failed = next(e for e in ev if e["kind"] == "stage_failed" and e["stage"] == "draft")
     assert "HTTP 413" in failed["data"]["summary"]
-    assert any(e["kind"] == "ai_failed" and e["data"].get("error_kind") == "rate_limited" for e in ev)
+    assert any(e["kind"] == "ai_failed" and e["data"].get("error_kind") == "tpm_exceeded" for e in ev)
     assert ev[-1]["kind"] == "audit_failed"
     r = Api(ADMIN).get(f"/tasks/{t['id']}/events?after={ev[-1]['seq']}").json()
     assert r["events"] == [] and r["done"] is True and r["last_seq"] == ev[-1]["seq"]

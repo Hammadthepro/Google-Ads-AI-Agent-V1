@@ -121,7 +121,7 @@ class MockAIProvider(AIProvider):
         claims = [c for c in u.get("verified_claims", []) if len(c) <= 30]
         table = u.get("keyword_table") or []
         if isinstance(table, dict):  # the compact draft input: keywords grouped by service, strongest first
-            texts = list((table.get("keywords_by_service") or {}).get(svc["name"], []))
+            texts = [k[0] if isinstance(k, list) else k for k in (table.get("keywords_by_service") or {}).get(svc["name"], [])]
         else:
             rows = [r for r in table if r.get("label") == "SERVICE" and r.get("service") == svc["name"]]
             rows.sort(key=lambda r: -(r.get("avg_monthly_searches") or 0))
@@ -148,6 +148,27 @@ class MockAIProvider(AIProvider):
             ads.append(ad)
         g["ads"] = ads
         return g
+
+    def _h_review_diagnosis(self, u):
+        causes = (u.get("analysis") or {}).get("ai_causes") or []
+        return {"agreement": "AGREE" if causes else "PARTIALLY_AGREE", "findings": [], "confidence": 0.6,
+                "limitations": ["Test double: checks the shape of the review only."], "summary": "Reviewed."}
+
+    def _h_draft_campaign_spec(self, u):
+        """Stage 1 of a staged draft: the campaign plan, built from the same logic as a one-request draft."""
+        full = self._h_draft_campaign({**u, "keyword_table": {"irrelevant_terms": u.get("irrelevant_terms", [])}})
+        plan = {k: v for k, v in full.items() if k != "ad_groups"}
+        plan["ad_groups"] = [{"name": g["name"], "service": g["service"], "landing_page": g["landing_page"]} for g in full["ad_groups"]]
+        return plan
+
+    def _h_draft_ad_group_content(self, u):
+        """Stage 2: content for exactly the requested ad groups, from each one's researched keywords."""
+        out = []
+        for g in u.get("ad_groups", []):
+            svc = {"name": g["service"], "landing_page": g["landing_page"]}
+            body = self._ad_group({**u, "keyword_table": {"keywords_by_service": {g["service"]: g.get("researched_keywords", [])}}}, svc)
+            out.append({"name": g["name"], "keywords": body["keywords"], "negatives": body["negatives"], "ads": body["ads"]})
+        return {"ad_groups": out}
 
     def _h_draft_campaign(self, u):
         services = u.get("services", [])

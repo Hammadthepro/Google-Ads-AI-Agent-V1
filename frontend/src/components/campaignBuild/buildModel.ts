@@ -56,11 +56,12 @@ export function draftActivity(events: ResearchEvent[]): { calls: AiCall[]; plan:
     if (e.stage !== "draft") continue;
     if (e.kind === "plan_stored") { plan = d; continue; }
     if (!d.provider || !String(d.purpose ?? "").startsWith("DRAFT")) continue;
-    const base = { provider: d.provider, model: d.model, attempt: d.attempt, seq: e.seq, at: e.at };
-    if (e.kind === "ai_request") calls.set(d.provider, { ...base, state: "asking", text: `Asked for a draft (attempt ${d.attempt ?? 1})` });
-    else if (e.kind === "ai_waiting") calls.set(d.provider, { ...base, state: "waiting", text: e.title, waitSeconds: d.seconds });
-    else if (e.kind === "ai_failed") calls.set(d.provider, { ...base, state: e.level === "error" ? "failed" : "asking", text: d.reason ?? e.title });
-    else if (e.kind === "ai_result") calls.set(d.provider, { ...base, state: "done", text: `Returned a valid draft${d.usage_out ? ` · ${d.usage_out} output tokens` : ""}` });
+    const base = { provider: d.stage ? `${d.provider} · ${d.stage}` : d.provider, model: d.model, attempt: d.attempt, seq: e.seq, at: e.at };
+    const key = base.provider;
+    if (e.kind === "ai_request") calls.set(key, { ...base, state: "asking", text: `Asked for a draft (attempt ${d.attempt ?? 1})` });
+    else if (e.kind === "ai_waiting") calls.set(key, { ...base, state: "waiting", text: e.title, waitSeconds: d.seconds });
+    else if (e.kind === "ai_failed") calls.set(key, { ...base, state: e.level === "error" ? "failed" : "asking", text: d.reason ?? e.title });
+    else if (e.kind === "ai_result") calls.set(key, { ...base, state: "done", text: `Returned a valid draft${d.usage_out ? ` · ${d.usage_out} output tokens` : ""}` });
   }
   return { calls: [...calls.values()], plan, started: true };
 }
@@ -68,4 +69,8 @@ export function draftActivity(events: ResearchEvent[]): { calls: AiCall[]; plan:
 /** Seconds left of a wait the provider itself asked for (e.g. "retry in 52s"); 0 once over. */
 export const waitLeft = (c: AiCall, now: number) => Math.max(0, Math.round((c.waitSeconds ?? 0) - (now - new Date(c.at).getTime()) / 1000));
 
-export const providerName = (p: string) => p.startsWith("internal") ? "Groq (internal AI)" : p.startsWith("claude") ? "Claude" : p;
+export const providerName = (p: string) => {
+  const [who, ...rest] = p.split(" · ");
+  const name = who.startsWith("internal") ? "Groq (internal AI)" : who.startsWith("claude") ? "Claude" : who;
+  return rest.length ? `${name} · ${rest.join(" · ")}` : name;
+};

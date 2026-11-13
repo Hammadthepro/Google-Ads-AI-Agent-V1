@@ -1,4 +1,4 @@
-"""AI competition: identical inputs, cross-challenge, rule-based consolidation, graceful degradation."""
+"""AI competition: identical inputs, Challenger AI review of the final draft, rule-based consolidation, graceful degradation."""
 from __future__ import annotations
 
 
@@ -32,14 +32,14 @@ def _run(scope="CAMPAIGN"):
         return res, [(r.purpose, r.provider, r.prompt_template_id, r.prompt_version, r.input_hash) for r in runs[-6:]]
 
 
-def test_both_sides_get_identical_inputs_and_cross_challenge():
+def test_both_sides_get_identical_inputs_and_the_challenger_reviews_the_final_draft():
     res, runs = _run()
     c = res["competition"]
     assert c["mode"] == "dual" and c["identical_inputs"] and c["agreement_is_not_proof"]
     drafts = [r for r in runs if r[0] == "DRAFT_CAMPAIGN"]
     assert len(drafts) == 2 and drafts[0][2:] == drafts[1][2:]  # same template, version AND input hash
     assert {r[1] for r in drafts} == {"internal:test", "claude:test"}
-    assert set(c["challenges"]) == {"internal_on_claude", "claude_on_internal"}
+    assert set(c["challenges"]) == {"challenger_on_final"} and c["independent_review"]["performed"] is True
     assert c["comparison"]["comparable"] and "signal, not proof" in c["comparison"]["note"]
 
 

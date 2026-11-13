@@ -68,6 +68,13 @@ REGISTRY: list[dict] = [
     _v("GROQ_API_KEY", "AI (Groq)", "conditional", "Groq API key (starts with gsk_).", "integrations_service.py", secret=True, when="Groq is used"),
     _v("GROQ_MODEL", "AI (Groq)", "conditional", "Groq model that writes drafts and explanations. Exact Groq model ID.", "adapters/ai/__init__.py", when="Groq is used"),
     _v("GROQ_CHALLENGER_MODEL", "AI (Groq)", "optional", "Groq model that critiques plans. Blank = GROQ_MODEL (no independent second opinion).", "adapters/ai/__init__.py"),
+    _v("GROQ_TPM_LIMIT", "AI (Groq)", "optional", "Tokens per minute of the Groq plan for the drafting model. 0 = learn it from Groq's rate-limit headers.", "adapters/ai/__init__.py"),
+    _v("AI_DRAFT_MAX_OUTPUT_TOKENS", "AI (Groq)", "optional", "Output-token budget (max_tokens) of a one-request campaign draft. Default 6000.", "services/drafting.py"),
+    _v("AI_STAGE_MAX_OUTPUT_TOKENS", "AI (Groq)", "optional", "Output-token budget of one stage of a staged campaign draft. Default 4000.", "services/drafting.py"),
+    _v("AI_OUTPUT_TOKENS_BASE", "AI (Groq)", "optional", "Expected campaign-level output (including reasoning) per draft request, used to size requests. Default 1500.", "services/drafting.py"),
+    _v("AI_OUTPUT_TOKENS_PER_AD_GROUP", "AI (Groq)", "optional", "Expected output per ad group (keywords, negatives, one ad), used to size requests. Default 800.", "services/drafting.py"),
+    _v("AI_CHARS_PER_TOKEN", "AI (Groq)", "optional", "Characters per token for the conservative prompt-size estimate. Default 3.3.", "services/ai_service.py"),
+    _v("AI_TOKEN_SAFETY_MARGIN", "AI (Groq)", "optional", "Share of a per-minute token limit kept unused. Default 0.08.", "services/ai_service.py"),
     _v("ANTHROPIC_API_KEY", "AI (Claude)", "optional", "Fallback key for the Claude integration (model is chosen on the Integrations page; default claude-opus-5-5).", "integrations_service.py", secret=True),
     # ---- email
     _v("SMTP_HOST", "Email", "conditional", "SMTP server for alert emails.", "adapters/notifications", when="alert emails are wanted"),

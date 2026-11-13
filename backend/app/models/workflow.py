@@ -113,6 +113,16 @@ class AIRun(TimestampMixin, Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    # what happened, in terms that tell the causes apart (never the prompt or any secret)
+    finish_reason: Mapped[str] = mapped_column(String(30), default="")        # stop | length (output cut off) | provider-specific
+    provider_status: Mapped[str] = mapped_column(String(40), default="")      # ok | http_413 | http_429 | ...
+    error_kind: Mapped[str] = mapped_column(String(40), default="")           # tpm_exceeded | rate_limited | context_length | output_truncated | malformed_json | schema_invalid | ...
+    stage: Mapped[str] = mapped_column(String(60), default="")                # e.g. "spec" or "ad groups 5-8" for a staged draft
+    prompt_estimate: Mapped[int] = mapped_column(Integer, default=0)          # tokens the app estimated before sending
+    role: Mapped[str] = mapped_column(String(20), default="")                 # main | challenger | second_drafter
+    request_id: Mapped[str] = mapped_column(String(32), default="")           # one id per provider request, for tracing
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)      # only when known: provider-reported or from a configured price
+    cost_source: Mapped[str] = mapped_column(String(20), default="")          # provider | configured_price | "" (unknown)
 
 
 class CampaignPlan(TimestampMixin, Base):

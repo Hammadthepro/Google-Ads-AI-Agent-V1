@@ -82,6 +82,16 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = ""
     GROQ_CHALLENGER_MODEL: str = ""
     ANTHROPIC_API_KEY: str = ""  # optional fallback for the Claude integration (model is set on the Integrations page)
+    # AI token budgets. GROQ_TPM_LIMIT: tokens per minute of the Groq plan for the drafting model; 0 = learn it from Groq's own
+    # x-ratelimit-limit-tokens header (or a 413/429 that states it). Output budgets are max_tokens per request; they include the
+    # reasoning tokens of reasoning models such as openai/gpt-oss-120b.
+    GROQ_TPM_LIMIT: int = 0
+    AI_DRAFT_MAX_OUTPUT_TOKENS: int = 6000      # one-request campaign draft
+    AI_STAGE_MAX_OUTPUT_TOKENS: int = 4000      # one stage of a staged draft
+    AI_OUTPUT_TOKENS_BASE: int = 1500           # campaign-level fields + reasoning, per request
+    AI_OUTPUT_TOKENS_PER_AD_GROUP: int = 800    # keywords, negatives and one responsive search ad
+    AI_CHARS_PER_TOKEN: float = 3.3             # conservative: measured 3.4-3.9 chars/token on Groq for these prompts
+    AI_TOKEN_SAFETY_MARGIN: float = 0.08        # keep this share of a per-minute limit unused
 
     # Email alerts (sent only when SMTP_HOST is set)
     SMTP_HOST: str = ""

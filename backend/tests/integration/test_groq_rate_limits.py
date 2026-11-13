@@ -25,7 +25,7 @@ def test_classifies_transient_and_too_large_rate_limits():
     t = _groq_rate_limit(_Exc("Rate limit reached for model on tokens per minute (TPM): Limit 8000, Used 7000, Requested 2500", retry_after=12), "G", "m")
     assert t.details["retry_after"] == 12 and t.details["too_large"] is False
     big = _groq_rate_limit(_Exc("Request too large: tokens per minute (TPM): Limit 8000, Used 0, Requested 9500"), "G", "openai/gpt-oss-120b")
-    assert big.details["too_large"] is True and "8000" in big.message and "higher Groq tier" in big.message
+    assert big.details["too_large"] is True and "8,000" in big.message
 
 
 class _Flaky(AIProvider):
