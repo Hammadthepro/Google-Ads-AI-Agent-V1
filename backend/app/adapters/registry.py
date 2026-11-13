@@ -88,6 +88,13 @@ def tavily():
 
 
 @lru_cache
+def serpapi():
+    vals = integrations_service.ensure_configured("serpapi")
+    from app.adapters.research.serpapi import SerpApiAdapter
+    return SerpApiAdapter(vals["api_key"], gl=vals.get("country") or "us", hl=vals.get("language") or "en", device=vals.get("device") or "desktop")
+
+
+@lru_cache
 def brave_search():
     vals = integrations_service.ensure_configured("brave_search")
     from app.adapters.research.brave import BraveSearchAdapter
@@ -118,7 +125,7 @@ def geoapify():
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
        "crawler": crawler, "ai": ai, "challenger_ai": challenger_ai, "auth": auth, "notifier": notifier,
-       "tavily": tavily, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
+       "tavily": tavily, "serpapi": serpapi, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 
 def reset() -> None:

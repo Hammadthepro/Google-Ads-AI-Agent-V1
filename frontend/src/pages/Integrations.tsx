@@ -106,8 +106,32 @@ function SubtestRows({ item, run, canManage, busy }: { item: any; run: (target: 
   );
 }
 
+const num = (v: any) => (typeof v === "number" ? v.toLocaleString() : "not stated by SerpApi");
+
 function ProviderFacts({ item }: { item: any }) {
   const i = item.info || {};
+  if (item.provider === "serpapi") {
+    const a = i.account;
+    const u = i.usage_30d?.serpapi;
+    return (
+      <dl className="mt-3" aria-label="SerpApi account">
+        <Row label="API key">{item.secrets.api_key?.saved ? <>Configured <span className="font-normal text-slate-500">(••••••••, {item.secrets.api_key.source})</span></> : <span className="text-rose-700">Not configured</span>}</Row>
+        {a ? (<>
+          <Row label="Plan">{a.plan_name || "not stated by SerpApi"}{a.account_status ? ` · ${a.account_status}` : ""}</Row>
+          <Row label="Monthly search allowance">{num(a.searches_per_month)}</Row>
+          <Row label="Searches used this month">{num(a.this_month_usage)}</Row>
+          <Row label="Searches left">{num(a.total_searches_left)}{typeof a.extra_credits === "number" && a.extra_credits > 0 ? ` (incl. ${a.extra_credits.toLocaleString()} extra credits)` : ""}</Row>
+          <Row label="Hourly limit">{num(a.account_rate_limit_per_hour)}{typeof a.this_hour_searches === "number" ? ` · ${a.this_hour_searches} used this hour` : ""}</Row>
+          <Row label="Account checked">{dt(a.checked_at)} <span className="font-normal text-slate-500">(Account API — no search credit used)</span></Row>
+        </>) : <Row label="Plan and quota"><span className="text-slate-500">Not read yet: run Test Connection (uses the free Account API).</span></Row>}
+        {u && <Row label="Usage, 30 days (this app)">{u.requests_sent} search(es) sent · {u.served_from_cache} served from cache{u.failed ? ` · ${u.failed} failed` : ""}
+          {u.last_error && <div className="text-2xs text-amber-800">Last failure: {u.last_error.kind} — {u.last_error.message}</div>}</Row>}
+        {i.last_live_search && <Row label="Last live search test">“{i.last_live_search.query}” · {i.last_live_search.organic} organic, {i.last_live_search.ads} sponsored · {dt(i.last_live_search.at)}</Row>}
+        <Row label="Engines">{(i.engines ?? []).join(" · ")}</Row>
+        <Row label="Last successful connection test">{item.last_success_at ? dt(item.last_success_at) : "Never"}</Row>
+        <p className="mt-2 text-xs text-slate-500">{i.never}</p>
+      </dl>);
+  }
   if (i.usage_30d) {
     const rows = Object.entries(i.usage_30d as Record<string, any>);
     return (

@@ -18,7 +18,8 @@ from app.core.errors import IntegrationNotConfigured
 from app.core.util import from_micros, normalize_term
 from app.db.session import session_scope
 from app.models import Audit, Business, SourceType
-from app.services import accounts_service, ai_service, clients_service, crawler_service, geo_intel, keyword_intel, research_events, web_research
+from app.services import (accounts_service, ai_service, clients_service, crawler_service, geo_intel, keyword_intel, research_events,
+                          serp_research, web_research)
 
 TRUST_WORDS = ["licensed", "insured", "certified", "warranty", "guarantee", "years", "since", "review", "award",
                "family owned", "board-certified", "no fee"]
@@ -195,11 +196,39 @@ def gbp_audit(ctx: dict) -> dict:
 
 
 # ------------------------------------------------------------------ 4c competitors
+def _serp_candidates(ctx: dict, serp: dict) -> list[dict]:
+    """Competitor candidates seen in Google results (organic, sponsored, local pack). Suggestions only: never added automatically."""
+    known = {serp_research._host(c.get("website_url") or "") for c in ctx.get("competitors") or []}
+    out, seen = [], set()
+    for c in serp.get("organic_competitors") or []:
+        if c["domain"] in known or c["domain"] in seen:
+            continue
+        seen.add(c["domain"])
+        first = c["appearances"][0]
+        out.append({"name": (c["title"] or c["domain"])[:120], "website_url": f"https://{c['domain']}", "status": "suggested — seen in Google results",
+                    "evidence": {"provider": "serpapi", "url": c["url"], "query": first["query"], "location": first.get("location"),
+                                 "position": c["best_position"], "retrieved_at": first.get("retrieved_at"),
+                                 "served_from_cache": first.get("served_from_cache")}})
+    for d in serp.get("advertisers") or []:
+        if d in known or d in seen:
+            continue
+        seen.add(d)
+        ad = next(a for a in serp.get("sponsored_ads") or [] if a.get("domain") == d)
+        out.append({"name": d, "website_url": f"https://{d}", "status": "suggested — advertising on Google for the client's services",
+                    "evidence": {"provider": "serpapi", "url": ad.get("link"), "query": ad["query"], "location": ad.get("location"),
+                                 "ad_title": ad.get("title"), "retrieved_at": ad.get("retrieved_at"), "served_from_cache": ad.get("served_from_cache")}})
+    return out[:10]
+
+
 def competitor_audit(ctx: dict, task_id: str | None) -> dict:
     web = web_research.discover_competitors(ctx, stage="competitors")
+    serp = serp_research.research(ctx, stage="competitors", parts=("google", "maps", "transparency"))
+    if serp.get("used"):
+        web["candidates"] = _serp_candidates(ctx, serp) + [c for c in web["candidates"]
+                                                           if serp_research._host(c["website_url"]) not in {serp_research._host(x["website_url"]) for x in _serp_candidates(ctx, serp)}]
     if not ctx["competitors"]:
         return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "web_candidates": web["candidates"],
-                "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "source": "NONE"}
+                "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp, "source": "LIVE" if serp.get("used") else "NONE"}
     out, client_services = [], {normalize_term(s) for s in ctx["service_names"]}
     try:
         kw_adapter = registry.get("keyword_research")
@@ -235,9 +264,10 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
                                             task_id=task_id)
         ads_analysis = {**parsed.model_dump(), "verification": "Pasted by the team — not verified as currently running."}
     return {"competitors": out, "pasted_ads_analysis": ads_analysis, "web_candidates": web["candidates"],
-            "web_discovery": {k: v for k, v in web.items() if k != "candidates"},
+            "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp,
             "keyword_sources": ["Keyword Planner URL seeds (" + kw_adapter.source + ")"] if kw_adapter else [],
-            "missing_sources": ["Paid competitor bidding data (Semrush or similar) not connected"],
+            "missing_sources": ["Paid competitor bidding data (Semrush or similar) not connected"]
+            + ([] if serp.get("used") else ["Google results (SerpApi) not configured: no public ads or organic rankings were observed"]),
             "source": SourceType.combine(registry.get("crawler").source, kw_adapter.source if kw_adapter else None)}
 
 
@@ -307,6 +337,15 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
         dedup[key] = {"keyword": c["keyword"], **{m: None for m in keyword_intel.METRICS}, "seed": c["sources"][0]["source"], "source": "LIVE",
                       "sources": c["sources"], "metrics": keyword_intel.unavailable_metrics(no_metrics_reason), "service_hint": c.get("service_hint"),
                       "metrics_unavailable": list(keyword_intel.METRICS)}
+    serp = disc["report"].get("serp") or {}
+    observed = {normalize_term(q["query"]): q for q in serp.get("queries") or [] if q.get("ok") and q.get("engine") == "google"}
+    for key, r in dedup.items():
+        q = observed.get(key)
+        if q:  # this exact phrase was searched: what Google showed (not volume, not CPC)
+            ads_n = sum(1 for a in serp.get("sponsored_ads") or [] if normalize_term(a["query"]) == key)
+            r["serp_observation"] = {"query": q["query"], "location": q.get("location"), "retrieved_at": q.get("retrieved_at"),
+                                     "served_from_cache": q.get("served_from_cache"), "sponsored_ads_seen": ads_n, "provider": "serpapi",
+                                     "basis": "observed", "note": "Ads seen on one results page; this is not a CPC, a bid or search volume."}
     for key, r in dedup.items():
         if key in first_party:
             fp = first_party[key]

@@ -1,3 +1,4 @@
+import { SerpEvidence } from "../components/research/SerpEvidence";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -219,7 +220,9 @@ function Competitor({ r }: { r: any }) {
         </div>)}
       {r.pasted_ads_analysis && <Card title="Pasted competitor ads"><Notice tone="amber">{r.pasted_ads_analysis.verification}</Notice>
         <div className="mt-3 text-[13px]"><b>Offers:</b> {(r.pasted_ads_analysis.offers ?? []).join(" · ")}</div><div className="text-[13px]"><b>Angles:</b> {(r.pasted_ads_analysis.angles ?? []).join(" · ")}</div></Card>}
-      {(r.web_candidates ?? []).length > 0 && <Card title="Suggested by web search (not verified)"><ul className="prose-read">{r.web_candidates.map((w: any) => <li key={w.website_url}><a className="text-brand-700 hover:underline" href={w.website_url} target="_blank" rel="noreferrer noopener">{w.name}</a></li>)}</ul></Card>}
+      {(r.web_candidates ?? []).length > 0 && <Card title="Suggested competitors (not verified)"><ul className="space-y-1 text-[13px]">{r.web_candidates.map((w: any) => <li key={w.website_url}><a className="text-brand-700 hover:underline" href={w.website_url} target="_blank" rel="noreferrer noopener">{w.name}</a>
+        <span className="ml-1 text-xs text-slate-500">{w.status}{w.evidence?.query ? ` · for “${w.evidence.query}”` : ""}{w.evidence?.position ? ` · position ${w.evidence.position}` : ""}{w.evidence?.provider ? ` · ${w.evidence.provider === "serpapi" ? "Google results (SerpApi)" : w.evidence.provider}` : ""}</span></li>)}</ul></Card>}
+      <SerpEvidence serp={r.serp} />
       <p className="text-xs text-slate-500">Sources: {(r.keyword_sources ?? []).join(", ") || "website crawl"}. Missing: {(r.missing_sources ?? []).join(", ") || "none"}</p>
     </div>
   );
@@ -231,6 +234,7 @@ function Keywords({ r }: { r: any }) {
       <Notice>{r.match_type_policy}</Notice>
       {(r.overlaps ?? []).length > 0 && <Notice tone="amber">Overlaps: {r.overlaps.map((o: any) => `${o.keyword} (${o.ad_groups.join(" / ")})`).join("; ")}</Notice>}
       <KeywordInputs inputs={r.inputs} />
+      <SerpEvidence serp={r.discovery?.serp} />
       <Card title="Keywords" flush description={(r.keywords ?? []).length > 150 ? `First 150 of ${(r.keywords ?? []).length}` : undefined}>
         <div className="px-5"><Table rows={(r.keywords ?? []).slice(0, 150)} columns={[{ key: "keyword", label: "Keyword", className: "font-medium text-slate-900" }, { key: "label", label: "Label", render: (k) => <StatusBadge value={k.label === "IRRELEVANT" ? "FAIL" : k.label === "SERVICE" ? "PASS" : "WARN"} /> },
           { key: "ad_group", label: "Ad group" }, { key: "match_types", label: "Match", render: (k) => (k.match_types ?? []).join(" + ") || "negative" },

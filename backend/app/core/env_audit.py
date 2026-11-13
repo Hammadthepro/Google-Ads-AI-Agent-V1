@@ -62,6 +62,7 @@ REGISTRY: list[dict] = [
     _v("GOOGLE_PLACES_API_KEY", "Website research", "optional", "Places API (New) key for competitor and Business Profile research.", "integrations_service.py", secret=True),
     _v("PAGESPEED_API_KEY", "Website research", "optional", "PageSpeed Insights key (works without one at a low quota).", "integrations_service.py", secret=True),
     _v("TAVILY_API_KEY", "Research", "optional", "Tavily web search key (optional; the Integrations page is preferred).", "integrations_service.py", secret=True),
+    _v("SERPAPI_API_KEY", "Research", "optional", "SerpApi key: public Google results (organic, sponsored ads, related searches, autocomplete, Maps) for research. Optional; can also be saved encrypted on the Integrations page.", "adapters/research/serpapi.py", secret=True),
     _v("BRAVE_SEARCH_API_KEY", "Research", "optional", "Brave Search API key: fallback web search when Tavily is missing or fails (metered).", "integrations_service.py", secret=True),
     _v("GEOAPIFY_API_KEY", "Research", "optional", "Geoapify places/geocoding key (optional; the Integrations page is preferred).", "integrations_service.py", secret=True),
     # ---- AI
