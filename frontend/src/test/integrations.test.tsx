@@ -48,7 +48,7 @@ const openProvider = async (label: RegExp) => fireEvent.click(await screen.findB
 describe("Integrations dashboard", () => {
   it("groups cards into the four categories", async () => {
     setup();
-    for (const t of ["Google", "Other AI", "Website research", "System"]) expect((await screen.findAllByText(t, { selector: "h2" })).length).toBeGreaterThan(0);
+    for (const t of ["Google", "AI provider integrations", "Website research", "System"]) expect((await screen.findAllByText(t, { selector: "h2" })).length).toBeGreaterThan(0);
   });
 
   it("shows where every Google Ads field comes from and marks the missing required one", async () => {

@@ -100,17 +100,23 @@ def draft(db: Session, task: Task, business: Business, *, scope: str, services: 
     return plan
 
 
-def challenge(db: Session, plan: CampaignPlan, business: Business, feasibility: dict | None, measurement_ctx: dict) -> dict:
-    if plan.competition:  # the AI competition already cross-challenged both drafts
+def challenge(db: Session, plan: CampaignPlan, business: Business, feasibility: dict | None, measurement_ctx: dict,
+              keyword_table: list[dict] | None = None) -> dict:
+    """Independent review by the Challenger AI (or a clear "not performed"). The competition path already reviewed its final draft."""
+    from app.services import challenger
+    if plan.competition:
         return plan.challenger
-    payload = {"draft": plan.draft, "verified_claims": business.verified_claims or [],
-               "excluded_services": clients_service.excluded_services(business), "measurement": measurement_ctx,
-               "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in
-                               ("status", "expected_weekly_conversions", "weekly_target")}}
-    parsed, run = ai_service.generate(db, "CHALLENGE", payload, task_id=plan.task_id, model_role="challenger")
-    plan.challenger = parsed.model_dump()
-    plan.challenger_ai_run_id = run.id
-    plan.status = "CHALLENGED"
+    evidence = {"verified_claims": business.verified_claims or [], "excluded_services": clients_service.excluded_services(business),
+                "measurement": measurement_ctx,
+                "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in ("status", "expected_weekly_conversions", "weekly_target")}}
+    if keyword_table:
+        from app.services.competition import _evidence_keywords
+        evidence["research"] = _evidence_keywords(keyword_table)
+    kind = "campaign_draft" if plan.scope in ("CAMPAIGN", "AD_GROUP") else "ad_copy"
+    report, run_id = challenger.review_draft(db, plan.draft, evidence, kind=kind, task_id=plan.task_id)
+    plan.challenger = report
+    plan.challenger_ai_run_id = run_id
+    plan.status = "CHALLENGED" if report.get("performed") else plan.status
     return plan.challenger
 
 

@@ -231,16 +231,6 @@ def _draft_side(db, side, provider, purpose, payload, task_id):
         return None, None, _reason(exc)
 
 
-def _challenge_side(db, challenger_side, provider, target_draft, ctx, task_id):
-    payload = {"draft": target_draft, **ctx}
-    try:
-        parsed, run = ai_service.generate(db, "CHALLENGE", payload, task_id=task_id, provider=provider,
-                                          model_role="challenger", label=_label(challenger_side, provider))
-        return parsed.model_dump(), run, None
-    except Exception as exc:  # noqa: BLE001
-        return None, None, _reason(exc)
-
-
 def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: list[dict], verified_claims: list[str],
         conversion_bidding: bool | None, task_id: str | None) -> dict:
     """Returns {draft, competition, internal_run_id, challenger_run_id, challenger(merged report)}."""
@@ -257,25 +247,12 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
         else:
             errors[side] = e
     if "internal" not in drafts and "claude" not in drafts:
-        who = {"internal": "Groq (internal AI)", "claude": "Claude"}
+        who = {"internal": "Main AI", "claude": "Claude (second drafter)"}
         reasons = "; ".join(f"{who.get(k, k)}: {v}" for k, v in errors.items())
         raise ai_service.AIOutputInvalid(f"Neither AI produced a valid draft; nothing was created. {reasons}",
                                          details={"providers": errors})
 
-    challenges = {}
-    if len(drafts) == 2:  # cross-challenge: each side reviews the OTHER side's draft
-        for challenger, target in (("internal", "claude"), ("claude", "internal")):
-            rep, run_, err = _challenge_side(db, challenger, provs[challenger], drafts[target], challenge_ctx, task_id)
-            if rep:
-                challenges[f"{challenger}_on_{target}"] = {"report": rep, "run_id": run_.id}
-            else:
-                errors[f"challenge_{challenger}"] = err
-    else:
-        only = next(iter(drafts))
-        rep, run_, err = _challenge_side(db, only, provs[only], drafts[only], challenge_ctx, task_id)
-        if rep:
-            challenges[f"{only}_on_{only}"] = {"report": rep, "run_id": run_.id}
-
+    challenges = {}  # filled after consolidation: the Challenger AI reviews the FINAL draft (once), with the research evidence
     # ---- rule-based consolidation
     seen: set = set()
     notes = []
@@ -339,10 +316,31 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
     if comp["mode"] == "single":
         comp["degraded_reason"] = "; ".join(f"{k}: {v}" for k, v in errors.items() if k in SIDES) or "second AI unavailable"
 
-    merged = merge_challenges(challenges, final)
+    from app.services import challenger
+    evidence = {**challenge_ctx, "services": payload.get("services"),
+                "research": _evidence_keywords(payload.get("keyword_table"))}
+    report, review_run = challenger.review_draft(db, final, evidence, kind="campaign_draft", task_id=task_id)
+    if report.get("performed"):
+        challenges["challenger_on_final"] = {"report": report, "run_id": review_run}
+        merged = {**merge_challenges(challenges, final), **{k: report.get(k) for k in ("performed", "kind", "reviewer", "independence",
+                                                                                         "confidence", "limitations", "run_id")}}
+    else:
+        merged = report
+    comp["challenges"] = challenges
+    comp["independent_review"] = {k: merged.get(k) for k in ("performed", "reason", "independence", "reviewer")}
     return {"draft": final, "competition": comp, "challenger": merged,
             "draft_run_id": (runs.get("internal") or runs.get("claude")).id,
-            "challenger_run_id": next((v["run_id"] for v in challenges.values()), None)}
+            "challenger_run_id": review_run}
+
+
+def _evidence_keywords(kt) -> dict:
+    """The research a reviewer needs to judge keywords and targeting: the strongest researched keywords per service and the exclusions."""
+    if isinstance(kt, list):
+        from app.services.planner import compact_keywords
+        kt = compact_keywords(kt)
+    kt = kt or {}
+    return {"keywords_by_service": {k: v[:10] for k, v in (kt.get("keywords_by_service") or {}).items()},
+            "irrelevant_terms": (kt.get("irrelevant_terms") or [])[:30]}
 
 
 def merge_challenges(challenges: dict, final: dict) -> dict:

@@ -129,13 +129,32 @@ class Objection(Strict):
     severity: Literal["LOW", "MEDIUM", "HIGH"]
     target: str = ""
     message: str
-    suggestion: str = ""
+    suggestion: str = ""          # the recommended correction
+    evidence: str = ""            # what in the given inputs supports the objection
 
 
 class ChallengeReport(Strict):
     verdict: Literal["APPROVE", "REVISE", "REJECT"]
     objections: list[Objection] = Field(default_factory=list)
     agreements: list[str] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class ReviewFinding(Strict):
+    issue: str
+    severity: Literal["LOW", "MEDIUM", "HIGH"]
+    evidence: str = ""
+    recommended_correction: str = ""
+
+
+class AnalysisReview(Strict):
+    """The Challenger's review of an analysis (e.g. the weekly diagnosis). Advisory: it never changes rule-based results."""
+    agreement: Literal["AGREE", "PARTIALLY_AGREE", "DISAGREE"]
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    limitations: list[str] = Field(default_factory=list)
+    summary: str = ""
 
 
 class Disagreement(Strict):
@@ -181,6 +200,7 @@ SCHEMAS = {
     "DRAFT_AD": AdCopy,
     "FIX_ADS": AdFix,
     "CHALLENGE": ChallengeReport,
+    "REVIEW_DIAGNOSIS": AnalysisReview,
     "RESOLVE_HUMAN_PLAN": HumanPlanResolution,
     "DIAGNOSE": DiagnosisCauses,
     "REPORT_SUMMARY": TextSummary,

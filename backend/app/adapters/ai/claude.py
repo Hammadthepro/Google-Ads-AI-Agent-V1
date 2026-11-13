@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 
 from app.adapters.ai import AIProvider, RawCompletion, serialize
-from app.adapters.base import AdapterTimeout, AuthError, ContextLengthExceeded, InvalidInput, PermissionDenied, RateLimited, ServiceUnavailable
+from app.adapters.base import AdapterTimeout, AuthError, InvalidInput, ServiceUnavailable
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -20,14 +20,18 @@ class ClaudeAIProvider(AIProvider):
     supports_max_tokens = True
     MAX_TOKENS = 8000
 
-    def __init__(self, api_key: str, model: str, client=None):
+    def __init__(self, api_key: str, model: str, client=None, *, http=None):
         if not api_key or not model:
             raise AuthError("Claude API key and model must be configured", adapter=self.name)
-        self.model = model
+        self.model = self.challenger_model = model
+        self.pricing = None
         if client is None:
             import anthropic
-            client = anthropic.Anthropic(api_key=api_key, timeout=120.0, max_retries=1)
+            client = anthropic.Anthropic(api_key=api_key, timeout=120.0, max_retries=0, **({"http_client": http} if http is not None else {}))
         self.client = client
+
+    def __repr__(self) -> str:
+        return f"<ClaudeAIProvider model={self.model}>"
 
     def complete(self, purpose, system, user, *, model_role="draft", max_tokens: int | None = None) -> RawCompletion:
         import anthropic
@@ -39,25 +43,14 @@ class ClaudeAIProvider(AIProvider):
                 resp = self.client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
             else:
                 resp = self.client.messages.create(**kwargs)
-        except anthropic.AuthenticationError as exc:
-            raise AuthError("Claude authentication failed", adapter=self.name) from exc
-        except anthropic.PermissionDeniedError as exc:
-            raise PermissionDenied("Claude API key lacks permission", adapter=self.name) from exc
-        except anthropic.NotFoundError as exc:
-            raise InvalidInput(f"Claude model '{self.model}' not found", adapter=self.name) from exc
-        except anthropic.BadRequestError as exc:
-            if "prompt is too long" in str(getattr(exc, "message", exc)).lower():
-                raise ContextLengthExceeded(f"The request is longer than {self.model}'s context window", adapter=self.name,
-                                            details={"model": self.model, "error_kind": "context_length"}) from exc
-            raise InvalidInput(f"Claude rejected the request: {getattr(exc, 'message', exc)}"[:400], adapter=self.name) from exc
-        except anthropic.RateLimitError as exc:
-            raise RateLimited("Claude rate limit reached", adapter=self.name) from exc
         except anthropic.APITimeoutError as exc:
-            raise AdapterTimeout("Claude request timed out", adapter=self.name) from exc
+            raise AdapterTimeout("Claude did not answer in time", adapter=self.name, details={"error_kind": "timeout"}) from exc
         except anthropic.APIConnectionError as exc:
-            raise ServiceUnavailable("Claude API unreachable", adapter=self.name) from exc
-        except anthropic.APIStatusError as exc:
-            raise ServiceUnavailable(f"Claude API error {exc.status_code}", adapter=self.name) from exc
+            raise ServiceUnavailable("Could not reach the Claude API", adapter=self.name, details={"error_kind": "network"}) from exc
+        except anthropic.APIStatusError as exc:  # one mapping for every provider (providers.classify): auth, credits, rate, context, model, outage
+            from app.adapters.ai.providers import classify
+            raise classify("anthropic", exc.status_code, getattr(exc, "body", None), str(getattr(exc, "message", "")),
+                           getattr(getattr(exc, "response", None), "headers", {}) or {}, self.model) from exc
         if getattr(resp, "stop_reason", None) == "refusal":
             raise InvalidInput("Claude declined this request (refusal)", adapter=self.name)
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")

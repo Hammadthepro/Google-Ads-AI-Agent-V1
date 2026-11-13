@@ -80,8 +80,8 @@ def test_both_providers_fail_with_provider_specific_reasons(monkeypatch):
         _compete()
     msg = e.value.message
     assert msg.startswith("Neither AI produced a valid draft; nothing was created.")
-    assert "Groq (internal AI): Groq rejected the request as too large (HTTP 413)" in msg
-    assert "Claude: AI provider error (outage): Claude API unreachable" in msg
+    assert "Main AI: Groq rejected the request as too large (HTTP 413)" in msg
+    assert "Claude (second drafter): AI provider error (outage): Claude API unreachable" in msg
     assert set(e.value.details["providers"]) == {"internal", "claude"}
 
 

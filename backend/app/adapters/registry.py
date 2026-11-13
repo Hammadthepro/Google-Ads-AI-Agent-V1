@@ -51,10 +51,18 @@ def crawler():
 
 @lru_cache
 def ai():
-    """The internal AI (Groq). No Groq key/model -> IntegrationNotConfigured; never a stand-in model."""
-    integrations_service.ensure_configured("groq")
-    from app.adapters.ai import GroqAIProvider
-    return GroqAIProvider()
+    """The Main AI: the provider and model the workspace chose for its Main AI role (an existing Groq setup is adopted as the Main AI).
+    Not configured or turned off -> IntegrationNotConfigured; never a stand-in model, never another provider."""
+    from app.services import ai_roles
+    return ai_roles.build_provider("main")
+
+
+@lru_cache
+def challenger_ai():
+    """The Challenger AI: reviews important Main AI outputs. Optional; not configured / off -> IntegrationNotConfigured, which callers
+    record as "independent review not performed"."""
+    from app.services import ai_roles
+    return ai_roles.build_provider("challenger")
 
 
 @lru_cache
@@ -117,7 +125,7 @@ def geoapify():
 
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
-       "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier,
+       "crawler": crawler, "ai": ai, "challenger_ai": challenger_ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier,
        "tavily": tavily, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 

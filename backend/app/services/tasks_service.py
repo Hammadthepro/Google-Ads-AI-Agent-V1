@@ -443,8 +443,12 @@ class Runner:
         return f"{run.prompt_template_id}@{run.prompt_version}, model {run.model}" if run else "?"
 
     def s_challenge(self):
-        ch = planner.challenge(self.db, self.ctx["plan"], self.business, self.ctx.get("feasibility"), self._measurement_ctx())
-        return f"Challenger verdict {ch['verdict']} with {len(ch['objections'])} objection(s)"
+        ch = planner.challenge(self.db, self.ctx["plan"], self.business, self.ctx.get("feasibility"), self._measurement_ctx(),
+                               (self.ctx.get("keywords") or {}).get("keywords"))
+        if not ch.get("performed", True):
+            return f"Independent review not performed: {ch.get('reason')}"
+        return (f"Challenger AI verdict {ch['verdict']} with {len(ch['objections'])} objection(s)"
+                + (f" ({ch['independence']})" if ch.get("independence") else ""))
 
     def s_human(self):
         if not self.task.human_plan.strip():

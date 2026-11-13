@@ -116,6 +116,12 @@ def generate(db: Session, client: Client, week_end: date | None = None) -> Weekl
                  "diagnosis": [{"step": i + 1, "key": k, "question": LABELS[k], "rules": k in rules, "ai": k in ai_causes,
                                 "recommended": k in agreed} for i, k in enumerate(ORDER)],
                  "recommended_actions": [ACTIONS[k] for k in agreed], "measurement_issues": m_issues}
+        if ai_causes:  # advisory independent review of the AI's stated causes (only when turned on); never changes `agreed`
+            from app.services import challenger
+            rev = challenger.review_diagnosis(db, {"ai_causes": ai_causes, "rule_based_causes": sorted(rules), "labels": {k: LABELS[k] for k in ORDER}},
+                                              {**m, "missed_call_rate": calls.get("missed_rate"), "measurement_issues": m_issues})
+            if rev is not None:
+                entry["challenger_review"] = rev
         campaigns.append(entry)
         recommended_all += [f"{c.name}: {ACTIONS[k]}" for k in agreed]
         totals["target"] += target

@@ -28,6 +28,7 @@ class RawCompletion:
     latency_ms: int = 0
     finish_reason: str = ""      # "stop", or "length" when the output hit max_tokens (then the JSON is cut off)
     status: str = "ok"           # provider status for the record
+    cost_usd: float | None = None  # only when the provider itself reports the charge (e.g. OpenRouter); never estimated here
 
 
 class AIProvider(ABC):
@@ -102,22 +103,30 @@ class GroqAIProvider(AIProvider):
     supports_max_tokens = True
     _learned_limits: dict[str, int] = {}     # model -> tokens per minute, as stated by Groq (shared by every instance)
 
-    def __init__(self, client=None):
+    def __init__(self, client=None, *, api_key: str | None = None, model: str | None = None, challenger_model: str | None = None,
+                 http=None):
+        """Explicit api_key/model (an AI role configuration), or the Groq integration's settings when none are given."""
         from app.core.config import get_settings
-        from app.services import integrations_service
-        v = integrations_service.resolve("groq")
-        if not v.get("model"):
+        if model is None:
+            from app.services import integrations_service
+            v = integrations_service.resolve("groq")
+            api_key, model, challenger_model = v.get("api_key"), v.get("model"), v.get("challenger_model")
+        if not model:
             raise AuthError("Groq model is not configured", adapter=self.name)
-        self.model = v["model"]
-        self.challenger_model = v.get("challenger_model") or v["model"]
+        self.model = model
+        self.challenger_model = challenger_model or model
         self._configured_tpm = int(get_settings().GROQ_TPM_LIMIT or 0)
         self.rate: dict = {}
+        self.pricing = None
         if client is None:
-            if not v.get("api_key"):
+            if not api_key:
                 raise AuthError("Groq API key is not configured", adapter=self.name)
             from groq import Groq
-            client = Groq(api_key=v["api_key"], timeout=60, max_retries=0)
+            client = Groq(api_key=api_key, timeout=60, max_retries=0, **({"http_client": http} if http is not None else {}))
         self.client = client
+
+    def __repr__(self) -> str:
+        return f"<GroqAIProvider model={self.model}>"
 
     @property
     def tpm_limit(self) -> int | None:  # type: ignore[override]

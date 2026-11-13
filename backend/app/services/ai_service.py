@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -106,15 +107,27 @@ def _rate_wait(provider, needed: int, model_role: str) -> tuple[float, str]:
         return fn(needed)
 
 
+def _cost(provider, raw) -> tuple[float | None, str]:
+    """Only a real number: the provider's own charge, or the admin-configured price per 1M tokens. Otherwise unknown (None)."""
+    if raw.cost_usd is not None:
+        return round(float(raw.cost_usd), 6), "provider"
+    price = getattr(provider, "pricing", None) or {}
+    if isinstance(price, dict) and price.get("input") is not None and price.get("output") is not None:
+        return round((raw.tokens_in * float(price["input"]) + raw.tokens_out * float(price["output"])) / 1_000_000, 6), "configured_price"
+    return None, ""
+
+
 def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = None,
              model_role: str = "draft", max_attempts: int = 2, provider=None,
              label: str | None = None, max_output_tokens: int | None = None, stage: str = "",
-             split_on_truncation: bool = False, check=None) -> tuple[BaseModel, AIRun]:
+             split_on_truncation: bool = False, check=None, role: str | None = None) -> tuple[BaseModel, AIRun]:
     """`provider`/`label` let the AI competition run the SAME prompt through a specific provider (label <= 20 chars).
     `max_output_tokens` caps the answer; `stage` names a step of a staged draft; `check(parsed) -> [errors]` adds rules the schema
     cannot express (treated exactly like schema errors). With `split_on_truncation`, a cut-off answer or a request over the per-minute
     limit raises at once (OutputTruncated / TokenBudgetExceeded) so the caller can send smaller requests instead of repeating this one."""
-    provider = provider or registry.get("ai")
+    # One routing point for every AI call: model_role "challenger" -> the Challenger AI role, anything else -> the Main AI role.
+    role = role or ("challenger" if model_role == "challenger" else "second_drafter" if (label or "").startswith("claude") else "main")
+    provider = provider or registry.get("challenger_ai" if model_role == "challenger" else "ai")
     spec = PROMPTS[purpose]
     schema = SCHEMAS[purpose]
     system = system_prompt(purpose)
@@ -131,7 +144,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         estimate = estimate_tokens(system, serialize(user))
         run = AIRun(task_id=task_id, purpose=purpose, provider=who[:20], prompt_template_id=spec["id"],
                     prompt_version=spec["version"], input_hash=payload_hash(payload), attempt=attempt, stage=stage[:60],
-                    prompt_estimate=estimate)
+                    prompt_estimate=estimate, role=role[:20], request_id=uuid.uuid4().hex)
         db.add(run)
         model = getattr(provider, "challenger_model" if model_role == "challenger" else "model", None) or getattr(provider, "name", "")
         limit = budget_for(provider)
@@ -169,11 +182,13 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                                      provider=who, model=model, error_kind=kind, limit=exc.details.get("limit") or None,
                                      requested=exc.details.get("requested") or None, reason=exc.message, stage=stage or None)
                 raise TokenBudgetExceeded(f"{exc.message}; nothing was executed", details={**exc.to_dict(), "error_kind": kind}) from exc
-            if exc.retryable and exc.kind == "rate_limited":
-                max_attempts = max(max_attempts, 3)  # a per-minute window usually clears: wait for it instead of failing instantly
+            if exc.retryable and exc.kind == "rate_limited" and float(exc.details.get("retry_after") or 0) > 0:
+                # the provider said when its window reopens: wait for exactly that (bounded). Without that metadata the same
+                # request is NOT repeated blindly; the error is reported instead.
+                max_attempts = max(max_attempts, 3)
                 if attempt < max_attempts:
                     last_error = ""  # the same request is still right; only the window was full
-                    wait = min(max(float(exc.details.get("retry_after") or 0), 2.0 * attempt), RATE_WAIT_MAX)
+                    wait = min(float(exc.details.get("retry_after") or 0), RATE_WAIT_MAX)
                     research_events.emit("ai_waiting", f"{who} is rate-limited; waiting {wait:.0f}s before attempt {attempt + 1}",
                                          level="warn", purpose=purpose, provider=who, model=model, seconds=round(wait, 1),
                                          reason=exc.message, stage=stage or None)
@@ -200,6 +215,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         run.model, run.raw_output = raw.model, raw.text[:60000]
         run.tokens_in, run.tokens_out, run.latency_ms = raw.tokens_in, raw.tokens_out, raw.latency_ms
         run.finish_reason, run.provider_status = (raw.finish_reason or "")[:30], (raw.status or "ok")[:40]
+        run.cost_usd, run.cost_source = _cost(provider, raw)
         if raw.finish_reason == "length":  # cut off: the JSON is incomplete, whatever it parses to
             run.error_kind, run.validation_ok = "output_truncated", False
             run.error = f"output_truncated: stopped at the output-token limit after {raw.tokens_out:,} tokens"

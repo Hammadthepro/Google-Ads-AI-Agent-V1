@@ -149,6 +149,11 @@ class MockAIProvider(AIProvider):
         g["ads"] = ads
         return g
 
+    def _h_review_diagnosis(self, u):
+        causes = (u.get("analysis") or {}).get("ai_causes") or []
+        return {"agreement": "AGREE" if causes else "PARTIALLY_AGREE", "findings": [], "confidence": 0.6,
+                "limitations": ["Test double: checks the shape of the review only."], "summary": "Reviewed."}
+
     def _h_draft_campaign_spec(self, u):
         """Stage 1 of a staged draft: the campaign plan, built from the same logic as a one-request draft."""
         full = self._h_draft_campaign({**u, "keyword_table": {"irrelevant_terms": u.get("irrelevant_terms", [])}})
