@@ -23,7 +23,6 @@ const ITEMS = [
   { ...base, provider: "smtp", label: "Email alerts (SMTP)", group: "System", description: "SMTP", missing: ["host"], display: { config: "Not configured", connection: "Not configured", label: "Not configured", testable: true },
     settings: { host: { label: "SMTP host", value: "", source: "missing", required: true }, security: { label: "Security", value: "starttls", source: "default", required: false } },
     secrets: { password: { label: "Password", saved: false, source: "", fingerprint: "", required: false } } },
-  { ...base, provider: "groq", label: "Groq (internal AI)", group: "AI", description: "Groq", settings: {}, secrets: {} },
   { ...base, provider: "crawler", label: "Website crawler", group: "Website research", description: "Crawler", settings: {}, secrets: {} },
   { ...base, provider: "database", label: "Database", group: "System", description: "DB", readonly: true, deployment_managed: true, settings: {}, secrets: {} },
 ];
@@ -48,7 +47,7 @@ const openProvider = async (label: RegExp) => fireEvent.click(await screen.findB
 describe("Integrations dashboard", () => {
   it("groups cards into the four categories", async () => {
     setup();
-    for (const t of ["Google", "AI provider integrations", "Website research", "System"]) expect((await screen.findAllByText(t, { selector: "h2" })).length).toBeGreaterThan(0);
+    for (const t of ["Google", "AI models", "Website research", "System"]) expect((await screen.findAllByText(t, { selector: "h2" })).length).toBeGreaterThan(0);
   });
 
   it("shows where every Google Ads field comes from and marks the missing required one", async () => {
@@ -145,9 +144,9 @@ describe("Integrations dashboard", () => {
 
   it("tests a collapsed provider from its summary row with the same request as before", async () => {
     setup();
-    await screen.findByRole("button", { name: /^Groq/ });
-    const row = document.getElementById("card-groq")!;
+    await screen.findByRole("button", { name: /^Website crawler/ });
+    const row = document.getElementById("card-crawler")!;
     fireEvent.click(within(row).getByRole("button", { name: "Test Connection" }));
-    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/integrations/groq/test"))).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/integrations/crawler/test"))).toBe(true));
   });
 });

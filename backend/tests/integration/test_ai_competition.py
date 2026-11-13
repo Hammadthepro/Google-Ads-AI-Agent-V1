@@ -3,9 +3,7 @@ from __future__ import annotations
 
 
 from app.adapters import registry
-from app.adapters.ai import AIProvider
 from tests.fakes.ai import MockAIProvider
-from app.adapters.base import ServiceUnavailable
 from app.db.session import session_scope
 from app.models import AIRun
 from app.services import competition
@@ -32,23 +30,23 @@ def _run(scope="CAMPAIGN"):
         return res, [(r.purpose, r.provider, r.prompt_template_id, r.prompt_version, r.input_hash) for r in runs[-6:]]
 
 
-def test_both_sides_get_identical_inputs_and_the_challenger_reviews_the_final_draft():
+def test_the_main_ai_drafts_once_and_the_challenger_reviews_the_final_draft():
     res, runs = _run()
     c = res["competition"]
-    assert c["mode"] == "dual" and c["identical_inputs"] and c["agreement_is_not_proof"]
+    assert c["mode"] == "single" and list(c["providers"]) == ["internal"]
     drafts = [r for r in runs if r[0] == "DRAFT_CAMPAIGN"]
-    assert len(drafts) == 2 and drafts[0][2:] == drafts[1][2:]  # same template, version AND input hash
-    assert {r[1] for r in drafts} == {"internal:test", "claude:test"}
+    assert drafts and drafts[-1][1] == "internal:test" and "claude:test" not in {r[1] for r in drafts}
     assert set(c["challenges"]) == {"challenger_on_final"} and c["independent_review"]["performed"] is True
-    assert c["comparison"]["comparable"] and "signal, not proof" in c["comparison"]["note"]
+    assert res["challenger"]["performed"] is True and res["challenger_run_id"]
 
 
 def test_consolidation_is_evidence_based():
+    registry.override("ai", MockAIProvider(variant="b"))  # this drafter proposes a keyword the research does not support
     res, _ = _run()
     final = res["draft"]
     kws = [(k["text"], k["match_type"]) for g in final["ad_groups"] for k in g["keywords"]]
     assert all(mt in ("EXACT", "PHRASE") for _, mt in kws)
-    assert not any("near me" in t for t, _ in kws)  # claude-side-only keyword without research evidence is dropped
+    assert not any("near me" in t for t, _ in kws)  # a keyword without research evidence is dropped
     dropped = [d for i in res["competition"]["consolidation"]["groups"] for d in i["dropped"]]
     assert any("near me" in d["keyword"] and "no research evidence" in d["reason"] for d in dropped)
     heads = [h for g in final["ad_groups"] for a in g["ads"] for h in a["headlines"]]
@@ -59,21 +57,8 @@ def test_consolidation_is_evidence_based():
     assert "plumbing jobs" in final["campaign_negatives"]
 
 
-def test_degrades_to_single_draft_when_second_ai_fails_never_fabricates():
-    class Down(AIProvider):
-        name, source = "ClaudeAIProvider", "LIVE"
-
-        def complete(self, *a, **k):
-            raise ServiceUnavailable("down", adapter=self.name)
-    registry.override("claude_ai", Down())
-    res, _ = _run()
-    c = res["competition"]
-    assert c["mode"] == "single" and "claude" in c["errors"] and "claude" in c["degraded_reason"]
-    assert res["draft"]["ad_groups"]  # the internal draft still consolidates
-
-
 def test_agreement_does_not_override_rules():
-    # both sides propose the same bad claim → still removed
+    # an unverified claim and a broad keyword in the draft are still removed by the rules
     class Same(MockAIProvider):
         def _h_draft_campaign(self, u):
             d = super()._h_draft_campaign(u)
@@ -82,7 +67,6 @@ def test_agreement_does_not_override_rules():
                 g["keywords"].append({"text": "drain cleaning", "match_type": "BROAD"})
             return d
     registry.override("ai", Same())
-    registry.override("claude_ai", Same(variant="b"))
     res, _ = _run()
     heads = [h for g in res["draft"]["ad_groups"] for a in g["ads"] for h in a["headlines"]]
     assert not any("#1" in h for h in heads)

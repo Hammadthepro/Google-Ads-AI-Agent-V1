@@ -65,7 +65,7 @@ PROVIDERS: dict[str, dict] = {
         "docs": "https://developers.google.com/google-ads/api/docs/keyword-planning/overview",
     },
     "groq": {
-        "label": "Groq (internal AI)", "group": "AI",
+        "label": "Groq (internal AI)", "group": "AI", "superseded_by": "ai_roles",
         "description": "The internal AI used for drafting and for the first side of the AI competition.",
         "settings": {"model": "Model", "challenger_model": "Challenger model (optional)"},
         "secrets": {"api_key": "API key"}, "required": ["model", "api_key"],
@@ -75,7 +75,7 @@ PROVIDERS: dict[str, dict] = {
         "docs": "https://console.groq.com/docs/models",
     },
     "claude": {
-        "label": "Claude (Anthropic)", "group": "AI",
+        "label": "Claude (Anthropic)", "group": "AI", "superseded_by": "ai_roles",
         "description": "The independent second AI: drafts the same task and cross-challenges the internal AI's plan.",
         "settings": {"model": "Model"}, "secrets": {"api_key": "API key"}, "required": ["model", "api_key"],
         "default_settings": {"model": "claude-opus-5-5"},
@@ -1791,8 +1791,14 @@ def registry_ai_active() -> bool:
         return False
 
 
+def listed() -> list[str]:
+    """Integrations shown and tested on the Integrations page. Groq and Claude are superseded by the Main AI / Challenger AI roles
+    (which can still use their stored or environment keys by reference); their settings remain readable for that purpose."""
+    return [p for p, spec in PROVIDERS.items() if not spec.get("superseded_by")]
+
+
 def health(db: Session) -> dict:
-    items = [serialize(db, p) for p in PROVIDERS]
+    items = [serialize(db, p) for p in listed()]
     counts: dict[str, int] = {}
     for i in items:
         counts[i["display"]["label"]] = counts.get(i["display"]["label"], 0) + 1
@@ -1803,7 +1809,8 @@ def health(db: Session) -> dict:
 
 def test_all(db: Session, user_id: str | None, *, http: httpx.Client | None = None) -> list[dict]:
     out = []
-    for p, spec in PROVIDERS.items():
+    for p in listed():
+        spec = PROVIDERS[p]
         row = _row(db, p)
         if spec.get("testable") is False:
             continue

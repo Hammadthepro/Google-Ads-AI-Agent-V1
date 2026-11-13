@@ -56,33 +56,20 @@ def _valid_draft() -> dict:
 
 
 # ------------------------------------------------------------------ primary / fallback
-def test_primary_succeeds_both_drafts_compete():
+def test_the_main_ai_drafts_and_the_challenger_reviews():
     res = _compete()
-    assert res["draft"]["ad_groups"] and res["competition"]["mode"] == "dual"
+    assert res["draft"]["ad_groups"] and res["competition"]["mode"] == "single"
+    assert res["competition"]["independent_review"]["performed"] is True
 
 
-def test_primary_fails_and_the_fallback_draft_is_used_with_the_primary_reason_kept():
-    too_large = RateLimited("Groq rejected the request: it needs ~9500 tokens but m allows 8000 per minute on this plan.", adapter="Groq",
-                            details={"too_large": True, "limit": 8000, "requested": 9500})
-    registry.override("ai", Down("GroqAIProvider", too_large))
-    res = _compete()
-    c = res["competition"]
-    assert c["mode"] == "single" and res["draft"]["ad_groups"]
-    assert "8000 per minute" in c["errors"]["internal"]  # the exact reason survives, it is not replaced by a generic message
-
-
-def test_both_providers_fail_with_provider_specific_reasons(monkeypatch):
+def test_a_main_ai_failure_names_the_provider_reason_and_creates_nothing(monkeypatch):
     monkeypatch.setattr(ai_service.time, "sleep", lambda s: None)
-    registry.override("ai", Down("GroqAIProvider", RateLimited("Groq rejected the request as too large (HTTP 413)", adapter="Groq",
-                                                                details={"too_large": True})))
-    registry.override("claude_ai", Down("ClaudeAIProvider", ServiceUnavailable("Claude API unreachable", adapter="Claude")))
+    registry.override("ai", Down("GroqAIProvider", ServiceUnavailable("Groq API unreachable", adapter="Groq")))
     with pytest.raises(ai_service.AIOutputInvalid) as e:
         _compete()
     msg = e.value.message
-    assert msg.startswith("Neither AI produced a valid draft; nothing was created.")
-    assert "Main AI: Groq rejected the request as too large (HTTP 413)" in msg
-    assert "Claude (second drafter): AI provider error (outage): Claude API unreachable" in msg
-    assert set(e.value.details["providers"]) == {"internal", "claude"}
+    assert msg.startswith("The Main AI did not produce a valid draft; nothing was created.")
+    assert "Groq API unreachable" in msg and set(e.value.details["providers"]) == {"internal"}
 
 
 # ------------------------------------------------------------------ output parsing and schema rules

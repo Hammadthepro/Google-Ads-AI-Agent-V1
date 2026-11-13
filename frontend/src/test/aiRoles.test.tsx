@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { AIRoles } from "../components/AIRoles";
+import { useState } from "react";
+import { AIRoleRows, useAIRoles } from "../components/AIRoles";
+
+function Harness({ canManage }: { canManage: boolean }) {
+  const q = useAIRoles();
+  const [opened, setOpened] = useState(new Set(["ai_main", "ai_challenger", "ai_usage"]));
+  const toggle = (k: string) => setOpened((o) => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  return q.data ? <AIRoleRows data={q.data} canManage={canManage} opened={opened} toggle={toggle} /> : null;
+}
 
 const json = (body: any, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const providers = [
@@ -20,7 +28,7 @@ const role = (r: string, over: any = {}) => ({
 const overview = (main: any, chal: any, note = "") => ({ roles: { main, challenger: chal }, providers, independence: { note }, migrated_now: [] });
 
 function mount(canManage = true) {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><AIRoles canManage={canManage} /></MemoryRouter></QueryClientProvider>);
+  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><Harness canManage={canManage} /></MemoryRouter></QueryClientProvider>);
 }
 
 describe("AI roles", () => {
@@ -30,14 +38,14 @@ describe("AI roles", () => {
     globalThis.fetch = vi.fn(async (u: any) => String(u).includes("/ai/usage") ? json({ models: [], tasks: [], totals: {} })
       : json(overview(role("main"), role("challenger", { model: "qwen/qwen3.8-27b" }), "Same provider, different model: limited independence."))) as any;
     mount();
-    const main = await screen.findByRole("region", { name: "Main AI" });
-    const chal = screen.getByRole("region", { name: "Challenger AI" });
-    expect(within(main).getByText("Connected")).toBeInTheDocument();
-    expect(within(main).getAllByText("from Groq integration").length).toBe(1);
-    expect(within(main).getByText(/Using the key of the existing Groq integration/)).toBeInTheDocument();
+    const main = await screen.findByRole("region", { name: "Main AI settings" });
+    const chal = screen.getByRole("region", { name: "Challenger AI settings" });
+    expect(screen.getAllByText("Connected").length).toBeGreaterThan(0);  // row status pill
+    expect(screen.getAllByText("Enabled in app").length).toBe(2);
+    expect(within(main).getByText(/Using the existing Groq key/)).toBeInTheDocument();
     expect(within(chal).getByText("What the Challenger reviews")).toBeInTheDocument();
-    expect(screen.getAllByText(/limited independence/).length).toBeGreaterThan(0);
-    expect(screen.getByText("No AI requests in this period.")).toBeInTheDocument();
+    expect(within(chal).getByText(/limited independence/)).toBeInTheDocument();
+    expect(await screen.findByText("No AI requests in this period.")).toBeInTheDocument();
   });
 
   it("sends a typed key once, never keeps it in the browser, and shows the real test result", async () => {
@@ -54,7 +62,7 @@ describe("AI roles", () => {
       return json(overview(saved, role("challenger", { enabled: false, provider: "", model: "", status: "NOT_CONFIGURED", key: { present: false, source: "", fingerprint: "", unreadable: false } })));
     }) as any;
     mount();
-    const main = await screen.findByRole("region", { name: "Main AI" });
+    const main = await screen.findByRole("region", { name: "Main AI settings" });
     expect(within(main).getByText(/Saved · fingerprint a1b2c3d4e5f6/)).toBeInTheDocument();
     const keyInput = within(main).getByLabelText(/API key/) as HTMLInputElement;
     expect(keyInput.type).toBe("password");
@@ -67,7 +75,7 @@ describe("AI roles", () => {
     await waitFor(() => expect((within(main).getByLabelText(/API key/) as HTMLInputElement).value).toBe(""));
     const stored = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
     expect(stored).not.toContain("sk-new-secret");
-    expect(screen.getByText("Challenger AI is off", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/Challenger AI is off/)).toBeInTheDocument();
   });
 
   it("tells a discovery failure apart and still allows a manual model id", async () => {
@@ -79,11 +87,11 @@ describe("AI roles", () => {
       return json(overview(role("main", { provider: "openai", model: "gpt-x", key: { present: true, source: "saved", fingerprint: "f", unreadable: false } }), role("challenger")));
     }) as any;
     mount();
-    const main = await screen.findByRole("region", { name: "Main AI" });
+    const main = await screen.findByRole("region", { name: "Main AI settings" });
     fireEvent.click(within(main).getByRole("button", { name: "Load models" }));
     expect(await within(main).findByText(/Provider unavailable:/)).toBeInTheDocument();
     expect(within(main).getByPlaceholderText(/Model id, exactly as the provider names it/)).toBeInTheDocument();
-    const usage = await screen.findByRole("region", { name: "AI usage" });
+    const usage = await screen.findByRole("region", { name: "AI usage table" });
     expect(within(usage).getByText("unknown")).toBeInTheDocument();
     expect(within(usage).getByText("Rate limited ×1")).toBeInTheDocument();
   });
@@ -91,8 +99,9 @@ describe("AI roles", () => {
   it("is read-only for people who cannot manage integrations", async () => {
     globalThis.fetch = vi.fn(async () => json(overview(role("main"), role("challenger")))) as any;
     mount(false);
-    const main = await screen.findByRole("region", { name: "Main AI" });
+    const main = await screen.findByRole("region", { name: "Main AI settings" });
     expect(within(main).queryByRole("button", { name: "Save configuration" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "AI usage" })).toBeNull();
+    expect(screen.queryByText("AI usage")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Test Connection" })).toBeNull();
   });
 });

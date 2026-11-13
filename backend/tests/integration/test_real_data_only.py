@@ -27,7 +27,7 @@ APP = Path(__file__).resolve().parents[2] / "app"
 # --------------------------------------------------------------------------- the registry never builds a mock
 @pytest.mark.real_registry
 @pytest.mark.parametrize("name,provider", [("google_ads", "google_ads"), ("ai", "ai_main"), ("challenger_ai", "ai_challenger"),
-                                           ("claude_ai", "claude"), ("places", "places"),
+                                           ("places", "places"),
                                            ("keyword_research", "google_ads")])
 def test_unconfigured_integrations_raise_instead_of_falling_back(name, provider):
     with pytest.raises(IntegrationNotConfigured) as exc:

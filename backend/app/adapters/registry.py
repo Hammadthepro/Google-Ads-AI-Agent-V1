@@ -66,14 +66,6 @@ def challenger_ai():
 
 
 @lru_cache
-def claude_ai():
-    """The independent second AI (Claude). Not configured -> IntegrationNotConfigured."""
-    v = integrations_service.ensure_configured("claude")
-    from app.adapters.ai.claude import ClaudeAIProvider
-    return ClaudeAIProvider(v.get("api_key", ""), v.get("model", ""))
-
-
-@lru_cache
 def auth():
     from app.adapters.auth import DevLoginAuthenticationProvider, GoogleOIDCAuthenticationProvider
     from app.core.config import get_settings
@@ -125,7 +117,7 @@ def geoapify():
 
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
-       "crawler": crawler, "ai": ai, "challenger_ai": challenger_ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier,
+       "crawler": crawler, "ai": ai, "challenger_ai": challenger_ai, "auth": auth, "notifier": notifier,
        "tavily": tavily, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 

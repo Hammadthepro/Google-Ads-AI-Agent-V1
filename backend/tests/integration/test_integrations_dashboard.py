@@ -31,13 +31,14 @@ def by(items, key):
 def test_every_implemented_integration_is_listed_with_the_six_statuses():
     sup = Api(SUPER)
     items = sup.get("/integrations").json()["integrations"]
-    assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "keyword_planner", "crawler",
+    assert {i["provider"] for i in items} >= {"google_ads", "pagespeed", "places", "ga4", "keyword_planner", "crawler",
                                                "smtp", "database", "redis", "google_login"}
+    assert not {"groq", "claude"} & {i["provider"] for i in items}  # superseded by the Main AI / Challenger AI roles
     allowed = {"Not configured", "Connected", "Connection failed", "Rate limited", "Configured, not tested", "Blocked by dependency", "Requires approval", "Disabled",
                "Verified by signing in", "Not verified — sign in with Google to verify"}
     for i in items:
         assert i["display"]["config"] in {"Configured", "Not configured", "No credentials needed"} and i["display"]["label"] in allowed, i["provider"]
-    assert by(items, "google_ads")["display"]["label"] == "Not configured" and by(items, "groq")["display"]["label"] == "Not configured"
+    assert by(items, "google_ads")["display"]["label"] == "Not configured"
 
 
 def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
