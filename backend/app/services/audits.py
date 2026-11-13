@@ -268,18 +268,22 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                 ideas = kw.generate_ideas("", seeds,  # research runs under the configured research customer, never a client account
                                           page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""), city=ctx["city"])
             except AdapterError as exc:
-                errors.append({"service": s["name"], "error": exc.kind})
-                research_events.emit("provider_failed", f"Keyword Planner failed for “{s['name']}” ({exc.kind}); other sources continue",
+                errors.append({"service": s["name"], "error": exc.kind, "message": exc.message})
+                research_events.emit("provider_failed", f"Keyword Planner failed for “{s['name']}”: {exc.message} Other sources continue.",
                                      stage=stage, level="warn", provider="keyword_planner", error_kind=exc.kind)
+                if exc.details.get("requires_approval") or exc.kind in ("auth_failure", "permission_denied"):
+                    break  # the same refusal would repeat for every service
                 continue
             rows += ideas
             research_events.emit("keyword_discovery", f"{len(ideas)} Keyword Planner idea(s) for “{s['name']}”", stage=stage,
                                  provider="keyword_planner", count=len(ideas), examples=[i["keyword"] for i in ideas[:5]])
         planner["failed_services"] = [e["service"] for e in errors]
+        if errors and not rows:  # it was called, but it gave nothing: never report it as a working source
+            planner.update(available=False, reason=errors[0].get("message") or errors[0]["error"], failed=True)
     disc = keyword_intel.discover(db, {**ctx, "service_names": names}, website, competitors, stage=stage)
     first_party = disc["report"]["search_terms"].get("metrics", {})
     no_metrics_reason = ("Keyword Planner is not available, and suggestion/web sources do not provide search volume or bids."
-                         if kw is None else "Keyword Planner did not return this keyword; its source provides no metrics.")
+                         if kw is None or not planner["available"] else "Keyword Planner did not return this keyword; its source provides no metrics.")
     dedup: dict[str, dict] = {}
     for r in rows:
         k = normalize_term(r["keyword"])
@@ -342,7 +346,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
             keep = r["label"] != "IRRELEVANT" and (vol >= 20 or str(r["seed"]).startswith("competitor")) and affordable
         else:  # no volume from any source: the decision rests on fit and intent, and says so. When Keyword Planner works but did not
             # return the keyword, ask for stronger agreement before it enters a campaign.
-            keep = r["label"] != "IRRELEVANT" and k_intent in ("transactional", "commercial") and score >= (60 if kw is not None else 40) and affordable
+            keep = r["label"] != "IRRELEVANT" and k_intent in ("transactional", "commercial") and score >= (60 if planner["available"] else 40) and affordable
         group = r.get("service") if r["label"] == "SERVICE" else ("Generic" if r["label"] == "GENERIC" else None)
         table.append({"keyword": r["keyword"], "label": r["label"], "service": r.get("service"), "ad_group": group,
                       "match_types": ["EXACT", "PHRASE"] if r["label"] != "IRRELEVANT" and k_intent != "informational" else [],

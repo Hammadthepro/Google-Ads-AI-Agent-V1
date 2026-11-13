@@ -5,7 +5,7 @@ Sources, all optional and independent (one failing never stops the others):
   * the client's own website (titles and headings of the pages crawled in the website audit);
   * competitor websites (service headings found by the competitor audit);
   * first-party Google Ads search terms already synced for the client's linked account (with their real clicks/conversions);
-  * Tavily web results (customer questions and wording), only when configured and within the audit's search budget;
+  * web search results (Tavily, else Brave Search) for customer questions and wording, only when configured and within the audit's budget;
   * Keyword Planner ideas, when that integration works (merged in by the caller with their real metrics).
 
 Metrics policy: suggestion and web sources carry NO search volume, CPC or competition. Every keyword carries `metrics`, where each metric
@@ -37,7 +37,7 @@ METRIC_TYPE = {"avg_monthly_searches": "search_volume", "competition": "competit
                "high_top_of_page_bid_micros": "top_of_page_bid_high"}
 SOURCE_LABEL = {"suggest:google": "Google Autocomplete", "suggest:duckduckgo": "DuckDuckGo suggestions", "suggest:bing": "Bing suggestions",
                 "client_website": "Client website", "competitor_website": "Competitor website", "search_terms": "Google Ads search terms",
-                "tavily": "Tavily web results", "keyword_planner": "Keyword Planner"}
+                "web_search": "Web search results", "keyword_planner": "Keyword Planner"}
 
 
 def intent(kw: str, brand_words: set[str] = frozenset(), competitor_names: set[str] = frozenset()) -> str:
@@ -169,7 +169,7 @@ def _search_terms(db: Session, bag: Bag, ctx: dict, stage: str) -> dict:
     return {"available": True, "terms": len(first_party), "metrics": first_party}
 
 
-def _tavily(bag: Bag, ctx: dict, stage: str) -> dict:
+def _web(bag: Bag, ctx: dict, stage: str) -> dict:
     ok, why = web_research.available()
     if not ok:
         return {"used": False, "reason": why}
@@ -181,7 +181,8 @@ def _tavily(bag: Bag, ctx: dict, stage: str) -> dict:
             if res.get("reason", "").startswith("The per-audit budget"):
                 break
             continue
-        n = sum(1 for ph in res["phrases"] if bag.add(ph["phrase"], "tavily", service=svc, detail="phrase in a web result", evidence_url=ph["url"]))
+        n = sum(1 for ph in res["phrases"] if bag.add(ph["phrase"], "web_search", service=svc, detail=f"phrase in a {res.get('provider') or 'web'} search result",
+                                                      evidence_url=ph["url"]))
         out["services"][svc] = f"{n} phrase(s)"
         out["evidence"] += res["evidence"]
     return out
@@ -195,7 +196,7 @@ def discover(db: Session, ctx: dict, website: dict, competitors: dict, *, stage:
         if ctx.get("city"):
             bag.add(f"{svc} {ctx['city']}", "client_profile", service=svc, detail="service + location")
     report = {"suggestions": _suggest(bag, ctx, stage), "websites": _website_terms(bag, ctx, website, competitors, stage),
-              "search_terms": _search_terms(db, bag, ctx, stage), "web": _tavily(bag, ctx, stage)}
+              "search_terms": _search_terms(db, bag, ctx, stage), "web": _web(bag, ctx, stage)}
     return {"candidates": bag.items, "report": report}
 
 

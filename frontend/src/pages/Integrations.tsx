@@ -14,14 +14,14 @@ const MODES: { value: string; label: string; text: string }[] = [
 ];
 
 const LABEL_TONE: Record<string, string> = {
-  Connected: "green", "Connection failed": "red", "Not tested": "blue", "Not configured": "slate", Disabled: "slate",
+  Connected: "green", "Connection failed": "red", "Rate limited": "amber", "Configured, not tested": "blue", "Not configured": "slate", Disabled: "slate",
   Configured: "blue", "Blocked by dependency": "amber", "Requires approval": "amber", Testing: "violet",
   "Verified by signing in": "green", "Not verified — sign in with Google to verify": "slate",
 };
 const SOURCE_TONE: Record<string, string> = { saved: "green", environment: "blue", default: "slate", missing: "red" };
 const SOURCE_LABEL: Record<string, string> = { saved: "saved here", environment: "from deployment (.env)", default: "default", missing: "missing" };
 const SUB_TONE: Record<string, string> = { PASSED: "green", FAILED: "red", SKIPPED: "slate", NOT_TESTED: "amber" };
-const SUB_LABEL: Record<string, string> = { PASSED: "Passed", FAILED: "Failed", SKIPPED: "Skipped", NOT_TESTED: "Not tested" };
+const SUB_LABEL: Record<string, string> = { PASSED: "Passed", FAILED: "Failed", SKIPPED: "Skipped", NOT_TESTED: "Configured, not tested" };
 const NOT_CHAT = /whisper|orpheus|prompt-guard|safeguard|tts|guard|embed/i;
 
 /** Two pills: is it configured, and is it connected. Connected is shown ONLY after a real successful request. */
@@ -126,7 +126,7 @@ function ProviderFacts({ item }: { item: any }) {
         <Row label="Configuration">{item.missing.length ? <span className="text-rose-700">Missing: {item.missing.join(", ")}</span> : "OAuth client ID, secret and refresh token present"}</Row>
         <Row label="Developer token"><span className="text-slate-600">Not required — Google sunset developer tokens on 2026-09-09</span></Row>
         <Row label="Google Cloud project">{i.cloud_project_number ? <>#{i.cloud_project_number} · <a className="text-brand-700 underline" href={i.console_url} target="_blank" rel="noreferrer">API overview</a></> : "—"}</Row>
-        <Row label="Google Ads API access">{a.api_enabled === true ? "Enabled for the project" : a.api_enabled === false ? <span className="text-rose-700">Not enabled</span> : "Not tested"} · level: <b>{a.level === "production" ? "Production (Explorer/Basic/Standard)" : a.level === "test" ? "Test only" : a.level === "test-or-higher" ? "Test account read (production not proven)" : a.level ?? "unknown"}</b></Row>
+        <Row label="Google Ads API access">{a.api_enabled === true ? "Enabled for the project" : a.api_enabled === false ? <span className="text-rose-700">Not enabled</span> : "Configured, not tested"} · level: <b>{a.level === "production" ? "Production (Explorer/Basic/Standard)" : a.level === "test" ? "Test only" : a.level === "test-or-higher" ? "Test account read (production not proven)" : a.level ?? "unknown"}</b></Row>
         <Row label="Manager account (MCC)">{i.manager_id_set ? "Chosen — see “Choose manager account” below" : <span className="text-amber-800">Not chosen yet</span>}</Row>
         <Row label="Enabled managers found">{(i.managers ?? []).filter((m: any) => m.status === "ENABLED").length ? (i.managers as any[]).filter((m: any) => m.status === "ENABLED").map((m: any) => `${m.name || m.customer_id} (${m.customer_id})`).join(", ") : <span className="text-amber-800">none found in the last test</span>}</Row>
         <Row label="Accounts this Google user can reach directly">{(item.discovered?.accessible_customers ?? []).length ? (item.discovered.accessible_customers as string[]).join(", ") : "—"}</Row>
@@ -426,8 +426,8 @@ export default function Integrations() {
       {params.get("oauth") === "connected" && <Notice tone="green">Google authorization saved for: {params.get("providers")}. Now run Test Connection.</Notice>}
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6" aria-label="Integration health">
-        {["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0)} />)}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7" aria-label="Integration health">
+        {["Connected", "Connection failed", "Rate limited", "Configured, not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => <Stat key={s} label={s} value={(counts[s] ?? 0)} />)}
       </div>
       <Overview items={items} canManage={canManage} />
       <ModePanel mode={q.data.mode} canManage={canManage} googleOk={googleOk} />
@@ -435,7 +435,8 @@ export default function Integrations() {
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
         ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code>{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code>{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
-      {[["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]].map(([g, title]) => {
+      {[["Google", "Google"], ["AI", "Other AI"], ["Research", "Web search & research providers"], ["Website research", "Website research"], ["System", "System"],
+        ...[...new Set(items.map((i) => i.group))].filter((g) => !["Google", "AI", "Research", "Website research", "System"].includes(g)).map((g) => [g, g])].map(([g, title]) => {
         const list = items.filter((i) => i.group === g);
         if (!list.length) return null;
         return (

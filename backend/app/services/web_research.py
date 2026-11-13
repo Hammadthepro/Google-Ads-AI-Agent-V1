@@ -1,4 +1,4 @@
-"""Tavily-backed web research used by the agent only when it adds something the other sources lack.
+"""Web research used by the agent only when it adds something the other sources lack (Web Search, then Web Fetch).
 
 Every result is stored as web evidence (query, provider, URL, title, snippet, retrieval time, purpose) with confidence
 "unverified_snippet": a search snippet is never treated as a verified fact about a business. Searches are cached for 7 days,
@@ -7,13 +7,9 @@ identical queries are never repeated, and each audit has a configurable search b
 from __future__ import annotations
 
 import re
-from datetime import timedelta
 from urllib.parse import urlparse
 
-from app.adapters import registry
-from app.adapters.base import AdapterError
-from app.core import clock
-from app.services import integrations_service, provider_calls, research_events
+from app.services import research_events, web_fetch, web_search
 
 DIRECTORIES = ("yelp.", "angi.", "angieslist", "yellowpages", "bbb.org", "facebook.", "google.", "thumbtack", "homeadvisor", "nextdoor",
                "reddit.", "wikipedia.", "youtube.", "linkedin.", "instagram.", "x.com", "twitter.", "tripadvisor", "mapquest", "porch.com",
@@ -21,41 +17,15 @@ DIRECTORIES = ("yelp.", "angi.", "angieslist", "yellowpages", "bbb.org", "facebo
 
 
 def available() -> tuple[bool, str]:
-    adapter = registry.optional("tavily")
-    if adapter is None:
-        return False, "Tavily is not configured; web search was not used."
+    names = web_search.available()
+    if not names:
+        return False, "No web search provider is configured (Tavily or Brave Search); web search was not used."
     return True, ""
 
 
-def _budget() -> int:
-    try:
-        return max(0, int(integrations_service.resolve("tavily").get("max_searches_per_audit") or 8))
-    except (TypeError, ValueError):
-        return 8
-
-
 def search(query: str, purpose: str, *, stage: str = "", max_results: int = 5) -> dict:
-    """{"ok", "results": [evidence...], "reason"} — never raises for provider problems; they are recorded and reported."""
-    adapter = registry.optional("tavily")
-    if adapter is None:
-        return {"ok": False, "results": [], "reason": "Tavily is not configured"}
-    research_events.emit("source_discovered", f"Web search: {query}", stage=stage, provider="tavily", query=query, purpose=purpose)
-    try:
-        res = provider_calls.call("tavily", "search", {"q": query.lower().strip(), "n": max_results, "depth": adapter.depth},
-                                  lambda: adapter.search(query, max_results=max_results), ttl=timedelta(days=7),
-                                  cost=lambda v: v.get("credits", 0), budget=_budget())
-    except AdapterError as exc:
-        research_events.emit("provider_failed" if exc.kind != "budget_exhausted" else "provider_unavailable",
-                             f"Tavily: {exc.message}", stage=stage, level="warn", provider="tavily", error_kind=exc.kind)
-        return {"ok": False, "results": [], "reason": exc.message, "error_kind": exc.kind}
-    now = clock.now().isoformat()
-    out = []
-    for r in res["results"]:
-        ev = {"query": query, "provider": "tavily", "url": r["url"], "title": r["title"], "content": r["content"], "retrieved_at": now,
-              "purpose": purpose, "confidence": "unverified_snippet"}
-        out.append(ev)
-        research_events.emit("web_result", r["title"] or r["url"], stage=stage, provider="tavily", url=r["url"], purpose=purpose)
-    return {"ok": True, "results": out, "reason": ""}
+    """Web Search through the configured provider(s); see app.services.web_search. Never raises for provider problems."""
+    return web_search.search(query, purpose, stage=stage, max_results=max_results)
 
 
 def host(u: str) -> str:
@@ -83,9 +53,20 @@ def discover_competitors(ctx: dict, *, stage: str = "competitors") -> dict:
             continue
         seen.add(h)
         name = re.split(r"\s[|–—-]\s|\s\|\s", r["title"])[0].strip() or h
-        cands.append({"name": name[:120], "website_url": f"https://{h}", "evidence": r, "status": "suggested — not verified"})
-        research_events.emit("competitor_identified", name[:120], stage=stage, provider="tavily", url=f"https://{h}", basis="web search result")
-    return {"used": True, "reason": "", "candidates": cands[:6], "query": res["results"][0]["query"] if res["results"] else ""}
+        u = urlparse(r["url"])
+        origin = f"{u.scheme or 'https'}://{u.hostname}"  # the site exactly as the search result gave it (keeps www.); `h` is only for de-duplication
+        cands.append({"name": name[:120], "website_url": origin, "evidence": r, "status": "suggested — not verified"})
+    cands = cands[:6]
+    for c in cands[:3]:  # Web Fetch: open the candidate's home page to see whether it is a real, reachable business site
+        page = web_fetch.fetch(c["website_url"], stage=stage, purpose="check a competitor found by web search")
+        c["page"] = {k: page.get(k) for k in ("ok", "status", "final_url", "title", "h1", "word_count", "error")}
+        c["status"] = ("suggested — site opened, not verified as a competitor" if page.get("ok") else
+                       f"suggested — site could not be opened ({page.get('error')})")
+    for c in cands:
+        research_events.emit("competitor_identified", c["name"], stage=stage, provider=res["provider"], url=c["website_url"],
+                             basis="web search result" + ("; site opened" if (c.get("page") or {}).get("ok") else ""))
+    return {"used": True, "reason": "", "provider": res["provider"], "fallback_from": res.get("fallback_from"), "candidates": cands,
+            "query": res["results"][0]["query"] if res["results"] else ""}
 
 
 QUESTION = re.compile(r"\b(how (?:much|long|to|do|does|can)|what (?:is|are|does)|why|when should|which|best|cost|price|near me)\b[^.?!]{3,90}[?.]?", re.I)
@@ -103,7 +84,7 @@ def customer_language(service: str, city: str, *, stage: str = "keywords") -> di
             if service.lower().split()[0] in t and 3 <= len(t.split()) <= 9 and t not in seen:
                 seen.add(t)
                 phrases.append({"phrase": t, "url": r["url"]})
-    return {"used": True, "reason": "", "phrases": phrases[:12], "evidence": res["results"]}
+    return {"used": True, "reason": "", "provider": res["provider"], "phrases": phrases[:12], "evidence": res["results"]}
 
 
 def local_market(ctx: dict, *, stage: str = "geo") -> dict:

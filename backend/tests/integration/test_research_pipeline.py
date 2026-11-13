@@ -211,7 +211,7 @@ def test_geo_provider_failure_is_reported_and_research_continues():
 
 def test_web_research_is_skipped_honestly_without_tavily():
     ok, why = web_research.available()
-    assert ok is False and "not configured" in why
+    assert ok is False and "No web search provider is configured" in why
     assert web_research.discover_competitors({"competitors": [], "category": "Plumber", "city": "Austin"})["used"] is False
 
 
