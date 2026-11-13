@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAction } from "../lib/hooks";
@@ -17,10 +17,10 @@ const STATUS: Record<string, [string, string]> = {
   CONNECTED: ["Connected", "green"], FAILED: ["Connection failed", "red"], UNTESTED: ["Configured, not tested", "blue"], NOT_CONFIGURED: ["Not configured", "slate"],
 };
 const CAP_LABEL: Record<string, string> = { tools: "Tool calling", structured_output: "Structured output", vision: "Image input", reasoning: "Reasoning controls", chat: "Chat" };
-const ROLE_TEXT: Record<string, { title: string; text: string; accent: string; ring: string }> = {
-  main: { title: "Main AI", text: "Does the work: research synthesis, planning, campaign drafting, diagnosis and the agent's other AI tasks.",
+const ROLE_TEXT: Record<string, { title: string; short: string; text: string; accent: string; ring: string }> = {
+  main: { title: "Main AI", short: "Does the agent's AI work", text: "Does the work: research synthesis, planning, campaign drafting, diagnosis and the agent's other AI tasks.",
     accent: "bg-brand-600", ring: "ring-brand-200" },
-  challenger: { title: "Challenger AI", text: "Independently reviews important Main AI outputs with their evidence. A reviewer only: it never approves, overrides rules or acts in Google Ads.",
+  challenger: { title: "Challenger AI", short: "Independently reviews important Main AI outputs", text: "Independently reviews important Main AI outputs with their evidence. A reviewer only: it never approves, overrides rules or acts in Google Ads.",
     accent: "bg-plum-500", ring: "ring-plum-200" },
 };
 
@@ -46,7 +46,13 @@ function ModelFacts({ m, hiddenReason }: { m: any; hiddenReason?: string }) {
   );
 }
 
-function RoleCard({ role, data, providers, canManage, other }: { role: "main" | "challenger"; data: any; providers: any[]; canManage: boolean; other: any }) {
+export const ROLE_DOT: Record<string, string> = { CONNECTED: "bg-emerald-500", FAILED: "bg-rose-500", UNTESTED: "bg-brand-500", NOT_CONFIGURED: "bg-slate-300" };
+export const ROLE_LABEL: Record<string, string> = { CONNECTED: "Connected", FAILED: "Connection failed", UNTESTED: "Configured, not tested", NOT_CONFIGURED: "Not configured" };
+
+/** One AI role as an integration row: the same collapsed header (status, last test, quick test) as every other provider; the settings
+ *  open below it. */
+export function AIRoleRow({ role, data, providers, canManage, other, open, onToggle }: { role: "main" | "challenger"; data: any; providers: any[];
+  canManage: boolean; other: any; open: boolean; onToggle: () => void }) {
   const qc = useQueryClient();
   const t = ROLE_TEXT[role];
   const init = (): Form => ({ provider: data.provider || "", model: data.model || "", api_key: "", enabled: !!data.enabled,
@@ -59,7 +65,8 @@ function RoleCard({ role, data, providers, canManage, other }: { role: "main" | 
   const keyNote = !f.provider ? "" : !sameProvider ? `Enter a ${spec?.label ?? ""} API key (the saved key belongs to another provider).`
     : data.key.unreadable ? "The stored key cannot be decrypted (the server's encryption key changed). Enter it again."
     : data.key.source === "saved" ? `Saved · fingerprint ${data.key.fingerprint}. Leave blank to keep it.`
-    : data.key.source === "groq_integration" ? "Using the key of the existing Groq integration. Enter a key here to use a separate one." : "No key saved.";
+    : data.key.source === "groq_integration" ? "Using the existing Groq key (from .env). Enter a key here to use a separate one."
+    : data.key.source === "claude_integration" ? "Using the existing Anthropic key (from .env). Enter a key here to use a separate one." : "No key saved.";
   const inv = [["ai-roles"], ["integrations"]];
   const discover = useAction((body: any) => api.post(`/ai/roles/${role}/models`, body), []);
   const test = useAction((body: any) => api.post(`/ai/roles/${role}/test`, body), inv);
@@ -80,25 +87,44 @@ function RoleCard({ role, data, providers, canManage, other }: { role: "main" | 
     pricing: f.pricing.input !== "" && f.pricing.output !== "" ? { input: f.pricing.input, output: f.pricing.output } : {},
     ...(role === "challenger" ? { review_policy: f.review_policy } : {}),
   }, { onSuccess: () => { setF((x) => ({ ...x, api_key: "" })); qc.invalidateQueries({ queryKey: ["ai-roles"] }); } });
+  const id = `ai_${role}`;
+  const configured = data.status !== "NOT_CONFIGURED";
+  const summary = data.provider ? `${data.provider_label} · ${data.model || "no model selected"}` : "Not configured";
+  const canQuickTest = canManage && !!data.provider && data.key.present;
 
   return (
-    <section aria-label={t.title} className={cx("relative min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white")}>
-      <span aria-hidden className={cx("absolute inset-y-0 left-0 w-1", t.accent)} />
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 pl-6">
-        <div className="min-w-0">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">{t.title}
-            <Badge tone={tone} dot>{label}</Badge>
-            {data.source === "migrated_from_groq" && <Badge tone="violet" title="Adopted from the existing Groq integration; nothing was re-entered or copied">from Groq integration</Badge>}
-          </h3>
-          <p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">{t.text}</p>
+    <section id={`card-${id}`} className="scroll-mt-20" aria-labelledby={`h-${id}`}>
+      <div className={cx("flex items-center gap-3 px-4 py-3 transition-colors sm:px-5", open ? "bg-slate-50/70" : "hover:bg-slate-50/50")}>
+        <button type="button" onClick={onToggle} aria-expanded={open} aria-controls={`panel-${id}`} className="flex min-w-0 flex-1 items-center gap-3 rounded text-left">
+          <svg aria-hidden viewBox="0 0 16 16" className={cx("h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform", open && "rotate-90")} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3.5l4.5 4.5-4.5 4.5" /></svg>
+          <span aria-hidden className={cx("h-2 w-2 shrink-0 rounded-full", ROLE_DOT[data.status] ?? "bg-slate-300")} />
+          <span className="min-w-0">
+            <span id={`h-${id}`} className="block truncate text-[13px] font-semibold text-slate-900">{t.title}</span>
+            <span className="block truncate text-xs text-slate-500"><span className="md:hidden">{label} · </span>{open ? t.short : summary}</span>
+          </span>
+        </button>
+        <div className="hidden shrink-0 items-center gap-1.5 md:flex">
+          <Badge tone={configured ? "green" : "slate"}>{configured ? "Configured" : "Not configured"}</Badge>
+          {configured && <Badge tone={tone}>{label}</Badge>}
+          {data.enabled && <Badge tone="green">Enabled in app</Badge>}
+        </div>
+        <span className="hidden w-24 shrink-0 text-right text-2xs text-slate-400 lg:block" title={data.last_test?.at ? dt(data.last_test.at) : undefined}>{data.last_test?.at ? `tested ${since(data.last_test.at)}` : "never tested"}</span>
+        {canQuickTest && !open && <Button size="sm" disabled={test.isPending} onClick={() => test.mutate({})}>{test.isPending ? "Testing…" : "Test Connection"}</Button>}
+      </div>
+      <div id={`panel-${id}`} role="region" aria-label={`${t.title} settings`} className={cx("grid transition-[grid-template-rows] duration-200 ease-out", open ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}
+        {...(open ? {} : { inert: "" as any, "aria-hidden": true })}>
+      <div className="min-h-0 overflow-hidden"><div className="border-t border-slate-100 px-4 pb-5 pt-3 sm:px-5 sm:pl-[52px]">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-2xl">
+          <p className="text-[13px] leading-5 text-slate-600">{t.text}</p>
+          {role === "challenger" && !data.enabled && <p className="mt-1 text-xs text-slate-500">Challenger AI is off: drafts are checked by the Main AI and the deterministic validation only, and every result says that no independent review was performed.</p>}
         </div>
         <label className={cx("flex shrink-0 items-center gap-2 text-xs font-medium", canManage ? "cursor-pointer text-slate-700" : "text-slate-400")}>
           <input type="checkbox" role="switch" aria-checked={f.enabled} className="h-4 w-4 accent-brand-600" disabled={!canManage}
-            checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} />{f.enabled ? "On" : "Off"}
+            checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} />{f.enabled ? "Enabled" : "Disabled"}
         </label>
-      </header>
-
-      <div className="space-y-4 px-5 py-4 pl-6">
+      </div>
+      <div className="max-w-3xl space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Provider">
             <Select value={f.provider} disabled={!canManage} onChange={(e) => { setF({ ...f, provider: e.target.value, model: "", api_key: "" }); discover.reset(); test.reset(); setManual(false); }}
@@ -176,6 +202,25 @@ function RoleCard({ role, data, providers, canManage, other }: { role: "main" | 
             {dirty && <span className="text-xs text-amber-700">Unsaved changes</span>}
           </div>)}
       </div>
+      </div></div></div>
+    </section>
+  );
+}
+
+export function AIUsageRow({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <section id="card-ai_usage" className="scroll-mt-20" aria-labelledby="h-ai_usage">
+      <div className={cx("flex items-center gap-3 px-4 py-3 transition-colors sm:px-5", open ? "bg-slate-50/70" : "hover:bg-slate-50/50")}>
+        <button type="button" onClick={onToggle} aria-expanded={open} aria-controls="panel-ai_usage" className="flex min-w-0 flex-1 items-center gap-3 rounded text-left">
+          <svg aria-hidden viewBox="0 0 16 16" className={cx("h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform", open && "rotate-90")} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3.5l4.5 4.5-4.5 4.5" /></svg>
+          <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-slate-300" />
+          <span className="min-w-0">
+            <span id="h-ai_usage" className="block truncate text-[13px] font-semibold text-slate-900">AI usage</span>
+            <span className="block truncate text-xs text-slate-500">Requests, tokens, latency, errors and known cost by role, provider and model</span>
+          </span>
+        </button>
+      </div>
+      {open && <div id="panel-ai_usage" className="border-t border-slate-100"><Usage /></div>}
     </section>
   );
 }
@@ -185,10 +230,9 @@ function Usage() {
   const q = useQuery({ queryKey: ["ai-usage", days], queryFn: () => api.get(`/ai/usage?days=${days}`) });
   const rows: any[] = q.data?.models ?? [];
   return (
-    <section aria-label="AI usage" className="rounded-lg border border-slate-200 bg-white">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3">
-        <div><h3 className="text-[13px] font-semibold text-slate-900">AI usage</h3>
-          <p className="text-xs text-slate-500">Tokens and latency as reported by each provider. Cost only where it is known.</p></div>
+    <section aria-label="AI usage table" className="bg-white">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-5 sm:pl-[52px]">
+        <p className="text-xs text-slate-500">Tokens and latency as reported by each provider. Cost only where it is known.</p>
         <Select className="w-auto" value={String(days)} onChange={(e) => setDays(Number(e.target.value))} options={[7, 30, 90].map((d) => ({ value: String(d), label: `Last ${d} days` }))} />
       </header>
       <ErrorBox error={q.error} />
@@ -212,25 +256,16 @@ function Usage() {
   );
 }
 
-export function AIRoles({ canManage }: { canManage: boolean }) {
-  const q = useQuery({ queryKey: ["ai-roles"], queryFn: () => api.get("/ai/roles") });
-  const roles = q.data?.roles;
-  const providers = useMemo(() => q.data?.providers ?? [], [q.data]);
-  return (
-    <section aria-label="AI models" className="space-y-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-slate-900">AI models</h2>
-        <span className="text-2xs text-slate-400">Keys are encrypted on the server and never shown again after saving.</span>
-      </div>
-      <ErrorBox error={q.error} />
-      {q.data?.independence?.note && <Notice tone="amber">{q.data.independence.note}</Notice>}
-      {roles && (
-        <div className="grid gap-4 xl:grid-cols-2">
-          <RoleCard role="main" data={roles.main} providers={providers} canManage={canManage} other={roles.challenger} />
-          <RoleCard role="challenger" data={roles.challenger} providers={providers} canManage={canManage} other={roles.main} />
-        </div>)}
-      {roles && !roles.challenger.enabled && <p className="text-xs text-slate-500">Challenger AI is off: drafts are checked by the Main AI and the deterministic validation only, and every result says that no independent review was performed.</p>}
-      {canManage && <Usage />}
-    </section>
-  );
+export function useAIRoles() {
+  return useQuery({ queryKey: ["ai-roles"], queryFn: () => api.get("/ai/roles") });
+}
+
+/** The rows of the "AI models" integrations group: Main AI, Challenger AI, AI usage. */
+export function AIRoleRows({ data, canManage, opened, toggle }: { data: any; canManage: boolean; opened: Set<string>; toggle: (k: string) => void }) {
+  const roles = data.roles;
+  return (<>
+    <AIRoleRow role="main" data={roles.main} providers={data.providers} canManage={canManage} other={roles.challenger} open={opened.has("ai_main")} onToggle={() => toggle("ai_main")} />
+    <AIRoleRow role="challenger" data={roles.challenger} providers={data.providers} canManage={canManage} other={roles.main} open={opened.has("ai_challenger")} onToggle={() => toggle("ai_challenger")} />
+    {canManage && <AIUsageRow open={opened.has("ai_usage")} onToggle={() => toggle("ai_usage")} />}
+  </>);
 }

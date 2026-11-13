@@ -34,7 +34,6 @@ class Flaky(MockAIProvider):
 def flaky():
     Flaky.down = True
     registry.override("ai", Flaky())
-    registry.override("claude_ai", Flaky(variant="b"))
     yield Flaky
 
 
@@ -75,10 +74,10 @@ def _counts(task_id: str) -> dict:
 
 def test_failed_draft_records_provider_details_and_offers_a_retry(flaky, business):
     t = _failed_build(business)
-    assert "Neither AI produced a valid draft" in t["error"] and "HTTP 413" in t["error"]
+    assert "The Main AI did not produce a valid draft" in t["error"] and "HTTP 413" in t["error"]
     a = t["draft_attempts"]
     assert len(a) == 1 and a[0]["attempt"] == 1 and a[0]["kind"] == "initial" and a[0]["status"] == "failed"
-    assert {c["provider"].split(":")[0] for c in a[0]["calls"]} == {"internal", "claude"}
+    assert {c["provider"].split(":")[0] for c in a[0]["calls"]} == {"internal"}
     assert all(not c["ok"] and "HTTP 413" in c["error"] and c["error_kind"] == "tpm_exceeded" for c in a[0]["calls"])
     d = Api(ADMIN).get(f"/tasks/{t['id']}").json()
     assert d["draft_retry"]["available"] is True and d["draft_retry"]["researched_at"]

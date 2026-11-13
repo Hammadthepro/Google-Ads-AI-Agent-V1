@@ -61,27 +61,34 @@ def _row(db: Session, role: str, create: bool = False) -> AIRoleConfig | None:
 
 
 def bootstrap(db: Session) -> list[str]:
-    """Adopt the existing Groq integration as the Main AI (and its challenger model as the Challenger AI) for each role that has no row
-    yet in this workspace. By reference only: the key stays where it is. A role that has a row (anything a person saved, or an earlier
-    adoption) is never touched again."""
+    """Adopt existing AI integrations for each role that has no row yet in this workspace, by reference (the key stays where it is):
+    Main AI <- the Groq integration; Challenger AI <- the Claude integration when it is configured (a different provider, so a genuinely
+    independent review), else the Groq integration's challenger model. A role that has a row is never touched again."""
     existing = _rows(db)
     if "main" in existing and "challenger" in existing:
         return []
     groq = integrations_service.effective("groq", integrations_service._row(db, "groq"))
-    if not (groq.get("api_key") and groq.get("model")):
-        return []
+    claude = integrations_service.effective("claude", integrations_service._row(db, "claude"))
+    has_groq = bool(groq.get("api_key") and groq.get("model"))
+    plan = {"main": ("groq", groq.get("model"), "integration:groq") if has_groq else None,
+            "challenger": (("anthropic", claude["model"], "integration:claude") if claude.get("api_key") and claude.get("model") else
+                           ("groq", groq["challenger_model"], "integration:groq") if has_groq and groq.get("challenger_model") else None)}
     wid, made = integrations_service.workspace_id(db), []
-    for role, model in (("main", groq["model"]), ("challenger", groq.get("challenger_model"))):
-        if role in existing or not model:
+    for role, pick in plan.items():
+        if role in existing or not pick:
             continue
-        db.add(AIRoleConfig(workspace_id=wid, role=role, provider="groq", model=model, enabled=True, credential_ref="integration:groq",
-                            source="migrated_from_groq", status="UNTESTED", model_meta={}, models_cache=[], last_test_steps=[], pricing={},
-                            review_policy={}))
+        provider, model, ref = pick
+        db.add(AIRoleConfig(workspace_id=wid, role=role, provider=provider, model=model, enabled=True, credential_ref=ref,
+                            source=f"migrated_from_{ref.split(':')[1]}", status="UNTESTED", model_meta={}, models_cache=[], last_test_steps=[],
+                            pricing={}, review_policy={}))
         made.append(role)
     if made:
         db.flush()
-        activity.log(db, "ai_role.migrated", entity="ai_role", details={"roles": made, "from": "groq integration (by reference, key not copied)"})
+        activity.log(db, "ai_role.migrated", entity="ai_role", details={"roles": made, "from": "existing integrations (by reference, keys not copied)"})
     return made
+
+
+REFS = {"integration:groq": ("groq", "groq"), "integration:claude": ("claude", "anthropic")}   # credential_ref -> (integration, provider)
 
 
 def _key(row: AIRoleConfig | None) -> str:
@@ -92,8 +99,9 @@ def _key(row: AIRoleConfig | None) -> str:
             return decrypt_token(row.secrets_ciphertext)
         except Exception:  # noqa: BLE001 - key rotated / damaged: treat as missing (reported as unreadable), never crash
             return ""
-    if row.credential_ref == "integration:groq" and row.provider == "groq":
-        return integrations_service.resolve("groq").get("api_key") or ""
+    ref = REFS.get(row.credential_ref)
+    if ref and row.provider == ref[1]:
+        return integrations_service.resolve(ref[0]).get("api_key") or ""
     return ""
 
 
@@ -133,15 +141,15 @@ def resolve(role: str) -> dict:
             out["reason"] = f"{ROLES[role]} is not configured"
         else:
             key = _key(row)
-            ref_disabled = bool(row.credential_ref == "integration:groq" and not row.secrets_ciphertext
-                                and integrations_service.resolve("groq").get("_disabled"))
+            ref = REFS.get(row.credential_ref)
+            ref_disabled = bool(ref and not row.secrets_ciphertext and integrations_service.resolve(ref[0]).get("_disabled"))
             if ref_disabled:  # a role that borrows the Groq integration's key is off when that integration is switched off
                 key = ""
             out.update(provider=row.provider, model=row.model, enabled=bool(row.enabled), api_key=key, model_meta=row.model_meta or {},
                        pricing=row.pricing or None, review_policy=review_policy(row), ref_disabled=ref_disabled)
             out["configured"] = bool(key and row.model)
             out["reason"] = ("" if out["configured"] else
-                             f"{ROLES[role]} uses the Groq integration's key, and that integration is disabled" if ref_disabled else
+                             f"{ROLES[role]} uses the {ref[0].title()} integration's key, and that integration is disabled" if ref_disabled else
                              "the stored key cannot be decrypted (TOKEN_ENCRYPTION_KEY changed); enter the key again" if _key_unreadable(row) else
                              f"{ROLES[role]} has no API key" if not key else f"{ROLES[role]} has no model selected")
             if out["configured"] and not row.enabled:
@@ -201,7 +209,7 @@ def reviews(kind: str) -> bool:
 def serialize(db: Session, row: AIRoleConfig | None, role: str) -> dict:
     spec = P.SPECS.get(row.provider) if row and row.provider else None
     key_source = ("saved" if row and row.secrets_ciphertext else
-                  "groq_integration" if row and row.credential_ref == "integration:groq" and _key(row) else "")
+                  f"{REFS[row.credential_ref][0]}_integration" if row and row.credential_ref in REFS and _key(row) else "")
     return {
         "role": role, "label": ROLES[role], "provider": row.provider if row else "", "provider_label": spec.label if spec else "",
         "model": row.model if row else "", "enabled": bool(row and row.enabled), "status": row.status if row else "NOT_CONFIGURED",
@@ -267,7 +275,7 @@ def save(db: Session, role: str, body: dict, user) -> AIRoleConfig:
         if not new_key:  # the old key belongs to the old provider
             row.secrets_ciphertext, row.key_fingerprint, row.credential_ref = "", "", ""
         row.models_cache, row.models_fetched_at, row.models_error, row.model_meta = [], None, "", {}
-        if row.credential_ref and provider != "groq":
+        if row.credential_ref and REFS.get(row.credential_ref, ("", ""))[1] != provider:
             row.credential_ref = ""
     if new_key:
         integrations_service._require_safe_encryption_key()

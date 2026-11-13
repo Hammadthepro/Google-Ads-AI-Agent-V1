@@ -69,11 +69,11 @@ def test_secrets_never_returned_by_api(monkeypatch):
     reset_settings_cache()
     try:
         sup = Api(SUPER)
-        for path in ("/integrations", "/settings", "/auth/me", "/auth/config", "/dashboard"):
+        for path in ("/integrations", "/ai/roles", "/settings", "/auth/me", "/auth/config", "/dashboard"):
             body = sup.get(path).text
             assert "gsk_TESTSECRET" not in body and "adssecret-SECRET" not in body, path
-        groq = next(i for i in sup.get("/integrations").json()["integrations"] if i["provider"] == "groq")
-        assert groq["secrets"]["api_key"]["saved"] is True and groq["secrets"]["api_key"]["source"] == "environment"
+        roles = sup.get("/ai/roles")
+        assert "gsk_TESTSECRET" not in roles.text  # the Main AI may use the environment's Groq key, but never shows it
     finally:
         reset_settings_cache()
 

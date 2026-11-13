@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { WriteReadiness } from "../components/WriteReadiness";
-import { AIRoles } from "../components/AIRoles";
+import { AIRoleRows, ROLE_DOT, ROLE_LABEL, useAIRoles } from "../components/AIRoles";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -403,7 +403,7 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
   );
 }
 
-const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "AI provider integrations"], ["Research", "Web search & research"], ["Website research", "Website research"], ["System", "System"]];
+const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "AI models"], ["Research", "Web search & research"], ["Website research", "Website research"], ["System", "System"]];
 const DOT_TONE: Record<string, string> = { green: "bg-emerald-500", red: "bg-rose-500", amber: "bg-amber-500", blue: "bg-brand-500", slate: "bg-slate-300", violet: "bg-plum-500" };
 
 export default function Integrations() {
@@ -419,10 +419,13 @@ export default function Integrations() {
     ...((params.get("providers") ?? "").split(",").filter(Boolean))]));
   const toggle = (p: string) => setOpened((o) => { const n = new Set(o); n.has(p) ? n.delete(p) : n.add(p); return n; });
   const reveal = (p: string) => { setOpened((o) => new Set(o).add(p)); requestAnimationFrame(() => document.getElementById(`card-${p}`)?.scrollIntoView({ behavior: "smooth", block: "start" })); };
-  const testAll = useAction(() => api.post("/integrations/test-all"), [["integrations"], ["integrations-mode"], ["integration-banner"]]);
+  const testAll = useAction(() => api.post("/integrations/test-all"), [["integrations"], ["integrations-mode"], ["integration-banner"], ["ai-roles"]]);
+  const ai = useAIRoles();
   if (q.isLoading || !q.data) return <Spinner />;
   const items: any[] = q.data.integrations;
-  const counts = items.reduce((a: any, i) => ({ ...a, [i.display.label]: (a[i.display.label] ?? 0) + 1 }), {});
+  const roleList: any[] = ai.data?.roles ? [ai.data.roles.main, ai.data.roles.challenger] : [];
+  const counts = [...items.map((i) => i.display.label), ...roleList.map((r) => ROLE_LABEL[r.status] ?? "Not configured")]
+    .reduce((a: any, l: string) => ({ ...a, [l]: (a[l] ?? 0) + 1 }), {});
   const canManage = can("integrations.manage");
   const googleOk = !!items.find((i) => i.provider === "google_ads")?.last_test_ok;
   const results: Record<string, any> = Object.fromEntries((testAll.data?.results ?? []).map((r: any) => [r.provider, r]));
@@ -441,12 +444,21 @@ export default function Integrations() {
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")
         ? <Notice tone="blue">Google OAuth redirect URI sent to Google (source: {q.data.redirect_uri_source}) — it must be listed under “Authorised redirect URIs” of your OAuth client, character for character: <code className="break-all font-mono text-xs">{q.data.redirect_uri}</code></Notice>
         : <Notice tone="amber">GOOGLE_ADS_REDIRECT_URI points outside this app (<code className="break-all font-mono text-xs">{q.data.redirect_uri}</code>, e.g. the OAuth Playground). A refresh token obtained there works, so you do not need “Connect with Google”. To use that button, register <code>&lt;app origin&gt;/api/v1/integrations/google/callback</code> and set it as the redirect URI.</Notice>)}
-      <AIRoles canManage={canManage} />
       <div className="grid gap-8 xl:grid-cols-[208px_minmax(0,1fr)]">
         <nav aria-label="Providers" className="hidden xl:block">
           <div className="sticky top-[76px] space-y-5 text-[13px]">
             {GROUPS.map(([g, title]) => {
               const list = items.filter((i) => i.group === g);
+              if (g === "AI") return (
+                <div key={g}>
+                  <div className="mb-1.5 px-2 text-xs font-medium text-slate-500">{title}</div>
+                  <ul className="space-y-px">{roleList.map((r) => { const k = `ai_${r.role}`; return (
+                    <li key={k}><a href={`#card-${k}`} onClick={(e) => { e.preventDefault(); reveal(k); history.replaceState(null, "", `#card-${k}`); }}
+                      aria-current={opened.has(k) ? "true" : undefined}
+                      className={cx("flex items-center gap-2 rounded-md px-2 py-1 transition-colors", opened.has(k) ? "bg-white font-medium text-slate-900 shadow-inset" : "text-slate-700 hover:bg-white/70 hover:text-slate-900")}>
+                      <span aria-hidden className={cx("h-1.5 w-1.5 shrink-0 rounded-full", ROLE_DOT[r.status] ?? "bg-slate-300")} />
+                      <span className="truncate">{r.label}</span></a></li>); })}</ul>
+                </div>);
               if (!list.length) return null;
               return (
                 <div key={g}>
@@ -473,6 +485,19 @@ export default function Integrations() {
           {test.data && <Notice tone={test.data.connected ? "green" : "amber"}><b>{test.data.integration?.label ?? test.data.provider ?? "Connection test"}:</b> {test.data.connected ? "Connected — real request succeeded." : `Not connected — ${(test.data.steps?.find((s: any) => s.status === "FAILED")?.detail) ?? "open it for the step-by-step result"}`}</Notice>}
           {GROUPS.map(([g, title]) => {
             const list = items.filter((i) => i.group === g);
+            if (g === "AI") return (
+              <section key={g} aria-label={title}>
+                <div className="mb-2 flex items-baseline justify-between gap-3">
+                  <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+                  <span className="text-2xs text-slate-400">{roleList.filter((r) => r.status === "CONNECTED").length} of {roleList.length} connected</span>
+                </div>
+                <p className="mb-2 text-xs leading-5 text-slate-500">The Main AI does the agent's AI work; the Challenger AI independently reviews its important outputs. Choose any supported provider and model for each. Keys are encrypted on the server and never shown again after saving.</p>
+                {ai.data?.independence?.note && <div className="mb-2"><Notice tone="amber">{ai.data.independence.note}</Notice></div>}
+                <ErrorBox error={ai.error} />
+                {ai.data?.roles && <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <AIRoleRows data={ai.data} canManage={canManage} opened={opened} toggle={toggle} />
+                </div>}
+              </section>);
             if (!list.length) return null;
             return (
               <section key={g} aria-label={title}>
@@ -480,7 +505,6 @@ export default function Integrations() {
                   <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
                   <span className="text-2xs text-slate-400">{list.filter((i) => i.display.label === "Connected").length} of {list.length} connected</span>
                 </div>
-                {g === "AI" && <p className="mb-2 text-xs leading-5 text-slate-500">The Main AI and Challenger AI above decide which models do the work. The Groq integration's key can be used by a role without entering it again; the Claude integration is the optional second drafter of the AI competition.</p>}
                 {g === "System" && <p className="mb-2 text-xs leading-5 text-slate-500">System integrations are managed by a Super Admin. Items marked <b>Deployment-managed</b> are set by whoever deploys the application (they hold infrastructure secrets) and are never editable here.</p>}
                 <div className="divide-y divide-slate-200 overflow-hidden rounded-lg border border-slate-200 bg-white">
                   {list.map((i) => <IntegrationCard key={i.provider} item={i} canManage={canManage} resultOf={results[i.provider]} open={opened.has(i.provider)} onToggle={() => toggle(i.provider)}

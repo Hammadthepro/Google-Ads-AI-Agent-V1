@@ -12,7 +12,6 @@ import pytest
 
 from app.adapters import registry
 from app.core.config import reset_settings_cache
-from app.core.errors import IntegrationNotConfigured
 from app.db.session import session_scope
 from app.models import ActivityLog, IntegrationConfig, Workspace
 from app.services import integrations_service as svc
@@ -196,26 +195,6 @@ def test_claude_models_come_from_the_api_and_the_test_makes_a_real_completion():
         assert not bad["connected"] and "not in the list" in bad["steps"][-1]["detail"]
         usage = svc.serialize(db, "claude")["info"]["usage"]
         assert set(usage) >= {"runs", "tokens_in", "tokens_out", "cost_note"}
-
-
-def test_dual_ai_falls_back_to_the_single_available_draft_when_claude_is_not_configured(monkeypatch):
-    from app.services import competition
-    from tests.integration.test_ai_competition import _run
-    real_get = registry.get
-
-    def get(name):
-        if name == "claude_ai":
-            raise IntegrationNotConfigured("claude", "Claude (Anthropic)", missing=["api_key"])
-        return real_get(name)
-    monkeypatch.setattr(registry, "get", get)
-    res, _ = _run()
-    c = res["competition"]
-    assert c["mode"] == "single" and "Claude (Anthropic) integration is not configured" in c["errors"]["claude"]
-    assert c["providers"]["claude"]["source"] == "NONE" and c["providers"]["internal"]["model"]  # no pretend second opinion
-    assert "second AI unavailable" in c["degraded_reason"] or "not configured" in c["degraded_reason"]
-    monkeypatch.setattr(registry, "get", lambda name: (_ for _ in ()).throw(IntegrationNotConfigured(name, name)))
-    with pytest.raises(IntegrationNotConfigured):
-        competition._providers()  # both missing: nothing is faked
 
 
 # --------------------------------------------------------------------------- SMTP (database-backed, encrypted)

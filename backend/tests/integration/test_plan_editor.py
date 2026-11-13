@@ -27,7 +27,7 @@ def test_edit_creates_new_version_new_approval_and_diff():
     t = _build(admin)
     a1 = admin.get(f"/approvals/{t['approval_id']}").json()
     plan1 = admin.get(f"/plans/{a1['context']['plan_id']}").json()
-    assert plan1["version"] == 1 and plan1["competition"]["mode"] == "dual" and plan1["original"] == plan1["draft"]
+    assert plan1["version"] == 1 and plan1["competition"]["mode"] == "single" and plan1["original"] == plan1["draft"]
     group = plan1["draft"]["ad_groups"][0]["name"]
     r = admin.post(f"/approvals/{a1['id']}/plan-edit", {"note": "client call", "edits": [
         {"op": "add_keyword", "ad_group": group, "text": "same day drain unclogging", "match_type": "PHRASE"},

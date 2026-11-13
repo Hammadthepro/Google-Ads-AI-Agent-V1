@@ -35,7 +35,7 @@ def _provider(name: str) -> str:
 @router.get("/integrations")
 def list_integrations(request: Request, user: User = Depends(require("reports.view")), db: Session = Depends(get_db)):
     uri, source = svc.oauth_redirect_uri(_origin(request))
-    return {"integrations": [svc.serialize(db, p) for p in svc.PROVIDERS], "mode": svc.mode_summary(db),
+    return {"integrations": [svc.serialize(db, p) for p in svc.listed()], "mode": svc.mode_summary(db),
             "redirect_uri": uri, "redirect_uri_source": source}
 
 
@@ -67,6 +67,21 @@ def put_mode(body: ModeIn, user: User = Depends(require("integrations.manage")),
 @router.post("/integrations/test-all")
 def test_all(user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
     res = svc.test_all(db, user.id)
+    from app.services import ai_roles
+    for role in ai_roles.ROLES:  # the Main AI and Challenger AI are integrations too: test the configured ones with real requests
+        v = ai_roles.resolve(role)
+        if not v.get("provider"):
+            res.append({"provider": f"ai_{role}", "ok": False, "connected": False, "skipped": True, "status": "NOT_CONFIGURED",
+                        "steps": [{"name": "Configured", "status": "SKIPPED", "detail": f"{ai_roles.ROLES[role]} is not configured"}]})
+            continue
+        try:
+            r = ai_roles.test(db, role, {}, user)
+        except ValidationFailed as exc:
+            res.append({"provider": f"ai_{role}", "ok": False, "connected": False, "skipped": True, "status": "NOT_CONFIGURED",
+                        "steps": [{"name": "Configured", "status": "SKIPPED", "detail": exc.message}]})
+            continue
+        res.append({"provider": f"ai_{role}", "ok": r["ok"], "connected": r["ok"], "status": "CONNECTED" if r["ok"] else "FAILED",
+                    "steps": [{"name": x["name"], "status": "PASSED" if x["ok"] else "FAILED", "detail": x["detail"]} for x in r["steps"]]})
     activity.log(db, "integrations.test_all", actor=user, entity="system", entity_id="integrations",
                  details={r["provider"]: r["status"] for r in res})
     db.commit()

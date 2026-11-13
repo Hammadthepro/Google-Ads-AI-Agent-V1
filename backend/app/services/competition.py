@@ -17,7 +17,7 @@ from app.adapters import registry
 from app.core.util import normalize_term
 from app.services import ai_service
 
-SIDES = ("internal", "claude")
+SIDES = ("internal",)  # the Main AI drafts; the Challenger AI reviews (see challenger.py)
 CLAIM_TRIGGERS = ("#1", "best", "top rated", "guarantee", "cheapest", "lowest", "award", "free", "no fee")
 PHONE = re.compile(r"\d{3}[\s.\-)]*\d{3}[\s.\-]*\d{4}")
 
@@ -35,17 +35,8 @@ class _Unavailable:
 
 
 def _providers() -> dict:
-    """Both AIs are independent integrations. A missing one is recorded, not fatal; if BOTH are missing the first error is raised."""
-    from app.core.errors import IntegrationNotConfigured
-    out = {}
-    for side, name in (("internal", "ai"), ("claude", "claude_ai")):
-        try:
-            out[side] = registry.get(name)
-        except IntegrationNotConfigured as exc:
-            out[side] = _Unavailable(exc)
-    if all(isinstance(p, _Unavailable) for p in out.values()):
-        raise out["internal"].error
-    return out
+    """The drafting AI is the Main AI. Not configured -> IntegrationNotConfigured, raised to the caller (no stand-in, no other provider)."""
+    return {"internal": registry.get("ai")}
 
 
 # ------------------------------------------------------------------------------------------ ad scoring
@@ -246,10 +237,8 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
             drafts[side], runs[side] = d, r
         else:
             errors[side] = e
-    if "internal" not in drafts and "claude" not in drafts:
-        who = {"internal": "Main AI", "claude": "Claude (second drafter)"}
-        reasons = "; ".join(f"{who.get(k, k)}: {v}" for k, v in errors.items())
-        raise ai_service.AIOutputInvalid(f"Neither AI produced a valid draft; nothing was created. {reasons}",
+    if not drafts:
+        raise ai_service.AIOutputInvalid(f"The Main AI did not produce a valid draft; nothing was created. {errors.get('internal', '')}",
                                          details={"providers": errors})
 
     challenges = {}  # filled after consolidation: the Challenger AI reviews the FINAL draft (once), with the research evidence
