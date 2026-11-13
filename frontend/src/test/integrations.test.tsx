@@ -42,6 +42,9 @@ function setup(manage = true) {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><Integrations /></MemoryRouter></QueryClientProvider>);
 }
 
+/** Providers start collapsed; a test opens the one it is about, exactly as a person would. */
+const openProvider = async (label: RegExp) => fireEvent.click(await screen.findByRole("button", { name: label, expanded: false }));
+
 describe("Integrations dashboard", () => {
   it("groups cards into the four categories", async () => {
     setup();
@@ -59,6 +62,7 @@ describe("Integrations dashboard", () => {
 
   it("flags unsaved edits, saves only what changed, and never sends blank secrets", async () => {
     setup();
+    await openProvider(/^Google Ads API/);
     const input = await screen.findByLabelText(/OAuth client ID \*/);
     fireEvent.change(input, { target: { value: "609-abc.apps.googleusercontent.com" } });
     expect(await screen.findByText(/Unsaved changes — not saved on the server yet/)).toBeInTheDocument();
@@ -72,6 +76,7 @@ describe("Integrations dashboard", () => {
 
   it("discard throws the draft away", async () => {
     setup();
+    await openProvider(/^Google Ads API/);
     fireEvent.change(await screen.findByLabelText(/OAuth client ID \*/), { target: { value: "typed" } });
     fireEvent.click(await screen.findByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByText(/Unsaved changes/)).toBeNull());
@@ -100,6 +105,7 @@ describe("Integrations dashboard", () => {
 
   it("offers the SMTP security choice and an explicit test-email action", async () => {
     setup();
+    await openProvider(/^Email alerts \(SMTP\)/);
     expect(await screen.findByRole("combobox", { name: "Security" })).toHaveValue("starttls");
     expect(screen.getByRole("button", { name: "Send test email" })).toBeDisabled(); // needs an address; nothing is sent implicitly
   });
@@ -107,9 +113,41 @@ describe("Integrations dashboard", () => {
   it("hides every mutating control from users who cannot manage integrations", async () => {
     setup(false);
     await screen.findAllByText("Google Ads API");
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));   // hidden by permission, not merely collapsed
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Disconnect" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Send test email" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Test all connections/ })).toBeNull();
+  });
+
+  it("starts with every provider collapsed to a summary row, out of the accessibility tree until opened", async () => {
+    setup();
+    const header = await screen.findByRole("button", { name: /^Google Ads API/, expanded: false });
+    const panel = document.getElementById(header.getAttribute("aria-controls")!)!;
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+    expect(panel).toHaveAttribute("inert");
+    expect(screen.queryByRole("textbox", { name: /OAuth client ID/ })).toBeNull();
+    fireEvent.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(panel).not.toHaveAttribute("aria-hidden");
+    expect(screen.getByRole("textbox", { name: /OAuth client ID/ })).toBeInTheDocument();
+  });
+
+  it("keeps a half-typed draft when the provider is collapsed and reopened", async () => {
+    setup();
+    await openProvider(/^Google Ads API/);
+    fireEvent.change(screen.getByLabelText(/OAuth client ID \*/), { target: { value: "draft-id" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Google Ads API/, expanded: true }));
+    await openProvider(/^Google Ads API/);
+    expect(screen.getByLabelText(/OAuth client ID \*/)).toHaveValue("draft-id");
+    expect(screen.getByText(/Unsaved changes — not saved on the server yet/)).toBeInTheDocument();
+  });
+
+  it("tests a collapsed provider from its summary row with the same request as before", async () => {
+    setup();
+    await screen.findByRole("button", { name: /^Groq/ });
+    const row = document.getElementById("card-groq")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/integrations/groq/test"))).toBe(true));
   });
 });

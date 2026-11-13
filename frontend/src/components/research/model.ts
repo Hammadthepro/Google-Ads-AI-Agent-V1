@@ -2,7 +2,7 @@
  *  every node, source, warning and finding below exists only because the backend recorded an event for it. */
 export type ResearchEvent = { seq: number; kind: string; stage: string; level: "info" | "warn" | "error"; title: string; data: Record<string, any>; at: string };
 
-export type PageNode = { url: string; path: string; state: "fetching" | "extracted" | "failed" | "blocked"; title?: string; words?: number; headings?: string[]; stage: string; seq: number };
+export type PageNode = { url: string; path: string; state: "fetching" | "extracted" | "failed" | "blocked"; title?: string; words?: number; h1?: string; headings?: string[]; status?: number; stage: string; seq: number };
 export type CompetitorNode = { name: string; url?: string; basis: string; provider?: string; lat?: number; lon?: number; distance_km?: number; seq: number };
 export type KeywordNode = { seed: string; provider: string; count: number; examples: string[]; seq: number };
 export type LocationNode = { label: string; lat: number; lon: number; role: string; seq: number };
@@ -51,13 +51,13 @@ export function buildModel(events: ResearchEvent[]): ResearchModel {
       case "url_crawling": if (!pages.has(d.url)) pages.set(d.url, { url: d.url, path: pathOf(d.url), state: "fetching", stage: e.stage, seq: e.seq }); break;
       case "page_extracted": {
         const p = pages.get(d.url) ?? { url: d.url, path: pathOf(d.url), stage: e.stage, seq: e.seq, state: "extracted" as const };
-        pages.set(d.url, { ...p, state: "extracted", title: d.page_title || e.title, words: d.words, headings: [d.h1, ...(d.headings ?? [])].filter(Boolean) });
+        pages.set(d.url, { ...p, state: "extracted", title: d.page_title || e.title, words: d.words, h1: d.h1 || undefined, headings: [d.h1, ...(d.headings ?? [])].filter(Boolean) });
         addSource({ key: d.url, label: d.page_title || pathOf(d.url), url: d.url, provider: "crawler", kind: e.stage === "competitors" ? "Competitor page" : "Website page", seq: e.seq, at: e.at });
         break;
       }
       case "page_failed": case "crawl_blocked": {
         const p = pages.get(d.url) ?? { url: d.url, path: pathOf(d.url), stage: e.stage, seq: e.seq, state: "failed" as const };
-        pages.set(d.url, { ...p, state: e.kind === "crawl_blocked" ? "blocked" : "failed" }); break;
+        pages.set(d.url, { ...p, state: e.kind === "crawl_blocked" ? "blocked" : "failed", status: typeof d.status === "number" ? d.status : undefined }); break;
       }
       case "competitor_identified": {
         const key = (d.url ? hostOf(d.url) : "") || e.title.toLowerCase();
@@ -108,6 +108,7 @@ export type StreamStage = { stage: string; title: string; state: "running" | "do
 /** Groups the real events into readable sections: one line per page (opening → read), findings as they arrive, warnings in place. */
 export function buildStream(events: ResearchEvent[]): StreamStage[] {
   const stages = new Map<string, StreamStage>();
+  const byKey = new Map<string, StreamItem>();   // stage + item key → item: one lookup per page instead of a scan (large crawls)
   const get = (stage: string, seq: number) => {
     const key = stage || "";
     if (!stages.has(key)) stages.set(key, { stage: key, title: STAGE_TITLE[key] ?? key, state: "running", items: [], firstSeq: seq });
@@ -117,7 +118,8 @@ export function buildStream(events: ResearchEvent[]): StreamStage[] {
     if (["audit_started", "audit_completed", "audit_failed"].includes(e.kind)) continue;
     const s = get(e.stage, e.seq);
     const d = e.data ?? {};
-    const push = (it: Omit<StreamItem, "seq" | "at">) => s.items.push({ ...it, seq: e.seq, at: e.at });
+    const push = (it: Omit<StreamItem, "seq" | "at">) => { const item = { ...it, seq: e.seq, at: e.at }; s.items.push(item); byKey.set(`${s.stage}\u0000${item.key}`, item); };
+    const find = (key: string) => byKey.get(`${s.stage}\u0000${key}`);
     switch (e.kind) {
       case "stage_started": s.state = "running"; break;
       case "stage_completed": s.state = "done"; s.summary = d.summary; break;
@@ -125,18 +127,20 @@ export function buildStream(events: ResearchEvent[]): StreamStage[] {
       case "stage_skipped": s.state = "skipped"; s.summary = d.summary || e.title; break;
       case "url_crawling": push({ key: `p:${d.url}`, type: "activity", text: `Reading ${hostOf(d.url)}${pathOf(d.url) === "/" ? "" : pathOf(d.url)}`, url: d.url, state: "working" }); break;
       case "page_extracted": {
-        const existing = s.items.find((i) => i.key === `p:${d.url}`);
+        const existing = find(`p:${d.url}`);
         const text = `Read “${d.page_title || pathOf(d.url)}”`;
-        const detail = [d.words ? `${d.words} words` : "", d.h1 ? `heading: ${d.h1}` : ""].filter(Boolean).join(" · ");
-        if (existing) Object.assign(existing, { text, detail, state: "done" });
-        else push({ key: `p:${d.url}`, type: "activity", text, detail, url: d.url, state: "done" });
+        const detail = [d.h1 && d.h1 !== d.page_title ? `“${d.h1}”` : "", d.words ? `${d.words} words` : ""].filter(Boolean).join(" · ");
+        const chips = (d.headings ?? []).filter((h: string) => h && h !== d.h1).slice(0, 5);
+        if (existing) Object.assign(existing, { text, detail, chips, state: "done" });
+        else push({ key: `p:${d.url}`, type: "activity", text, detail, chips, url: d.url, state: "done" });
         break;
       }
       case "page_failed": case "crawl_blocked": {
-        const existing = s.items.find((i) => i.key === `p:${d.url}`);
+        const existing = find(`p:${d.url}`);
         const text = e.kind === "crawl_blocked" ? `Skipped ${pathOf(d.url)}: not allowed by the site's robots.txt` : `Could not open ${pathOf(d.url)}${d.status ? ` (HTTP ${d.status})` : ""}`;
-        if (existing) Object.assign(existing, { text, state: "failed", type: "warning" });
-        else push({ key: `p:${d.url}`, type: "warning", text, url: d.url, state: "failed" });
+        const detail = hostOf(d.url);   // which site, so a competitor's failed home page is not just "/"
+        if (existing) Object.assign(existing, { text, detail, chips: [], state: "failed", type: "warning" });
+        else push({ key: `p:${d.url}`, type: "warning", text, detail, url: d.url, state: "failed" });
         break;
       }
       case "competitor_identified": push({ key: `c:${e.seq}`, type: "finding", text: e.title, detail: [d.basis, d.distance_km !== undefined ? `${d.distance_km} km away` : "", providerLabel(d.provider)].filter(Boolean).join(" · "), url: d.url }); break;

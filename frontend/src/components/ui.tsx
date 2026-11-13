@@ -184,7 +184,8 @@ export function Table({ columns, rows, empty = "Nothing here yet.", onRowClick }
   columns: { key: string; label: string; render?: (row: any) => ReactNode; className?: string }[];
   rows: any[]; empty?: string; onRowClick?: (row: any) => void;
 }) {
-  if (!rows?.length) return <EmptyState message={empty} />;
+  // tables live inside a panel already: the empty message sits in it, without a second box
+  if (!rows?.length) return <p className="py-7 text-center text-[13px] leading-5 text-slate-500">{empty}</p>;
   return (
     <div className="-mx-5 overflow-x-auto">
       <table className="min-w-full text-[13px]">

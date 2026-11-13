@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { cx } from "../ui";
 import type { ResearchModel } from "./model";
-import { buildScene, SCENE_PALETTE as C, sceneCounts, type SceneGraph, type SceneKind, type SceneNode, type StageState } from "./sceneLayout";
+import { buildScene, nameOrder, SCENE_PALETTE as C, sceneCounts, type SceneGraph, type SceneKind, type SceneNode, type StageState } from "./sceneLayout";
 
 const Scene3D = lazy(() => import("./Scene3D"));
 
@@ -44,41 +44,52 @@ const nodeColor = (n: SceneNode) => n.role === "cluster" || n.role === "term" ? 
 
 /** The same layout drawn flat (oblique projection). Used without WebGL, while the 3D view loads, and when the user prefers it. */
 export function SceneSvg({ graph, focus, onFocus }: { graph: SceneGraph; focus: string | null; onFocus: (id: string | null) => void }) {
-  const P = (x: number, y: number, z: number) => [x, z * 0.5 - y * 0.9] as const;
-  const pad = 1.4;
+  // a gentle top-down projection: depth folds into the vertical axis, height lifts a little
+  const P = (x: number, y: number, z: number) => [x, z * 0.55 - y * 0.35] as const;
   const xs = graph.nodes.map((n) => n.x).concat(graph.islands.flatMap((i) => [i.x - i.w / 2, i.x + i.w / 2]), graph.rings.flatMap((r) => [r.x - r.r, r.x + r.r]));
-  const zs = graph.nodes.map((n) => n.z * 0.5 - n.y * 0.9).concat(graph.rings.flatMap((r) => [r.z * 0.5 - r.r * 0.5, r.z * 0.5 + r.r * 0.5]), graph.islands.flatMap((i) => [-i.d / 4, i.d / 4]));
-  const minX = Math.min(-2, ...xs) - pad, maxX = Math.max(2, ...xs) + pad, minY = Math.min(-2, ...zs) - pad, maxY = Math.max(2, ...zs) + pad;
+  const ys = graph.nodes.map((n) => n.z * 0.55 - n.y * 0.35).concat(graph.rings.flatMap((r) => [r.z * 0.55 - r.r * 0.55, r.z * 0.55 + r.r * 0.55]), graph.islands.flatMap((i) => [-i.d * 0.28, i.d * 0.28]));
+  const pad = Math.max(1.2, (Math.max(...xs, 2) - Math.min(...xs, -2)) * 0.08);
+  const minX = Math.min(-2, ...xs) - pad, maxX = Math.max(2, ...xs) + pad, minY = Math.min(-2, ...ys) - pad * 1.6, maxY = Math.max(2, ...ys) + pad * 1.6;
+  // text and strokes are sized against the drawing's width, so they read the same whether the scene is small or large
+  const u = (maxX - minX) / 100;
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const sorted = graph.nodes.slice().sort((a, b) => a.z - b.z);
   const f = focus ? byId.get(focus) : undefined;
+  const r = (n: SceneNode) => Math.max(n.size, 0.55 * u);
+  const lift = (n: SceneNode) => (n.pin ? n.size * 3.2 : 0);
+  const clip = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+  // same rule as the 3D view: the things a scene is about are named when there are few enough to read
+  const named = new Set(nameOrder(graph.nodes, 8).map((n) => n.id));
   return (
     <svg viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid meet" aria-hidden onMouseLeave={() => onFocus(null)}>
       {graph.islands.map((i) => (
         <g key={i.id}>
-          <ellipse cx={i.x} cy={0} rx={i.w / 2} ry={i.d / 4} fill="#13202b" stroke={i.state === "running" ? C.working : i.state === "done" ? "#7fae95" : i.state === "failed" ? C.failed : C.gridStrong} strokeWidth={0.04} opacity={i.state === "waiting" ? 0.6 : 1} />
-          <text x={i.x} y={i.d / 4 + 0.55} textAnchor="middle" fontSize={0.42} fill="#dce1e4">{i.label}</text>
+          <ellipse cx={i.x} cy={0} rx={i.w / 2} ry={i.d * 0.28} fill="#13202b" stroke={i.state === "running" ? C.working : i.state === "done" ? "#7fae95" : i.state === "failed" ? C.failed : C.gridStrong} strokeWidth={0.25 * u} opacity={i.state === "waiting" ? 0.6 : 1} />
+          <text x={i.x} y={i.d * 0.28 + 3.2 * u} textAnchor="middle" fontSize={2.4 * u} fill="#dce1e4">{i.label}</text>
+          <text x={i.x} y={i.d * 0.28 + 5.6 * u} textAnchor="middle" fontSize={1.9 * u} fill={C.host}>{i.state === "running" ? "researching" : i.state === "waiting" ? "not started" : i.state}</text>
         </g>))}
-      {graph.rings.map((r, i) => <g key={i} opacity={r.dim ? 0.35 : 1}><ellipse cx={r.x} cy={r.z * 0.5} rx={r.r} ry={r.r * 0.5} fill="none" stroke={C.gridStrong} strokeWidth={0.035} strokeDasharray="0.18 0.14" />
-        {r.label && <text x={r.x + r.r * 0.72} y={r.r * 0.36 + 0.25} fontSize={0.3} fill={C.edge}>{r.label}</text>}</g>)}
+      {graph.rings.map((g, i) => <g key={i} opacity={g.dim ? 0.35 : 1}><ellipse cx={g.x} cy={g.z * 0.55} rx={g.r} ry={g.r * 0.55} fill="none" stroke={C.gridStrong} strokeWidth={0.2 * u} strokeDasharray={`${u} ${0.8 * u}`} />
+        {g.label && <text x={g.x + g.r * 0.72} y={g.r * 0.4 + 2 * u} fontSize={1.8 * u} fill={C.edge}>{g.label}</text>}</g>)}
       {graph.edges.map((e, i) => {
         const a = byId.get(e.a), b = byId.get(e.b); if (!a || !b) return null;
-        const [x1, y1] = P(a.x, a.y, a.z), [x2, y2] = P(b.x, b.y, b.z);
-        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={C.edge} strokeWidth={0.03} opacity={e.faint || e.dim ? 0.4 : 0.85} />;
+        const [x1, y1] = P(a.x, a.y + lift(a), a.z), [x2, y2] = P(b.x, b.y + lift(b), b.z);
+        return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={C.edge} strokeWidth={0.18 * u} opacity={e.faint || e.dim ? 0.4 : 0.85} />;
       })}
       {sorted.map((n) => {
-        const [x, y] = P(n.x, n.y + (n.pin ? n.size * 3.2 : 0), n.z);
+        const [x, y] = P(n.x, n.y + lift(n), n.z);
         const [, gy] = P(n.x, 0, n.z);
         return (
           <g key={n.id} opacity={n.dim ? 0.3 : 1} onMouseEnter={() => onFocus(n.id)} style={{ cursor: "pointer" }}>
-            {n.pin && <line x1={x} y1={gy} x2={x} y2={y} stroke={C.edge} strokeWidth={0.03} />}
-            <circle cx={x} cy={y} r={Math.max(n.size, 0.07)} fill={nodeColor(n)} />
-            {n.id === focus && <circle cx={x} cy={y} r={Math.max(n.size, 0.07) * 1.6} fill="none" stroke="#fff" strokeWidth={0.04} />}
-            {n.hub && <text x={x} y={y - n.size - 0.22} textAnchor="middle" fontSize={0.36} fill="#fff">{n.label.length > 28 ? n.label.slice(0, 27) + "…" : n.label}</text>}
+            {n.pin && <line x1={x} y1={gy} x2={x} y2={y} stroke={C.edge} strokeWidth={0.18 * u} />}
+            <circle cx={x} cy={y} r={r(n)} fill={nodeColor(n)} />
+            {n.id === focus && <circle cx={x} cy={y} r={r(n) + 0.9 * u} fill="none" stroke="#fff" strokeWidth={0.3 * u} />}
+            {n.hub && <text x={x} y={y - r(n) - 1.4 * u} textAnchor="middle" fontSize={2.3 * u} fontWeight={500} fill="#fff">{clip(n.label, 30)}</text>}
+            {named.has(n.id) && n.id !== focus && <text x={x} y={y + r(n) + 2.6 * u} textAnchor="middle" fontSize={1.9 * u} fill="#bcc5cb">{clip(n.label, 26)}</text>}
           </g>);
       })}
-      {f && (() => { const [x, y] = P(f.x, f.y + (f.pin ? f.size * 3.2 : 0), f.z); const t = f.label.length > 40 ? f.label.slice(0, 39) + "…" : f.label; const w = Math.max(t.length * 0.2 + 0.5, 2);
-        return <g pointerEvents="none"><rect x={x - w / 2} y={y - f.size - 0.95} width={w} height={0.62} rx={0.1} fill="#fff" /><text x={x} y={y - f.size - 0.54} textAnchor="middle" fontSize={0.32} fill="#15212c">{t}</text></g>; })()}
+      {f && (() => { const [x, y] = P(f.x, f.y + lift(f), f.z); const t = clip(f.label, 44); const w = Math.max(t.length * 1.15 * u + 3 * u, 12 * u);
+        const bx = Math.min(Math.max(x - w / 2, minX + u), maxX - w - u), by = y - r(f) - 6.2 * u;
+        return <g pointerEvents="none"><rect x={bx} y={by} width={w} height={4.4 * u} rx={0.7 * u} fill="#fff" /><text x={bx + w / 2} y={by + 2.95 * u} textAnchor="middle" fontSize={2.05 * u} fill="#15212c">{t}</text></g>; })()}
     </svg>
   );
 }

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { cx, ErrorBox } from "../ui";
 import { buildModel, buildStream, describe, hostOf, providerLabel, STAGE_TITLE, type ResearchEvent, type StreamItem, type StreamStage } from "./model";
 import { ResearchScene } from "./ResearchScene";
+import { buildDigest, type DigestItem } from "./digest";
 import type { SceneKind, StageState } from "./sceneLayout";
 
 export type Step = { key: string; name: string; status: string; summary?: string };
@@ -49,7 +50,7 @@ function Dot({ state }: { state: string }) {
   return <span aria-label={label} className={cx("mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ring-1", cls)}>{mark}</span>;
 }
 
-function Line({ it, focused, onHover }: { it: StreamItem; focused?: boolean; onHover?: (k: string | null) => void }) {
+const Line = memo(function Line({ it, focused, onHover }: { it: StreamItem; focused?: boolean; onHover?: (k: string | null) => void }) {
   const tone = it.type === "warning" ? "text-amber-900" : it.type === "finding" ? "text-slate-900" : "text-slate-600";
   return (
     <li className={cx("lf-enter -mx-2 flex gap-2.5 rounded-md px-2 py-1.5 transition-colors", focused && "bg-brand-50")} data-key={it.key}
@@ -67,13 +68,17 @@ function Line({ it, focused, onHover }: { it: StreamItem; focused?: boolean; onH
       </div>
     </li>
   );
-}
+});
 
 function Section({ s, defaultOpen, focus, onHover }: { s: StreamStage; defaultOpen: boolean; focus?: string | null; onHover?: (k: string | null) => void }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => { if (s.state === "running") setOpen(true); }, [s.state]);
   const pages = s.items.filter((i) => i.key.startsWith("p:"));
-  const shown = open ? s.items : s.items.filter((i) => i.type !== "activity").slice(-6);
+  const [full, setFull] = useState(false);
+  // a long crawl opens on its first lines and the latest one, with the rest one click away
+  const CAP = 12;
+  const shown = open ? (full || s.items.length <= CAP + 2 ? s.items : [...s.items.slice(0, CAP - 1), ...s.items.slice(-1)]) : s.items.filter((i) => i.type !== "activity").slice(-6);
+  const hiddenCount = open && !full && s.items.length > CAP + 2 ? s.items.length - CAP : 0;
   return (
     <section className="py-3.5">
       <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-start gap-3 text-left">
@@ -83,9 +88,11 @@ function Section({ s, defaultOpen, focus, onHover }: { s: StreamStage; defaultOp
           <p className="text-xs text-slate-500">{s.state === "running" ? "In progress" : s.state === "failed" ? "Failed" : s.state === "skipped" ? "Skipped" : "Done"}
             {pages.length ? ` · ${pages.filter((p) => p.state === "done").length} of ${pages.length} page(s) read` : ""}{s.summary ? ` · ${s.summary}` : ""}</p>
         </div>
-        <span className="shrink-0 pt-0.5 text-2xs text-slate-400 hover:text-slate-700">{open ? "Hide steps" : `Show all ${s.items.length}`}</span>
+        {s.items.length > 0 && <span className="shrink-0 pt-0.5 text-2xs text-slate-400 hover:text-slate-700">{open ? "Hide steps" : `Show all ${s.items.length}`}</span>}
       </button>
-      {shown.length > 0 && <ul className="ml-[7px] mt-1.5 border-l border-slate-200 pl-[18px]">{shown.map((it) => <Line key={it.key} it={it} focused={!!focus && focus === it.key} onHover={onHover} />)}</ul>}
+      {shown.length > 0 && <ul className="ml-[7px] mt-1.5 border-l border-slate-200 pl-[18px]">{shown.map((it, i) => (<Fragment key={it.key}>
+        {hiddenCount > 0 && i === shown.length - 1 && <li key="more" className="py-1"><button type="button" onClick={() => setFull(true)} className="text-xs font-medium text-brand-700 hover:underline">Show {hiddenCount} more step{hiddenCount === 1 ? "" : "s"}</button></li>}
+        <Line it={it} focused={!!focus && focus === it.key} onHover={onHover} /></Fragment>))}</ul>}
     </section>
   );
 }
@@ -122,19 +129,54 @@ function SideLists({ steps, warnings, sources, columns }: { steps: Step[]; warni
   );
 }
 
+const TONE_MARK: Record<DigestItem["tone"], [string, string]> = {
+  finding: ["bg-brand-600", "Finding"], gap: ["bg-amber-500", "Gap to fix"], limit: ["bg-slate-400", "Limitation"],
+};
+
+/** The discoveries, in plain language, ahead of the step log. Hovering a line lights the matching point in the scene. */
+function Digest({ items, live, focus, onHover }: { items: DigestItem[]; live: boolean; focus: string | null; onHover: (k: string | null) => void }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, 9);
+  return (
+    <section aria-label="What was found" className="border-b border-slate-200 px-5 pb-4 pt-4">
+      <div className="mb-2.5 flex items-baseline justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">{live ? "Found so far" : "What was found"}</h3>
+        <span className="text-2xs text-slate-400">from recorded research{live ? ", updating" : ""}</span>
+      </div>
+      <ul className="space-y-0.5">
+        {shown.map((it) => (
+          <li key={it.key} onMouseEnter={it.ref ? () => onHover(it.ref!) : undefined} onMouseLeave={it.ref ? () => onHover(null) : undefined}
+            className={cx("lf-enter -mx-2 flex gap-2.5 rounded-md px-2 py-1.5", it.ref && "cursor-default", it.ref && focus === it.ref && "bg-brand-50")}>
+            <span aria-hidden className={cx("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-sm", TONE_MARK[it.tone][0])} />
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium leading-5 text-slate-900"><span className="sr-only">{TONE_MARK[it.tone][1]}: </span>{it.title}</div>
+              {it.body && <div className="text-xs leading-5 text-slate-600">{it.body}</div>}
+              {!!it.chips?.length && <div className="mt-1 flex flex-wrap gap-1">{it.chips.map((c) => <span key={c} className="rounded bg-slate-100 px-1.5 py-px text-2xs text-slate-700">{c}</span>)}</div>}
+            </div>
+          </li>))}
+      </ul>
+      {items.length > 9 && <button type="button" onClick={() => setAll(!all)} className="mt-1.5 text-xs font-medium text-brand-700 hover:underline">{all ? "Show fewer" : `Show all ${items.length}`}</button>}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-2xs text-slate-500" aria-hidden>
+        {(["finding", "gap", "limit"] as const).filter((t) => items.some((i) => i.tone === t)).map((t) => <span key={t} className="inline-flex items-center gap-1.5"><span className={cx("h-1.5 w-1.5 rounded-sm", TONE_MARK[t][0])} />{TONE_MARK[t][1]}</span>)}
+      </div>
+    </section>
+  );
+}
+
 /** Live research: what is happening now, the tasks, readable findings as they arrive, numbered sources, and every limitation or
  *  failure in place. Built only from recorded backend events; when nothing is running it says so.
  *  With `kind`, a scene of what is being researched sits beside the findings. Both read the same single event stream, and hovering
  *  an item in one highlights it in the other. */
-export function LiveFindings({ url, active, steps: givenSteps, title = "Research activity", kind, subject }: { url: string; active: boolean; steps?: Step[]; title?: string; kind?: SceneKind; subject?: { website?: string } }) {
+export function LiveFindings({ url, active, steps: givenSteps, title = "Research activity", kind, subject, result }: { url: string; active: boolean; steps?: Step[]; title?: string; kind?: SceneKind; subject?: { website?: string; business?: string }; result?: any }) {
   const { events, steps: streamSteps, done, error } = useEventStream(url, active);
   const stream = useMemo(() => buildStream(events), [events]);
   const model = useMemo(() => {
     const m = buildModel(events);
     // the audit record names the website even before its first event does; only used to label the centre of the scene
     if (!m.domain && subject?.website) m.domain = hostOf(subject.website);
+    if (!m.business && subject?.business) m.business = subject.business;
     return m;
-  }, [events, subject?.website]);
+  }, [events, subject?.website, subject?.business]);
   const live = active && !done;
   const now = useNow(live);
   const steps = givenSteps ?? streamSteps ?? [];
@@ -143,6 +185,7 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
   const sources = model.sources;
   const warnings = model.warnings;
   const [focus, setFocus] = useState<string | null>(null);
+  const digest = useMemo(() => (kind ? buildDigest(kind, model, result) : []), [kind, model, result]);
   const stages = useMemo<StageState>(() => {
     const st: StageState = {};
     for (const s of stream) st[s.stage] = s.state;
@@ -190,17 +233,22 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
       <div className="grid xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,1fr)]">
         <div className="min-w-0 border-b border-slate-100 p-3 xl:border-b-0 xl:border-r">
           <div className="xl:sticky xl:top-[64px]">
-            <ResearchScene kind={kind} model={model} stages={stages} live={live} focus={focus} onFocus={setFocus} className="h-[340px] sm:h-[440px] xl:h-[min(560px,calc(100vh-140px))]" />
+            <ResearchScene kind={kind} model={model} stages={stages} live={live} focus={focus} onFocus={setFocus} className="h-[340px] sm:h-[440px] xl:h-[min(520px,calc(100vh-150px))]" />
+            {sources.length > 0 && <div className="pane-scroll hidden max-h-[calc(100vh-700px)] min-h-[140px] overflow-y-auto px-2 pb-2 pt-5 xl:block"><SideLists steps={[]} warnings={[]} sources={sources} /></div>}
           </div>
         </div>
         <div className="min-w-0">
+          {digest.length > 0 && <Digest items={digest} live={live} focus={focus} onHover={setFocus} />}
           <div className="flex items-center justify-between px-5 pt-4 text-xs text-slate-500">
-            <span className="font-medium text-slate-700">Findings</span>
-            <span>{stream.reduce((a, s) => a + s.items.filter((i) => i.type === "finding").length, 0)} finding(s) · {warnings.length} limitation(s)</span>
+            <span className="font-medium text-slate-700">Step by step</span>
+            <span>{events.length} recorded step(s) · {warnings.length} limitation(s)</span>
           </div>
           <div ref={scroller} onScroll={(e) => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
             className="pane-scroll divide-y divide-slate-100 px-5 xl:max-h-[640px] xl:overflow-y-auto">{streamBody}</div>
-          <div className="border-t border-slate-100 bg-slate-50/50 px-5 py-4"><SideLists steps={steps} warnings={warnings} sources={sources} /></div>
+          <div className="border-t border-slate-100 bg-slate-50/50 px-5 py-4">
+            <SideLists steps={steps} warnings={warnings} sources={[]} />
+            {sources.length > 0 && <div className="mt-5 xl:hidden"><SideLists steps={[]} warnings={[]} sources={sources} /></div>}
+          </div>
         </div>
       </div>
       {technical}

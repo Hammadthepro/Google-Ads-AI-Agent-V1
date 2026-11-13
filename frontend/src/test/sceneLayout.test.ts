@@ -1,5 +1,5 @@
 import { buildModel, type ResearchEvent } from "../components/research/model";
-import { buildScene, sceneCounts } from "../components/research/sceneLayout";
+import { buildScene, nameOrder, sceneCounts } from "../components/research/sceneLayout";
 
 let seq = 0;
 const ev = (kind: string, title: string, data: Record<string, any> = {}, stage = "", level: "info" | "warn" | "error" = "info"): ResearchEvent =>
@@ -98,5 +98,12 @@ describe("scene layouts draw only what was recorded", () => {
     expect(g.islands.map((i) => [i.id, i.state])).toEqual([["website", "running"], ["local", "waiting"], ["competitors", "waiting"]]);
     expect(g.nodes.filter((n) => n.id.startsWith("local|")).every((n) => n.dim)).toBe(true);
     expect(new Set(g.nodes.map((n) => n.id)).size).toBe(g.nodes.length);   // ids stay unique across islands
+  });
+
+  it("names the nearest map listings first when there is not room to name them all", () => {
+    seq = 0;
+    const evs = [ev("location_identified", "Centre", { lat: 30, lon: -97, role: "business" }, "geo"),
+      ...[5, 1, 9, 3].map((km, i) => ev("competitor_identified", `L${i}-${km}km`, { lat: 30 + km / 110.57, lon: -97, distance_km: km }, "geo"))];
+    expect(nameOrder(buildScene("local", buildModel(evs)).nodes, 2).map((n) => n.label)).toEqual(["L1-1km", "L3-3km"]);
   });
 });

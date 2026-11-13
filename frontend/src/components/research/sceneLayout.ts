@@ -247,6 +247,13 @@ export function combinedLayout(model: ResearchModel, stages: StageState): Omit<S
   return { nodes, edges, rings, islands, radius: total / 2 + 0.6, empty: model.started || nodes.length > built.length ? null : "Waiting for the research worker to record its first step." };
 }
 
+/** When not everything can be named: listings nearest first, everything else in the order it was found. */
+export function nameOrder(nodes: SceneNode[], limit: number): SceneNode[] {
+  const named = nodes.filter((n) => !n.dim && (n.role === "competitor" || n.role === "listing" || n.role === "cluster" || n.role === "host" || n.id.startsWith("x:")));
+  const dist = (n: SceneNode) => Math.hypot(n.x, n.z);
+  return named.slice().sort((a, b) => (a.role === "listing" && b.role === "listing" ? dist(a) - dist(b) : a.seq - b.seq)).slice(0, limit);
+}
+
 export function buildScene(kind: SceneKind, model: ResearchModel, stages: StageState = {}): SceneGraph {
   if (kind === "combined") return { kind, ...combinedLayout(model, stages) };
   const g = kind === "website" ? websiteLayout(model) : kind === "local" ? localLayout(model) : kind === "competitors" ? competitorLayout(model) : keywordLayout(model);

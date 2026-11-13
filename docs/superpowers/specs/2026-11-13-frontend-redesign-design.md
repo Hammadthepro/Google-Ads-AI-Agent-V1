@@ -46,3 +46,11 @@ Backend events for richer animation; new metrics; mock data; changing copy that 
 
 ## Calls made by the builder (not discussed with the client)
 Palette, typefaces, dark sidebar, sidebar collapse, the scene concepts above, three.js as the single new dependency.
+
+## Second pass (review)
+- Findings panel leads with "What was found" (`digest.ts`): plain-language discoveries restated from the stored result (completed
+  audits) and the recorded events (running ones). A part that found nothing says so. Unit-tested.
+- Scene renderer: one instanced mesh for all points, time-based easing, screen-space hover picking, lower-detail spheres above 300
+  points, no redraw at rest, live idle animation capped at 30 fps. Labels avoid overlapping; listings are named nearest first.
+- Integrations: providers collapse to summary rows (accordion). Collapsed panels stay mounted (drafts kept) but are `inert` and
+  `aria-hidden`. Three existing tests gained one "open the provider" step (approved by the client); their assertions are unchanged.
