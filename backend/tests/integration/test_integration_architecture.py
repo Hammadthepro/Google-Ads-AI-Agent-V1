@@ -55,7 +55,7 @@ def test_reported_setup_secret_and_token_from_environment_client_id_typed_in_the
         r = sup.c.put("/api/v1/integrations/google_ads", json={"settings": {"client_id": "609437209123-abc.apps.googleusercontent.com"}, "secrets": {}}, headers=sup._h())
         assert r.status_code == 200
         c = _card(sup)
-        assert c["missing"] == [] and c["settings"]["client_id"]["source"] == "saved" and c["display"]["label"] == "Not tested"
+        assert c["missing"] == [] and c["settings"]["client_id"]["source"] == "saved" and c["display"]["label"] == "Configured, not tested"
         assert c["secrets"]["client_secret"]["source"] == "environment"  # environment secrets are untouched by the save
         assert "S" * 24 not in json.dumps(c) and "1//" + "r" * 10 not in json.dumps(c)
     finally:
@@ -125,7 +125,7 @@ def test_ga4_is_blocked_until_the_shared_oauth_client_and_their_own_authorisatio
         _save_ads(db)
         svc.save(db, "ga4", settings={"property_id": "42"}, secrets={"refresh_token": "1//0ga4"}, user_id=None)
     c = _card(sup, "ga4")
-    assert all(d["ok"] for d in c["dependencies"]) and c["display"]["label"] == "Not tested"
+    assert all(d["ok"] for d in c["dependencies"]) and c["display"]["label"] == "Configured, not tested"
     with session_scope() as db:  # remove the shared client: the dependent integration is blocked, even though its own token exists
         row = svc._row(db, "google_ads")
         row.settings = {}

@@ -33,7 +33,7 @@ def test_every_implemented_integration_is_listed_with_the_six_statuses():
     items = sup.get("/integrations").json()["integrations"]
     assert {i["provider"] for i in items} >= {"google_ads", "groq", "pagespeed", "claude", "places", "ga4", "keyword_planner", "crawler",
                                                "smtp", "database", "redis", "google_login"}
-    allowed = {"Not configured", "Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Disabled",
+    allowed = {"Not configured", "Connected", "Connection failed", "Rate limited", "Configured, not tested", "Blocked by dependency", "Requires approval", "Disabled",
                "Verified by signing in", "Not verified — sign in with Google to verify"}
     for i in items:
         assert i["display"]["config"] in {"Configured", "Not configured", "No credentials needed"} and i["display"]["label"] in allowed, i["provider"]
@@ -47,7 +47,7 @@ def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
     try:
         sup = Api(SUPER)
         ps = by(sup.get("/integrations").json()["integrations"], "pagespeed")
-        assert ps["display"] == {"config": "Configured", "connection": "Not tested", "label": "Not tested", "testable": True}  # a key exists ≠ connected
+        assert ps["display"] == {"config": "Configured", "connection": "Configured, not tested", "label": "Configured, not tested", "testable": True}  # a key exists ≠ connected
         assert ps["secrets"]["api_key"]["saved"] and "AIza" not in json.dumps(ps)
         with session_scope() as db:
             ok = svc.test_connection(db, "pagespeed", http=_client(lambda r: httpx.Response(200, json={"lighthouseResult": {"categories": {"performance": {"score": 0.73}}}})))
@@ -55,7 +55,7 @@ def test_configured_is_not_connected_until_a_real_request_succeeds(monkeypatch):
             assert svc.serialize(db, "pagespeed")["display"]["label"] == "Connected"
             svc.test_connection(db, "pagespeed", http=_client(lambda r: httpx.Response(429, json={"error": {"message": "quota"}})))
             s = svc.serialize(db, "pagespeed")
-            assert s["display"]["label"] == "Connection failed" and "Quota" in s["last_test_steps"][-1]["hint"]
+            assert s["display"]["label"] == "Rate limited" and "Quota" in s["last_test_steps"][-1]["hint"]
             svc.test_connection(db, "pagespeed", http=_client(lambda r: httpx.Response(200, json={"lighthouseResult": {"categories": {"performance": {"score": 0.5}}}})))
             svc.set_enabled(db, "pagespeed", False, None)
             assert svc.serialize(db, "pagespeed")["display"]["label"] == "Disabled"

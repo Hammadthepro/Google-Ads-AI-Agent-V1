@@ -95,21 +95,31 @@ PROVIDERS: dict[str, dict] = {
         "docs": "https://developers.google.com/maps/documentation/places/web-service/overview",
     },
     "tavily": {
-        "label": "Tavily web search", "group": "Research",
-        "description": "Optional live web search the research agent uses when it needs it: finding competitors that were not supplied, customer questions and "
-                       "industry language for keyword intent, and local market context. Search snippets are stored as web evidence, never as verified facts. "
-                       "Metered by Tavily (1 credit per basic search, 2 per advanced); repeated queries are served from the cache and each audit has a search budget.",
+        "label": "Tavily Web Search", "group": "Research",
+        "description": "Web Search (primary): finds pages the app does not know yet — competitors that were not supplied, customer questions and industry "
+                       "language for keyword intent, local market context — and returns real URLs, titles and snippets. Snippets are stored as web evidence, "
+                       "never as verified facts. Free plan: 1,000 API credits a month (1 per basic search, 2 per advanced). Repeated queries come from the "
+                       "cache and each audit has a search budget. Without it (and without Brave Search) the app does no web search at all.",
         "settings": {"search_depth": "Search depth (basic | advanced)", "max_searches_per_audit": "Maximum searches per audit"},
         "secrets": {"api_key": "API key"}, "required": ["api_key"],
         "default_settings": {"search_depth": "basic", "max_searches_per_audit": "8"},
         "docs": "https://docs.tavily.com/documentation/api-reference/endpoint/search",
+    },
+    "brave_search": {
+        "label": "Brave Search API", "group": "Research",
+        "description": "Web Search (fallback): used only when Tavily is not configured or fails, and the result says so. Brave's own independent index, "
+                       "country targeting. Billing is metered (about $5 per 1,000 requests) with a monthly credit of about $5 that needs a payment method — "
+                       "check Brave's current terms; it is not an unconditional free plan.",
+        "settings": {"max_searches_per_audit": "Maximum searches per audit"}, "secrets": {"api_key": "API key (subscription token)"}, "required": ["api_key"],
+        "default_settings": {"max_searches_per_audit": "8"},
+        "docs": "https://api-dashboard.search.brave.com/app/documentation/web-search/get-started",
     },
     "search_suggestions": {
         "label": "Search suggestions (keyword discovery)", "group": "Research",
         "description": "Free keyword discovery from public search-suggestion endpoints (Google Autocomplete, DuckDuckGo, Bing). They return the phrases people "
                        "type and nothing else: no search volume, CPC or competition. The endpoints are unofficial and can change; requests are throttled and cached.",
         "settings": {"sources": "Sources, comma separated (google, duckduckgo, bing)"}, "secrets": {}, "required": [],
-        "default_settings": {"sources": "google,duckduckgo,bing"},
+        "default_settings": {"sources": "google,duckduckgo"},  # Bing's endpoint returned no content (HTTP 204) in testing; it can be re-enabled here
         "subtests": [("google", "Google Autocomplete"), ("duckduckgo", "DuckDuckGo"), ("bing", "Bing")], "required_subtests": [],
         "docs": "",
     },
@@ -153,11 +163,22 @@ PROVIDERS: dict[str, dict] = {
         "label": "Redis (queue & rate limits)", "group": "System", "readonly": True,
         "description": "Background jobs and rate limiting. Configured through REDIS_URL.", "settings": {}, "secrets": {}, "required": [], "env_vars": ["REDIS_URL"], "docs": "",
     },
+    "web_fetch": {
+        "label": "Web Fetch (single page)", "group": "Website research",
+        "description": "Opens ONE known URL and extracts its readable content (title, headings, text). Used to read landing pages and to open sites that "
+                       "Web Search found. It cannot find pages by itself. Built-in, no credentials: it requests the page directly from this server through "
+                       "the SSRF guard (private addresses refused, every redirect re-checked, size and time limits).",
+        "settings": {}, "secrets": {}, "required": [],
+        "subtests": [("fetch", "Fetch and extract one page")], "required_subtests": ["fetch"],
+        "docs": "",
+    },
     "crawler": {
         "label": "Website crawler", "group": "Website research",
-        "description": "SSRF-guarded crawler that fetches real websites. Needs no credentials.",
+        "description": "Starts from a website you give it (the client's or a competitor's), reads robots.txt and the sitemap, and follows internal links "
+                       "to visit and extract its pages within the crawl limits. Built-in, no credentials; uses Web Fetch for each page. It only reads sites "
+                       "it is pointed at: it is not a web search and cannot discover sites it was not given.",
         "settings": {}, "secrets": {}, "required": [],
-        "subtests": [("fetch", "Live page fetch")], "required_subtests": ["fetch"],
+        "subtests": [("fetch", "Live page fetch"), ("crawl", "Crawl a small site")], "required_subtests": ["fetch"],
         "docs": "",
     },
 }
@@ -338,6 +359,7 @@ _ENV = {
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
     "places": {"api_key": "GOOGLE_PLACES_API_KEY"},
     "tavily": {"api_key": "TAVILY_API_KEY"},
+    "brave_search": {"api_key": "BRAVE_SEARCH_API_KEY"},
     "geoapify": {"api_key": "GEOAPIFY_API_KEY"},
     "pagespeed": {"api_key": "PAGESPEED_API_KEY"},
     "smtp": {"host": "SMTP_HOST", "port": "SMTP_PORT", "username": "SMTP_USER", "password": "SMTP_PASSWORD", "from_email": "SMTP_FROM"},
@@ -572,6 +594,10 @@ def _ads_hint(resp: httpx.Response, project: str) -> tuple[str, str]:
         return ("This Google Cloud project has Test access, which can only call Google Ads TEST accounts, and the account you entered is not a "
                 "test account. Either enter a test client account (create a test manager + test client in Google Ads and use their IDs), or, to read "
                 f"a real account, apply for a higher access level on the Google Ads API Overview page: {link}", "test_only")
+    if "DEVELOPER_TOKEN_NOT_APPROVED" in both or "EXPLORER ACCESS" in both:
+        return ("Google refused this method for the Cloud project's current API access level (Explorer). Keyword Planner "
+                "(KeywordPlanIdeaService) needs Basic or Standard access: apply on the Google Ads API Center / API Overview page "
+                f"({link}). OAuth, the customer ID and the account are not the problem.", "explorer_only")
     if "USER_PERMISSION_DENIED" in both or "PERMISSION_DENIED" in both:
         return ("The Google user who authorised the refresh token cannot access this account. Give that user access in Google Ads, "
                 "or set the manager (login) customer ID that links the accounts.", "no_permission")
@@ -868,8 +894,9 @@ def _test_keyword_planner(vals: dict, http: httpx.Client, steps: Steps, row, tar
         steps.fail("Generate keyword ideas", f"Request failed: {type(exc).__name__}")
         return {}
     if r.status_code != 200:
-        steps.fail("Generate keyword ideas", _http_error(r), hint=_ads_hint(r, project)[0])
-        return {}
+        hint, access = _ads_hint(r, project)
+        steps.fail("Generate keyword ideas", _http_error(r), hint=hint, approval=access == "explorer_only")
+        return {"keyword_planner_access": access}
     n = len(r.json().get("results", []))
     steps.ok("Generate keyword ideas", f"Keyword Planner returned {n} idea(s) for the seed 'plumber' under research customer {customer} (read-only)")
     return {}
@@ -1101,13 +1128,23 @@ def _test_crawler(vals: dict, http: httpx.Client, steps: Steps, row, target: str
         steps.ok("SSRF guard", "Private/reserved addresses (e.g. 169.254.169.254) are refused before any request is made", sub="fetch")
     try:
         res = LiveCrawlerAdapter().fetch("https://example.com/")
+        steps.contacted = True
         if getattr(res, "status", 0) and 200 <= res.status < 300:
             steps.ok("Fetch a page", f"HTTP {res.status} via the SSRF-guarded crawler (https://example.com/)", sub="fetch")
         else:
             steps.fail("Fetch a page", f"HTTP {getattr(res, 'status', '?')} {getattr(res, 'error', '')}".strip(), sub="fetch",
                        hint="The server could not fetch a public page: check outbound network access and DNS from the backend container.")
+            return {}
     except Exception as exc:  # noqa: BLE001
         steps.fail("Fetch a page", f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))}", sub="fetch")
+        return {}
+    try:
+        from app.services import crawler_service
+        crawl = crawler_service.crawl("https://example.com/", max_pages=3, max_depth=1)
+        steps.ok("Crawl a small site", f"{len(crawl['pages'])} page(s) read from example.com; robots.txt {'found' if crawl['robots_found'] else 'not found'}; "
+                 f"{len(crawl['errors'])} page error(s)", sub="crawl")
+    except Exception as exc:  # noqa: BLE001
+        steps.fail("Crawl a small site", f"{type(exc).__name__}: {getattr(exc, 'message', str(exc))}", sub="crawl")
     return {}
 
 
@@ -1139,19 +1176,62 @@ def _test_tavily(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
     return {}
 
 
+def _test_brave_search(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    from app.adapters.research.brave import BraveSearchAdapter
+    if not vals.get("api_key"):
+        steps.fail("Credentials present", "API key is required")
+        return {}
+    steps.ok("Credentials present")
+    res = _research_step(steps, "Run one web search", lambda: BraveSearchAdapter(vals["api_key"], http).search("google ads campaign best practices", max_results=1),
+                         hint="Check the subscription token in the Brave Search API dashboard; HTTP 402 means the plan's credit is used up.")
+    if res is not None:
+        steps.ok("Run one web search", f"{len(res['results'])} result(s) returned")
+    return {}
+
+
+def _test_web_fetch(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    """Opens one public page through the SSRF-guarded fetcher and extracts it; proves the guard refuses a private address."""
+    from app.adapters.crawler import SSRFBlocked, check_url_safe
+    from app.services import web_fetch
+    try:
+        check_url_safe("http://169.254.169.254/latest/meta-data/")
+        steps.fail("SSRF guard", "A cloud-metadata address was NOT blocked", hint="This is a security defect; do not use Web Fetch.", sub="fetch")
+        return {}
+    except SSRFBlocked:
+        steps.ok("SSRF guard", "Private/reserved addresses are refused before any request is made", sub="fetch")
+    page = web_fetch.fetch("https://example.com/")
+    steps.contacted = True
+    if page.get("ok"):
+        steps.ok("Fetch and extract one page", f"HTTP {page['status']} · title “{page['title']}” · {page['word_count']} words extracted from https://example.com/", sub="fetch")
+    else:
+        steps.fail("Fetch and extract one page", page.get("error") or "failed", sub="fetch",
+                   hint="The server could not fetch a public page: check outbound network access and DNS from the backend container.")
+    return {}
+
+
 def _test_search_suggestions(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
     from app.adapters.research.suggest import LABELS, SuggestionAdapter
     sources = [x.strip() for x in (vals.get("sources") or "").split(",") if x.strip() in LABELS]
     if not sources:
         steps.fail("Sources", "No valid source is enabled (google, duckduckgo, bing)")
         return {}
+    from app.adapters.base import AdapterError
     a = SuggestionAdapter(http, enabled=tuple(sources), min_interval=0)
-    working = []
+    got: dict[str, list | AdapterError] = {}
     for src in sources:
-        got = _research_step(steps, f"{LABELS[src]}: suggestions for 'plumber'", lambda src=src: a.suggest(src, "plumber"), sub=src)
-        if got is not None:
-            steps.ok(f"{LABELS[src]}: suggestions for 'plumber'", f"{len(got)} suggestion(s), e.g. {', '.join(got[:3])}", sub=src)
-            working.append(src)
+        try:
+            got[src] = a.suggest(src, "plumber")
+        except AdapterError as exc:
+            got[src] = exc
+    working = [s_ for s_, v in got.items() if not isinstance(v, AdapterError)]
+    for src, v in got.items():  # sources are independent: one that does not answer is reported, and does not fail the others
+        name = f"{LABELS[src]}: suggestions for 'plumber'"
+        if not isinstance(v, AdapterError):
+            steps.ok(name, f"{len(v)} suggestion(s), e.g. {', '.join(v[:3])}", sub=src)
+        elif working:
+            steps.skip(name, f"Unavailable ({v.kind}): {v.message}. Remove it from Sources to stop trying it.", sub=src)
+        else:
+            steps.fail(name, f"{v.kind}: {v.message}", sub=src)
     if not working:
         steps.fail("At least one source answered", "No suggestion source returned results from this server")
     return {"working_sources": working}
@@ -1185,7 +1265,8 @@ def _test_geoapify(vals: dict, http: httpx.Client, steps: Steps, row, target: st
     return {}
 
 
-_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "search_suggestions": _test_search_suggestions,
+_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "brave_search": _test_brave_search, "web_fetch": _test_web_fetch,
+                                 "search_suggestions": _test_search_suggestions,
                                  "openstreetmap": _test_openstreetmap, "geoapify": _test_geoapify,"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
                                  "google_ads": _test_google_ads, "ga4": _test_ga4, "groq": _test_groq,
                                  "claude": _test_claude, "pagespeed": _test_pagespeed, "places": _test_places,
@@ -1308,10 +1389,14 @@ def _summarize(steps: Steps, connected: bool | None) -> dict:
     remote = [i for i in steps.items if i["name"] not in _LOCAL_STEPS and i["status"] in ("PASSED", "FAILED")]
     contacted = steps.requests > 0 or steps.contacted or bool(remote)
     failed = next((i for i in steps.items if i["status"] == "FAILED"), None)
-    auth_failed = steps.auth_expired or any(i["status"] == "FAILED" and _AUTH_FAIL.search(i.get("detail", "")) for i in steps.items)
+    approval = any(i.get("needs_approval") for i in steps.items)  # authenticated fine, but the provider has not approved this use
+    auth_failed = steps.auth_expired or any(i["status"] == "FAILED" and not i.get("needs_approval") and _AUTH_FAIL.search(i.get("detail", ""))
+                                            for i in steps.items)
     return {"credentials_present": not any(i["name"] == "Credentials present" and i["status"] == "FAILED" for i in steps.items),
             "contacted": contacted, "requests": steps.requests,
-            "authenticated": (None if not contacted else False if auth_failed else True if (connected or any(i["status"] == "PASSED" for i in remote)) else None),
+            "authenticated": (None if not contacted else False if auth_failed else True if (approval or connected or any(i["status"] == "PASSED" for i in remote)) else None),
+            "requires_approval": approval,
+            "rate_limited": any(i["status"] == "FAILED" and re.search(r"rate.?limit|\b429\b", i.get("detail", ""), re.I) for i in steps.items),
             "capability_available": None if not contacted else bool(connected) if connected is not None else None,
             "failure_reason": f"{failed['name']}: {failed['detail']}" if failed else ""}
 
@@ -1519,10 +1604,12 @@ def _display(provider: str, row: IntegrationConfig | None, miss: list[str], bloc
         label = "Requires approval"
     elif row and row.last_test_ok is True:
         label = "Connected"
+    elif row and row.last_test_ok is False and ((row.discovered or {}).get("test_summary") or {}).get("rate_limited"):
+        label = "Rate limited"
     elif row and row.last_test_ok is False:
         label = "Connection failed"
     else:
-        label = "Not tested"  # credentials or settings exist, but no real request has succeeded or failed yet
+        label = "Configured, not tested"  # credentials or settings exist, but no real request has succeeded or failed yet
     return {"config": config, "connection": label, "label": label, "testable": True}
 
 
@@ -1588,7 +1675,7 @@ def serialize(db: Session, provider: str) -> dict:
                 "api_access": disc.get("cloud_access") or {"api_enabled": None, "level": "not tested", "basis": "Run Test Connection"},
                 "manager_id_set": bool(_selected_manager(vals)), "managers": disc.get("managers"),
                 "hierarchy": disc.get("hierarchy_preview")}
-    if provider in ("tavily", "openstreetmap", "geoapify", "search_suggestions"):
+    if provider in ("tavily", "brave_search", "openstreetmap", "geoapify", "search_suggestions"):
         from app.services import provider_calls
         names = {"search_suggestions": ["suggest_google", "suggest_duckduckgo", "suggest_bing"]}.get(provider, [provider])
         info = {"usage_30d": {n: provider_calls.usage(n) for n in names}}

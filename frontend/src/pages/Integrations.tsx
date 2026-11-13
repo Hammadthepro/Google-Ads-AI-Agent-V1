@@ -14,7 +14,7 @@ const MODES: { value: string; label: string; text: string }[] = [
 ];
 
 const LABEL_TONE: Record<string, string> = {
-  Connected: "green", "Connection failed": "red", "Not tested": "blue", "Not configured": "slate", Disabled: "slate",
+  Connected: "green", "Connection failed": "red", "Rate limited": "amber", "Configured, not tested": "blue", "Not tested": "blue", "Not configured": "slate", Disabled: "slate",
   Configured: "blue", "Blocked by dependency": "amber", "Requires approval": "amber", Testing: "violet",
   "Verified by signing in": "green", "Not verified — sign in with Google to verify": "slate",
 };
@@ -402,7 +402,7 @@ export function ModePanel({ mode, canManage, googleOk }: { mode: any; canManage:
   );
 }
 
-const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "Other AI"], ["Website research", "Website research"], ["System", "System"]];
+const GROUPS: [string, string][] = [["Google", "Google"], ["AI", "Other AI"], ["Research", "Web search & research"], ["Website research", "Website research"], ["System", "System"]];
 const DOT_TONE: Record<string, string> = { green: "bg-emerald-500", red: "bg-rose-500", amber: "bg-amber-500", blue: "bg-brand-500", slate: "bg-slate-300", violet: "bg-plum-500" };
 
 export default function Integrations() {
@@ -434,7 +434,7 @@ export default function Integrations() {
       {params.get("oauth") === "failed" && <Notice tone="red">Google authorization failed ({params.get("reason")}). Nothing was saved.</Notice>}
       <ErrorBox error={testAll.error} />
       <div aria-label="Integration health">
-        <MetricStrip items={["Connected", "Connection failed", "Not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => ({ label: s,
+        <MetricStrip items={["Connected", "Connection failed", "Rate limited", "Configured, not tested", "Blocked by dependency", "Requires approval", "Not configured"].map((s) => ({ label: s,
           value: <span className={(counts[s] ?? 0) && s === "Connected" ? "text-emerald-700" : (counts[s] ?? 0) && s === "Connection failed" ? "text-rose-700" : ""}>{counts[s] ?? 0}</span> }))} />
       </div>
       {canManage && (String(q.data.redirect_uri).includes("/api/v1/integrations/google/callback")

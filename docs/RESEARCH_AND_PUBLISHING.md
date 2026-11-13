@@ -1,5 +1,64 @@
 # Research providers, live research view and publishing authorization
 
+## Research capabilities in plain language
+
+| Capability | What it does | Where its content comes from | Provider | Needs |
+|---|---|---|---|---|
+| **Web Search** | Finds pages the app does not know yet: competitors, customer questions, market context. Returns URLs, titles and snippets. | A search API's index | Tavily (primary), Brave Search (fallback) | `TAVILY_API_KEY` and/or `BRAVE_SEARCH_API_KEY` |
+| **Web Fetch** | Opens ONE known URL and extracts its title, headings and text. Cannot find pages. | The page itself, requested directly from this server | Built in (SSRF-guarded fetcher) | Nothing; outbound internet and DNS |
+| **Website Crawler** | Starts from a website it is given, reads robots.txt and the sitemap, follows internal links and reads each page (via Web Fetch), within crawl limits. Cannot discover other sites. | The client's or a competitor's own site | Built in | Nothing |
+| **Keyword ideas** | Phrases people search for. | Keyword Planner (with Google's volume/bid estimates) or free suggestion sources (no metrics) | Google Ads API; Google Autocomplete, DuckDuckGo | Keyword Planner: Basic/Standard API access + research customer ID |
+
+The crawler is not a search engine. Without Tavily or Brave Search the app does **no** web search: competitor discovery uses only the
+competitors you supplied and map listings, and every audit says web search was not used.
+
+```
+                         ┌──────────────── Web Search ────────────────┐
+  business, category ──▶ │ Tavily ──(fails / not configured)──▶ Brave │──▶ URLs + snippets (stored as unverified web evidence)
+  city, services         └───────────────────────────────────────────┘          │
+                                                                                 ▼
+                                                     ┌──────── Web Fetch (one URL) ────────┐
+  client website URL ─────────────┐                  │ SSRF guard → GET → redirects checked │──▶ title, headings, text, status
+  competitor website URLs ────────┤                  └──────────────────────────────────────┘
+                                  ▼                                     ▲
+                       ┌──── Website Crawler ────┐   uses Web Fetch     │
+                       │ robots.txt → sitemap →  │──────────────────────┘
+                       │ internal links (limits) │──▶ page inventory, services, landing pages
+                       └─────────────────────────┘
+                                  │
+                                  ▼
+  ┌──────────────────────────── Keyword research ────────────────────────────┐
+  │ Keyword Planner (if access) ─▶ ideas + Google volume/competition/bids      │
+  │ Google Autocomplete, DuckDuckGo ─▶ ideas, no metrics                      │
+  │ client + competitor page headings ─▶ ideas, no metrics                    │──▶ every keyword: sources[], metrics{value,
+  │ account search terms ─▶ ideas + real clicks/conversions                   │    source, retrieved_at, basis}, intent,
+  │ web search phrases ─▶ ideas, no metrics                                   │    relevance score (app's own, not volume)
+  └───────────────────────────────────────────────────────────────────────────┘
+```
+
+Request flow for a full audit: the crawler reads the client site (Website Crawler → Web Fetch per page); competitor sites you supplied
+are crawled the same way; if fewer than three competitors were supplied, Web Search looks for more and Web Fetch opens the top
+candidates' home pages (they stay "suggested, not verified"); OpenStreetMap/Geoapify add nearby same-category businesses; keyword
+research merges every source above. Each step is a recorded research event, and each provider failure is shown, never turned into an
+empty success.
+
+## Providers evaluated (November 2026)
+
+| Provider | Free? | Key | Real web results | Used here |
+|---|---|---|---|---|
+| Tavily | 1,000 API credits/month, no card (per Tavily docs) | yes | yes, with snippets | **Primary web search** |
+| Brave Search API | No unconditional free plan: metered (~$5/1,000) with a ~$5 monthly credit that needs a payment method (check Brave's terms) | yes | yes, own index, country targeting | **Fallback web search** |
+| Google Custom Search JSON API | Closed to new customers; shuts down 1 Jan 2027 | — | — | Not used |
+| DuckDuckGo Instant Answer API | Free, no key | no | No: instant answers only, not web results | Not used for search |
+| SearXNG | Free software, self-hosted | no | Aggregates other engines by scraping them | Not used (would scrape search engines) |
+| Google Keyword Planner | Free with an Ads account, but needs **Basic or Standard** API access | OAuth | ideas + Google estimates | Used when access allows |
+| Google Autocomplete / DuckDuckGo suggestions | Free, no key | no | Suggestions only, no metrics | Used for keyword ideas; endpoints are undocumented and can change — switch them off on the card if your policy requires documented APIs only |
+| Bing suggestions | — | no | Returned HTTP 204 (no content) in testing | Off by default |
+
+## Environment variables (or enter them on the Integrations page)
+`TAVILY_API_KEY` (primary web search), `BRAVE_SEARCH_API_KEY` (fallback web search), `GEOAPIFY_API_KEY` (optional places/geocoding),
+`GOOGLE_ADS_RESEARCH_CUSTOMER_ID` (Keyword Planner research account). Web Fetch, the crawler, OpenStreetMap and search suggestions need none.
+
 ## Live research view
 Every audit records what it actually does in `research_events` (migration 0011): audit and stage boundaries, each URL the crawler
 opens, each page it reads (title, headings, word count), robots.txt blocks and page failures, competitors (supplied, found on the map,

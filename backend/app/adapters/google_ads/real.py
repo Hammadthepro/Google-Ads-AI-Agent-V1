@@ -192,6 +192,10 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
             return PermissionDenied("Your Google Cloud project has Test access to the Google Ads API, which only works with test accounts, and this account is not a test "
                                     "account. Use a test account ID, or apply for a higher API access level to read real accounts.", adapter=self.name,
                                     details={"reason": "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"})
+        if "DEVELOPER_TOKEN_NOT_APPROVED" in text or "explorer access" in text:
+            return PermissionDenied("Google refused this method for the Cloud project's Explorer API access level. Keyword Planner and some other methods need "
+                                    "Basic or Standard access: apply in the Google Ads API Center. The account and OAuth are not the problem.", adapter=self.name,
+                                    details={"reason": "DEVELOPER_TOKEN_NOT_APPROVED", "requires_approval": True})
         if "AUTHORIZATION" in text or "PERMISSION_DENIED" in text or "USER_PERMISSION_DENIED" in text:
             return PermissionDenied("The authorised Google user cannot access this Google Ads account. Check the customer ID and manager (login) ID.", adapter=self.name)
         if "RESOURCE_EXHAUSTED" in text or "RATE_EXCEEDED" in text or "QuotaError" in text:

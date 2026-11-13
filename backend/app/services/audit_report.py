@@ -455,10 +455,10 @@ def audit_competitors(biz: Business, ctx: dict, comp: dict, g: dict, w: dict) ->
                           geo.get("reason") or "Google Places is not configured and the map sources returned nothing.", needs="integration")
     web = [w_ for w_ in (comp or {}).get("web_candidates", []) if normalize_term(w_["name"]) not in {normalize_term(s_["name"]) for s_ in suggested}]
     if web:
-        suggested += [{"name": w_["name"], "website": w_["website_url"], "source": "tavily", "basis": "web search result (not verified)",
+        suggested += [{"name": w_["name"], "website": w_["website_url"], "source": (w_.get("evidence") or {}).get("provider") or "web_search", "basis": w_.get("status") or "web search result (not verified)",
                        "evidence_url": w_["evidence"]["url"]} for w_ in web][:5]
         c.add("web_discovered", "A. Identification", "Competitors suggested by web search", "INFO", "ESTIMATED",
-              f"{len(web)} candidate(s) from web results, not verified: {', '.join(w_['name'] for w_ in web[:5])}.", source="Tavily web search", sim=False,
+              f"{len(web)} candidate(s) from web results, not verified: {', '.join(w_['name'] for w_ in web[:5])}.", source="Web search (" + ", ".join(sorted({(w_.get("evidence") or {}).get("provider") or "web" for w_ in web})) + ")", sim=False,
               rec="Confirm these are real competitors before adding them to the profile.")
     c.unavailable("advertisers", "A. Identification", "Who is advertising on Google Search / ranking organically",
                   "Needs the Google Ads Transparency Center (https://adstransparency.google.com) or a paid tool (Semrush/Ahrefs); neither is connected.", needs="manual",

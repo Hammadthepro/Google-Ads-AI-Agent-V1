@@ -9,7 +9,7 @@ vi.mock("../lib/auth", () => ({ useAuth: () => ({ user: { id: "u", email: "a@b.c
 
 const base = { enabled: false, readonly: false, deployment_managed: false, credentials_unreadable: false, dependencies: [], blocked_by: [], subtests: [], targets: {}, info: {},
   missing: [], required: [], scopes: [], oauth: false, docs: "", last_test_at: null, last_test_ok: null, last_test_steps: [], last_success_at: null, last_error: "", discovered: {},
-  connected_account: "", account_id: "", status: "NOT_CONNECTED", display: { config: "Configured", connection: "Not tested", label: "Not tested", testable: true } };
+  connected_account: "", account_id: "", status: "NOT_CONNECTED", display: { config: "Configured", connection: "Configured, not tested", label: "Configured, not tested", testable: true } };
 const ITEMS = [
   { ...base, provider: "google_ads", label: "Google Ads API", group: "Google", description: "Ads", oauth: true, missing: ["client_id"],
     display: { config: "Not configured", connection: "Not configured", label: "Not configured", testable: true },

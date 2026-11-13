@@ -52,7 +52,7 @@ def test_geoapify_is_a_registered_provider_that_is_simply_not_configured():
 
 def test_openstreetmap_needs_no_credentials_and_is_only_connected_after_a_real_test():
     c = _card("openstreetmap")
-    assert c["display"]["config"] == "No credentials needed" and c["display"]["label"] in ("Not tested", "Connected", "Connection failed")
+    assert c["display"]["config"] == "No credentials needed" and c["display"]["label"] in ("Configured, not tested", "Connected", "Connection failed")
     assert c["provider"] != "geoapify" and _card("geoapify")["display"]["config"] == "Not configured"  # separate providers, separate states
 
 

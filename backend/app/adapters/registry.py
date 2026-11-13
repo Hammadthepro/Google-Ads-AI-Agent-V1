@@ -88,6 +88,13 @@ def tavily():
 
 
 @lru_cache
+def brave_search():
+    vals = integrations_service.ensure_configured("brave_search")
+    from app.adapters.research.brave import BraveSearchAdapter
+    return BraveSearchAdapter(vals["api_key"])
+
+
+@lru_cache
 def search_suggestions():
     vals = integrations_service.ensure_configured("search_suggestions")  # needs no credentials; raises only when switched off
     from app.adapters.research.suggest import SuggestionAdapter
@@ -111,7 +118,7 @@ def geoapify():
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
        "crawler": crawler, "ai": ai, "claude_ai": claude_ai, "auth": auth, "notifier": notifier,
-       "tavily": tavily, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
+       "tavily": tavily, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 
 def reset() -> None:
