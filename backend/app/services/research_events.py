@@ -33,6 +33,8 @@ KINDS = {
     "research_stored", "evidence_validated", "provider_unavailable", "provider_failed", "note",
     # campaign build: what the AI is asked, when it is waiting on a provider, and what came back
     "ai_request", "ai_waiting", "ai_failed", "ai_result", "plan_stored", "metric_computed",
+    # SerpApi research: the query sent (or served from cache), public ads seen, local businesses seen
+    "serp_query", "sponsored_ad", "local_business",
 }
 LEVELS = ("info", "warn", "error")
 

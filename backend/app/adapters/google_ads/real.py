@@ -192,12 +192,25 @@ class RealGoogleAdsAdapter(GoogleAdsAdapter):
             return PermissionDenied("Your Google Cloud project has Test access to the Google Ads API, which only works with test accounts, and this account is not a test "
                                     "account. Use a test account ID, or apply for a higher API access level to read real accounts.", adapter=self.name,
                                     details={"reason": "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"})
-        if "DEVELOPER_TOKEN_NOT_APPROVED" in text or "explorer access" in text:
+        if "DEVELOPER_TOKEN_NOT_APPROVED" in text or "explorer access" in text.lower():
             return PermissionDenied("Google refused this method for the Cloud project's Explorer API access level. Keyword Planner and some other methods need "
                                     "Basic or Standard access: apply in the Google Ads API Center. The account and OAuth are not the problem.", adapter=self.name,
-                                    details={"reason": "DEVELOPER_TOKEN_NOT_APPROVED", "requires_approval": True})
-        if "AUTHORIZATION" in text or "PERMISSION_DENIED" in text or "USER_PERMISSION_DENIED" in text:
-            return PermissionDenied("The authorised Google user cannot access this Google Ads account. Check the customer ID and manager (login) ID.", adapter=self.name)
+                                    details={"reason": "DEVELOPER_TOKEN_NOT_APPROVED", "requires_approval": True, "cause": "project_access"})
+        if any(c in text for c in ("DEVELOPER_TOKEN_PROHIBITED", "DEVELOPER_TOKEN_INVALID", "DEVELOPER_TOKEN_NOT_ON_ALLOWLIST")):
+            return PermissionDenied("Google refused the API access of the Google Cloud project behind this OAuth client (developer token / project "
+                                    "authorization). This is a project-level restriction, not a problem with the customer account.", adapter=self.name,
+                                    details={"reason": error_code(text) or "DEVELOPER_TOKEN", "requires_approval": True, "cause": "project_access"})
+        if "SERVICE_DISABLED" in text or "has not been used in project" in text or "API has not been" in text:
+            return PermissionDenied("The Google Ads API is not enabled in the Google Cloud project that owns the OAuth client. Enable it in that project; "
+                                    "the customer account is not the problem.", adapter=self.name, details={"reason": "SERVICE_DISABLED", "cause": "project_access"})
+        if "USER_PERMISSION_DENIED" in text or "CUSTOMER_NOT_ENABLED" in text:
+            return PermissionDenied("The authorised Google user cannot access this Google Ads account. Check the customer ID and the manager (login) ID.",
+                                    adapter=self.name, details={"reason": error_code(text), "cause": "account_access"})
+        if "AUTHORIZATION" in text or "PERMISSION_DENIED" in text:
+            # Google gave no specific code: do not guess that it is the account (it is often the Cloud project's access level)
+            return PermissionDenied("Google refused authorization for this request without naming a specific cause. It can be the Cloud project's API "
+                                    "access level or the user's access to the account: run Test Connection on the Integrations page to tell them apart.",
+                                    adapter=self.name, details={"reason": error_code(text) or "AUTHORIZATION_ERROR", "cause": "unspecified"})
         if "RESOURCE_EXHAUSTED" in text or "RATE_EXCEEDED" in text or "QuotaError" in text:
             return RateLimited("Google Ads rate limit reached. Retry in a few minutes.", adapter=self.name)
         if "DEADLINE_EXCEEDED" in text or "Timeout" in name:

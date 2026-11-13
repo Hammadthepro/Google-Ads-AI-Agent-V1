@@ -37,7 +37,9 @@ METRIC_TYPE = {"avg_monthly_searches": "search_volume", "competition": "competit
                "high_top_of_page_bid_micros": "top_of_page_bid_high"}
 SOURCE_LABEL = {"suggest:google": "Google Autocomplete", "suggest:duckduckgo": "DuckDuckGo suggestions", "suggest:bing": "Bing suggestions",
                 "client_website": "Client website", "competitor_website": "Competitor website", "search_terms": "Google Ads search terms",
-                "web_search": "Web search results", "keyword_planner": "Keyword Planner"}
+                "web_search": "Web search results", "keyword_planner": "Keyword Planner",
+                "serpapi_related": "Google related searches (SerpApi)", "serpapi_question": "Google related questions (SerpApi)",
+                "serpapi_autocomplete": "Google Autocomplete (SerpApi)"}
 
 
 def intent(kw: str, brand_words: set[str] = frozenset(), competitor_names: set[str] = frozenset()) -> str:
@@ -188,6 +190,30 @@ def _web(bag: Bag, ctx: dict, stage: str) -> dict:
     return out
 
 
+def _serp(bag: Bag, ctx: dict, stage: str) -> dict:
+    """Related searches, related questions and autocomplete from Google via SerpApi, each attributed to its query, place and time.
+    They carry no metrics: only Keyword Planner provides volume, competition and bids."""
+    from app.services import serp_research
+    serp = serp_research.research(ctx, stage=stage, parts=("google", "autocomplete"))
+    if not serp.get("used"):
+        return serp
+    services = [s.lower() for s in ctx.get("service_names") or []]
+
+    def svc_of(phrase: str, hint: str | None) -> str | None:
+        p = phrase.lower()
+        return next((s for s in services if s.split()[0] in p), hint)
+    n = 0
+    for r in serp.get("related_searches") or []:
+        n += bag.add(r["phrase"], "serpapi_related", service=svc_of(r["phrase"], None), detail=f"related to “{r['query']}”" + (f" in {r['location']}" if r.get("location") else ""))
+    for r in serp.get("related_questions") or []:
+        n += bag.add(r["question"].rstrip("?"), "serpapi_question", service=svc_of(r["question"], None), detail=f"asked for “{r['query']}”",
+                     evidence_url=r.get("url") or "")
+    for r in serp.get("autocomplete") or []:
+        n += bag.add(r["phrase"], "serpapi_autocomplete", service=svc_of(r["phrase"], None), detail=f"suggested for “{r['query']}”")
+    serp["keywords_added"] = n
+    return serp
+
+
 def discover(db: Session, ctx: dict, website: dict, competitors: dict, *, stage: str = "keywords") -> dict:
     """Candidate keywords from every free source, with provenance. Labelling, scoring and grouping happen in `enrich`."""
     bag = Bag()
@@ -196,7 +222,7 @@ def discover(db: Session, ctx: dict, website: dict, competitors: dict, *, stage:
         if ctx.get("city"):
             bag.add(f"{svc} {ctx['city']}", "client_profile", service=svc, detail="service + location")
     report = {"suggestions": _suggest(bag, ctx, stage), "websites": _website_terms(bag, ctx, website, competitors, stage),
-              "search_terms": _search_terms(db, bag, ctx, stage), "web": _web(bag, ctx, stage)}
+              "search_terms": _search_terms(db, bag, ctx, stage), "web": _web(bag, ctx, stage), "serp": _serp(bag, ctx, stage)}
     return {"candidates": bag.items, "report": report}
 
 

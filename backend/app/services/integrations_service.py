@@ -114,6 +114,24 @@ PROVIDERS: dict[str, dict] = {
         "default_settings": {"max_searches_per_audit": "8"},
         "docs": "https://api-dashboard.search.brave.com/app/documentation/web-search/get-started",
     },
+    "serpapi": {
+        "label": "SerpApi (Google results)", "group": "Research",
+        "description": "Structured public Google results through SerpApi: organic results, sponsored ads, related searches and questions, autocomplete "
+                       "and local businesses (Google Maps), for the client's own services and target locations. Used for competitor discovery, public "
+                       "competitor ad copy and landing pages, search-intent evidence and local competition. It never provides search volume or CPC (that is "
+                       "Keyword Planner): a rank is not volume and an ad is not a bid. Each live search uses one search credit from your SerpApi plan; "
+                       "the connection test uses the free Account API. Repeated queries come from the cache and each audit has a search budget.",
+        "settings": {"country": "Country code (gl), e.g. us", "language": "Language code (hl), e.g. en", "device": "Device (desktop | mobile | tablet)",
+                     "max_searches_per_audit": "Maximum searches per audit", "reserve_searches": "Keep at least this many searches unused",
+                     "ads_transparency": "Ads Transparency Center research (on | off)"},
+        "secrets": {"api_key": "API key"}, "required": ["api_key"],
+        "default_settings": {"country": "us", "language": "en", "device": "desktop", "max_searches_per_audit": "12", "reserve_searches": "0",
+                             "ads_transparency": "off"},
+        "subtests": [("account", "Account API (no search credit)"), ("search", "One live search (uses 1 search credit)")],
+        "required_subtests": ["account"], "optional_subtests": ["search"],
+        "targets": {"account": "Check account", "search": "Run one live search"},
+        "docs": "https://serpapi.com/search-api",
+    },
     "search_suggestions": {
         "label": "Search suggestions (keyword discovery)", "group": "Research",
         "description": "Free keyword discovery from public search-suggestion endpoints (Google Autocomplete, DuckDuckGo, Bing). They return the phrases people "
@@ -359,6 +377,7 @@ _ENV = {
     "groq": {"api_key": "GROQ_API_KEY", "model": "GROQ_MODEL", "challenger_model": "GROQ_CHALLENGER_MODEL"},
     "places": {"api_key": "GOOGLE_PLACES_API_KEY"},
     "tavily": {"api_key": "TAVILY_API_KEY"},
+    "serpapi": {"api_key": "SERPAPI_API_KEY"},
     "brave_search": {"api_key": "BRAVE_SEARCH_API_KEY"},
     "geoapify": {"api_key": "GEOAPIFY_API_KEY"},
     "pagespeed": {"api_key": "PAGESPEED_API_KEY"},
@@ -596,13 +615,19 @@ def _ads_hint(resp: httpx.Response, project: str) -> tuple[str, str]:
         return ("This Google Cloud project has Test access, which can only call Google Ads TEST accounts, and the account you entered is not a "
                 "test account. Either enter a test client account (create a test manager + test client in Google Ads and use their IDs), or, to read "
                 f"a real account, apply for a higher access level on the Google Ads API Overview page: {link}", "test_only")
+    if "DEVELOPER_TOKEN_PROHIBITED" in both or "DEVELOPER_TOKEN_INVALID" in both or "DEVELOPER_TOKEN_NOT_ON_ALLOWLIST" in both:
+        return ("Google refused the API access of the Google Cloud project behind this OAuth client (developer token / project authorization). "
+                f"This is a project-level restriction, not the customer account. Check the project's Google Ads API access: {link}", "project_access")
     if "DEVELOPER_TOKEN_NOT_APPROVED" in both or "EXPLORER ACCESS" in both:
         return ("Google refused this method for the Cloud project's current API access level (Explorer). Keyword Planner "
                 "(KeywordPlanIdeaService) needs Basic or Standard access: apply on the Google Ads API Center / API Overview page "
                 f"({link}). OAuth, the customer ID and the account are not the problem.", "explorer_only")
-    if "USER_PERMISSION_DENIED" in both or "PERMISSION_DENIED" in both:
+    if "USER_PERMISSION_DENIED" in both or "CUSTOMER_NOT_ENABLED" in both:
         return ("The Google user who authorised the refresh token cannot access this account. Give that user access in Google Ads, "
                 "or set the manager (login) customer ID that links the accounts.", "no_permission")
+    if "PERMISSION_DENIED" in both:
+        return ("Google refused the request without a specific reason code. It can be the Cloud project's API access level (Keyword Planner needs Basic "
+                f"or Standard access: {link}) or the user's access to the account; the response does not say which.", "unknown")
     if "AUTHORIZATION_ERROR" in both:
         return ("Google reports an authorisation error. If you recently upgraded access, Google documents a known issue for newly "
                 f"approved projects (check {link}); otherwise confirm the Cloud project owning this OAuth client has API access.", "unknown")
@@ -1178,6 +1203,38 @@ def _test_tavily(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
     return {}
 
 
+def _test_serpapi(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    """The Account API proves the key and returns the plan and searches left WITHOUT using a search credit. A live search (1 credit)
+    runs only when that sub-test is requested explicitly."""
+    from app.adapters.research.serpapi import SerpApiAdapter
+    from app.core import clock
+    if not vals.get("api_key"):
+        steps.fail("Credentials present", "API key is required", sub="account")
+        return {}
+    steps.ok("Credentials present", sub="account")
+    adapter = SerpApiAdapter(vals["api_key"], http, gl=vals.get("country") or "us", hl=vals.get("language") or "en", device=vals.get("device") or "desktop")
+    out: dict = {}
+    if target in ("all", "account"):
+        acc = _research_step(steps, "Account API: validate key and read plan", adapter.account, sub="account",
+                             hint="Check the key at serpapi.com/manage-api-key.")
+        if acc is not None:
+            left, month = acc.get("total_searches_left"), acc.get("searches_per_month")
+            steps.ok("Account API: validate key and read plan",
+                     f"Plan {acc.get('plan_name') or 'not stated'}; {month if month is not None else 'unstated'} searches/month; "
+                     f"{acc.get('this_month_usage') if acc.get('this_month_usage') is not None else 'unstated'} used this month; "
+                     f"{left if left is not None else 'unstated'} left (no search credit used)", sub="account")
+            out["account"] = {**acc, "checked_at": clock.real_now().isoformat()}
+    if target == "search":
+        res = _research_step(steps, "Run one live Google search", lambda: adapter.google("google ads agency", gl=adapter.gl, hl=adapter.hl),
+                             sub="search", hint="HTTP 429 means the hourly limit or the plan's searches are used up.")
+        if res is not None:
+            steps.ok("Run one live Google search", f"{len(res['organic'])} organic result(s), {len(res['ads'])} sponsored, "
+                     f"{len(res['related_searches'])} related search(es); search id {res.get('search_id') or 'not stated'} (1 search credit)", sub="search")
+            out["last_live_search"] = {"query": res["query"], "organic": len(res["organic"]), "ads": len(res["ads"]),
+                                       "search_id": res.get("search_id"), "at": res["retrieved_at"]}
+    return out
+
+
 def _test_brave_search(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
     from app.adapters.research.brave import BraveSearchAdapter
     if not vals.get("api_key"):
@@ -1267,7 +1324,7 @@ def _test_geoapify(vals: dict, http: httpx.Client, steps: Steps, row, target: st
     return {}
 
 
-_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "brave_search": _test_brave_search, "web_fetch": _test_web_fetch,
+_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "serpapi": _test_serpapi, "brave_search": _test_brave_search, "web_fetch": _test_web_fetch,
                                  "search_suggestions": _test_search_suggestions,
                                  "openstreetmap": _test_openstreetmap, "geoapify": _test_geoapify,"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
                                  "google_ads": _test_google_ads, "ga4": _test_ga4, "groq": _test_groq,
@@ -1677,6 +1734,14 @@ def serialize(db: Session, provider: str) -> dict:
                 "api_access": disc.get("cloud_access") or {"api_enabled": None, "level": "not tested", "basis": "Run Test Connection"},
                 "manager_id_set": bool(_selected_manager(vals)), "managers": disc.get("managers"),
                 "hierarchy": disc.get("hierarchy_preview")}
+    if provider == "serpapi":
+        from app.services import provider_calls
+        acc = (row.discovered or {}).get("account") if row else None
+        info = {"account": acc, "usage_30d": {"serpapi": provider_calls.usage("serpapi")},
+                "last_live_search": (row.discovered or {}).get("last_live_search") if row else None,
+                "engines": ["google (organic, sponsored ads, related searches, related questions, local pack)", "google_maps", "google_autocomplete",
+                            "google_ads_transparency_center (" + ("on" if (vals.get("ads_transparency") or "off") == "on" else "off") + ")"],
+                "never": "No search volume, CPC or competitor performance comes from SerpApi."}
     if provider in ("tavily", "brave_search", "openstreetmap", "geoapify", "search_suggestions"):
         from app.services import provider_calls
         names = {"search_suggestions": ["suggest_google", "suggest_duckduckgo", "suggest_bing"]}.get(provider, [provider])

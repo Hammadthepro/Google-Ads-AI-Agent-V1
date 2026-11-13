@@ -25,7 +25,7 @@ export function pathOf(url: string): string {
 export const PROVIDER_LABEL: Record<string, string> = {
   google: "Google Autocomplete", duckduckgo: "DuckDuckGo", bing: "Bing", keyword_planner: "Keyword Planner", crawler: "Website crawler",
   tavily: "Tavily web search", openstreetmap: "OpenStreetMap", openstreetmap_overpass: "OpenStreetMap", openstreetmap_nominatim: "OpenStreetMap",
-  geoapify: "Geoapify", geoapify_places: "Geoapify", geoapify_geocoding: "Geoapify", places: "Google Places", google_ads: "Google Ads", search_suggestions: "Search suggestions",
+  serpapi: "Google results (SerpApi)", geoapify: "Geoapify", geoapify_places: "Geoapify", geoapify_geocoding: "Geoapify", places: "Google Places", google_ads: "Google Ads", search_suggestions: "Search suggestions",
 };
 export const providerLabel = (p?: string) => (p ? PROVIDER_LABEL[p] ?? p : "");
 
@@ -92,6 +92,9 @@ export function describe(e: ResearchEvent): string {
     case "stage_started": return `Started: ${e.title}`;
     case "stage_completed": return `Finished: ${e.title}${d.summary ? ` — ${d.summary}` : ""}`;
     case "stage_failed": return `Failed: ${e.title}${d.summary ? ` — ${d.summary}` : ""}`;
+    case "serp_query": return `${d.served_from_cache ? "From cache" : "Google search"} (SerpApi): “${d.query}”${d.location ? ` · ${d.location}` : ""}`;
+    case "sponsored_ad": return `Sponsored result: ${e.title}`;
+    case "local_business": return `Local business: ${e.title}${d.rating != null ? ` · ${d.rating}★` : ""}`;
     default: return e.title;
   }
 }
@@ -153,6 +156,10 @@ export function buildStream(events: ResearchEvent[]): StreamStage[] {
       case "location_identified": push({ key: `l:${e.seq}`, type: "finding", text: `Located: ${e.title}`, detail: providerLabel(d.provider) }); break;
       case "web_result": push({ key: `w:${e.seq}`, type: "activity", text: e.title || hostOf(d.url), detail: hostOf(d.url), url: d.url, state: "done" }); break;
       case "source_discovered": push({ key: `q:${e.seq}`, type: "activity", text: e.title, detail: providerLabel(d.provider), state: "done" }); break;
+      case "serp_query": push({ key: `s:${e.seq}`, type: "activity", text: `“${d.query}”${d.location ? ` · ${d.location}` : ""}`,
+        detail: `${d.served_from_cache ? "from cache, retrieved earlier" : "live Google search"} · ${String(d.engine || "").replace(/_/g, " ")} · SerpApi`, state: "done" }); break;
+      case "sponsored_ad": push({ key: `a:${e.seq}`, type: "finding", text: `Ad: ${e.title}`, detail: [d.description, d.query ? `for “${d.query}”` : ""].filter(Boolean).join(" · "), url: d.url }); break;
+      case "local_business": push({ key: `b:${e.seq}`, type: "finding", text: e.title, detail: [d.rating != null ? `${d.rating}★ (${d.reviews ?? 0})` : "", d.address, d.source].filter(Boolean).join(" · ") }); break;
       case "research_stored": case "evidence_validated": push({ key: `r:${e.seq}`, type: "finding", text: e.title }); break;
       case "provider_unavailable": case "provider_failed": push({ key: `x:${e.seq}`, type: "warning", text: e.title, detail: d.error_kind ? `reason: ${d.error_kind.replace(/_/g, " ")}` : undefined }); break;
       default: push({ key: `n:${e.seq}`, type: e.level === "info" ? "note" : "warning", text: e.title });

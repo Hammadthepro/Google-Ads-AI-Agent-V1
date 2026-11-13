@@ -307,7 +307,9 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
 
     from app.services import challenger
     evidence = {**challenge_ctx, "services": payload.get("services"),
-                "research": _evidence_keywords(payload.get("keyword_table"))}
+                "research": _evidence_keywords(payload.get("keyword_table")),
+                **({"search_evidence": payload["search_evidence"]} if payload.get("search_evidence") else
+                   {"search_evidence": "none: no Google search was performed for this draft"})}
     report, review_run = challenger.review_draft(db, final, evidence, kind="campaign_draft", task_id=task_id)
     if report.get("performed"):
         challenges["challenger_on_final"] = {"report": report, "run_id": review_run}

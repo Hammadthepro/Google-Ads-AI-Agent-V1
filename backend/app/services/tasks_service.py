@@ -420,13 +420,16 @@ class Runner:
         mctx = self._measurement_ctx()
         tt = self.task.task_type
         kw = self.ctx.get("keywords", {}).get("keywords", [])
+        from app.services import serp_research
+        serp_ev = serp_research.evidence_summary(((self.ctx.get("keywords") or {}).get("discovery") or {}).get("serp"))
+        ev = {"search_evidence": serp_ev} if serp_ev else {}  # absent = no Google search was performed; the prompt says so
         if tt == "BUILD_CAMPAIGN":
             plan = planner.draft(self.db, self.task, self.business, scope="CAMPAIGN", services=self._services_for_task(),
-                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx)
+                                 keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx, extra=ev or None)
         elif tt == "ADD_AD_GROUP":
             plan = planner.draft(self.db, self.task, self.business, scope="AD_GROUP", services=self._services_for_task(),
                                  keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx,
-                                 extra={"existing_ad_groups": self._existing_keywords()})
+                                 extra={"existing_ad_groups": self._existing_keywords(), **ev})
         else:  # ADD_AD / EDIT_AD
             current = {"headlines": self.ad.headlines, "descriptions": self.ad.descriptions} if (self.ad and tt == "EDIT_AD") else None
             plan = planner.draft(self.db, self.task, self.business, scope="AD", services=self._services_for_task(), keyword_table=kw,

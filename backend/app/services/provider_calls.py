@@ -42,8 +42,17 @@ def spent_this_audit(provider: str) -> int:
                                                                    ProviderCall.cached.is_(False))) or 0
 
 
+def is_cached(provider: str, operation: str, request: dict) -> bool:
+    """Whether `call()` would answer this request from the cache (so it costs nothing). Used to plan metered batches."""
+    key = cache_key({"op": operation, **request})
+    with session_scope() as db:
+        hit = db.scalar(select(ProviderCache.expires_at).where(ProviderCache.provider == provider, ProviderCache.cache_key == key))
+    return bool(hit and hit > clock.now())
+
+
 def call(provider: str, operation: str, request: dict, fn: Callable[[], Any], *, ttl: timedelta = timedelta(days=7),
-         cost: float | Callable[[Any], float] = 0, budget: int | None = None) -> Any:
+         cost: float | Callable[[Any], float] = 0, budget: int | None = None, meta: bool = False) -> Any:
+    """With `meta=True` returns (value, {"cached": bool, "cached_at": iso | None}) so callers never present a cached answer as new."""
     key = cache_key({"op": operation, **request})
     now = clock.now()
     with session_scope() as db:
@@ -51,7 +60,7 @@ def call(provider: str, operation: str, request: dict, fn: Callable[[], Any], *,
         if hit is not None and hit.expires_at > now:
             response = hit.response.get("value")
             _log(provider, operation, ok=True, cached=True)
-            return response
+            return (response, {"cached": True, "cached_at": hit.created_at.isoformat() if hit.created_at else None}) if meta else response
     if budget is not None and research_events.current_report_id() and spent_this_audit(provider) >= budget:
         err = BudgetExhausted(f"The per-audit budget of {budget} {provider} request(s) is used up; no further requests were sent.", adapter=provider)
         _log(provider, operation, ok=False, cached=False, error=err)
@@ -69,7 +78,7 @@ def call(provider: str, operation: str, request: dict, fn: Callable[[], Any], *,
             db.add(row)
         row.request, row.response, row.created_at, row.expires_at = redact(request), {"value": value}, now, now + ttl
     _log(provider, operation, ok=True, cached=False, cost=float(units or 0))
-    return value
+    return (value, {"cached": False, "cached_at": None}) if meta else value
 
 
 def usage(provider: str, *, days: int = 30) -> dict:

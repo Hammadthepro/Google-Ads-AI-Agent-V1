@@ -107,6 +107,7 @@ Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on t
 | Variable | Needed | Default | Purpose | Read by |
 |---|---|---|---|---|
 | `TAVILY_API_KEY` 🔒 | optional | — | Tavily web search key (optional; the Integrations page is preferred). | integrations_service.py |
+| `SERPAPI_API_KEY` 🔒 | optional | — | SerpApi key: public Google results (organic, sponsored ads, related searches, autocomplete, Maps) for research. Optional; can also be saved encrypted on the Integrations page. | adapters/research/serpapi.py |
 | `BRAVE_SEARCH_API_KEY` 🔒 | optional | — | Brave Search API key: fallback web search when Tavily is missing or fails (metered). | integrations_service.py |
 | `GEOAPIFY_API_KEY` 🔒 | optional | — | Geoapify places/geocoding key (optional; the Integrations page is preferred). | integrations_service.py |
 
