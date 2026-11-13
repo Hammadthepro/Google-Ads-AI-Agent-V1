@@ -219,6 +219,11 @@ def _reason(exc: Exception) -> str:
 
 def _draft_side(db, side, provider, purpose, payload, task_id):
     try:
+        if purpose == "DRAFT_CAMPAIGN":  # sized to this provider's token limits: one request, or a staged draft on a shared plan
+            from app.services import drafting
+            parsed, run, info = drafting.draft_campaign(db, payload, provider=provider, label=_label(side, provider), task_id=task_id)
+            run.drafting = info  # (transient: reported in the competition record)
+            return parsed.model_dump(), run, None
         parsed, run = ai_service.generate(db, purpose, payload, task_id=task_id, provider=provider,
                                           model_role="draft", label=_label(side, provider))
         return parsed.model_dump(), run, None
@@ -320,7 +325,8 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
     comp = {"mode": "dual" if len(drafts) == 2 else "single",
             "providers": {s: {"provider": provs[s].name, "source": provs[s].source,
                               "model": runs[s].model if s in runs else None, "run_id": runs[s].id if s in runs else None,
-                              "prompt": f"{runs[s].prompt_template_id}@{runs[s].prompt_version}" if s in runs else None}
+                              "prompt": f"{runs[s].prompt_template_id}@{runs[s].prompt_version}" if s in runs else None,
+                              "drafting": getattr(runs[s], "drafting", None) if s in runs else None}
                           for s in SIDES},
             "identical_inputs": True, "input_hash": next(iter(runs.values())).input_hash,
             "drafts": drafts, "challenges": challenges, "errors": errors, "comparison": compare(drafts),

@@ -6,11 +6,10 @@ decline is retried by Anthropic on a recommended model inside the same call.
 """
 from __future__ import annotations
 
-import json
 import time
 
-from app.adapters.ai import AIProvider, RawCompletion
-from app.adapters.base import AdapterTimeout, AuthError, InvalidInput, PermissionDenied, RateLimited, ServiceUnavailable
+from app.adapters.ai import AIProvider, RawCompletion, serialize
+from app.adapters.base import AdapterTimeout, AuthError, ContextLengthExceeded, InvalidInput, PermissionDenied, RateLimited, ServiceUnavailable
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -18,6 +17,8 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 class ClaudeAIProvider(AIProvider):
     name = "ClaudeAIProvider"
     source = "LIVE"
+    supports_max_tokens = True
+    MAX_TOKENS = 8000
 
     def __init__(self, api_key: str, model: str, client=None):
         if not api_key or not model:
@@ -28,11 +29,11 @@ class ClaudeAIProvider(AIProvider):
             client = anthropic.Anthropic(api_key=api_key, timeout=120.0, max_retries=1)
         self.client = client
 
-    def complete(self, purpose, system, user, *, model_role="draft") -> RawCompletion:
+    def complete(self, purpose, system, user, *, model_role="draft", max_tokens: int | None = None) -> RawCompletion:
         import anthropic
         started = time.monotonic()
-        kwargs = dict(model=self.model, max_tokens=8000, system=system,
-                      messages=[{"role": "user", "content": json.dumps(user, default=str)}])
+        kwargs = dict(model=self.model, max_tokens=int(max_tokens or self.MAX_TOKENS), system=system,
+                      messages=[{"role": "user", "content": serialize(user)}])
         try:
             if self.model.startswith("claude-opus-5"):
                 resp = self.client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
@@ -45,6 +46,9 @@ class ClaudeAIProvider(AIProvider):
         except anthropic.NotFoundError as exc:
             raise InvalidInput(f"Claude model '{self.model}' not found", adapter=self.name) from exc
         except anthropic.BadRequestError as exc:
+            if "prompt is too long" in str(getattr(exc, "message", exc)).lower():
+                raise ContextLengthExceeded(f"The request is longer than {self.model}'s context window", adapter=self.name,
+                                            details={"model": self.model, "error_kind": "context_length"}) from exc
             raise InvalidInput(f"Claude rejected the request: {getattr(exc, 'message', exc)}"[:400], adapter=self.name) from exc
         except anthropic.RateLimitError as exc:
             raise RateLimited("Claude rate limit reached", adapter=self.name) from exc
@@ -58,6 +62,8 @@ class ClaudeAIProvider(AIProvider):
             raise InvalidInput("Claude declined this request (refusal)", adapter=self.name)
         text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         usage = getattr(resp, "usage", None)
+        stop = getattr(resp, "stop_reason", "") or ""
         return RawCompletion(text=text, model=getattr(resp, "model", self.model),
                              tokens_in=getattr(usage, "input_tokens", 0) or 0, tokens_out=getattr(usage, "output_tokens", 0) or 0,
-                             latency_ms=int((time.monotonic() - started) * 1000))
+                             latency_ms=int((time.monotonic() - started) * 1000),
+                             finish_reason="length" if stop == "max_tokens" else stop, status="ok")

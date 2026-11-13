@@ -35,6 +35,11 @@ class RateLimited(AdapterError):
     retryable = True
 
 
+class ContextLengthExceeded(AdapterError):
+    """The prompt is longer than the model's context window (a different limit from the per-minute token budget)."""
+    kind = "context_length"
+
+
 class AdapterTimeout(AdapterError):
     """The outcome is UNKNOWN. Callers must reconcile writes, never blind-retry."""
 

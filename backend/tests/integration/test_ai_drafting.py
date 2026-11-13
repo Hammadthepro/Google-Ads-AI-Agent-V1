@@ -93,7 +93,7 @@ def test_invalid_json_is_rejected_then_re_asked_with_the_error():
         parsed, run = ai_service.generate(db, "DRAFT_CAMPAIGN", _payload())
         assert run.attempt == 2 and run.validation_ok and parsed.ad_groups
         first = db.query(AIRun).filter(AIRun.input_hash == run.input_hash, AIRun.attempt == 1).order_by(AIRun.created_at.desc()).first()
-        assert first.validation_ok is False and first.error.startswith("Invalid AI output")
+        assert first.validation_ok is False and first.error_kind == "malformed_json" and "Invalid AI output" in first.error
     assert "previous_attempt_error" in p.seen[1] and "previous_attempt_error" not in p.seen[0]
 
 
@@ -151,7 +151,7 @@ def test_groq_json_validate_failed_is_bad_output_not_a_bad_request():
     exc = _status_error(400, {"error": {"message": "Failed to generate JSON.", "code": "json_validate_failed", "type": "invalid_request_error"}})
     with pytest.raises(InvalidResponse) as e:
         _groq(exc).complete("DRAFT_CAMPAIGN", "s", {})
-    assert e.value.kind == "invalid_response" and "did not return valid JSON" in e.value.message
+    assert e.value.kind == "invalid_response" and e.value.details["error_kind"] == "malformed_json" and "returned malformed JSON" in e.value.message
 
 
 def test_groq_413_is_reported_as_too_large_and_not_retried_as_an_outage():
@@ -197,10 +197,10 @@ def test_compact_keyword_input_never_invents_volumes_and_is_bounded():
     rows += [{"keyword": f"junk {i}", "label": "IRRELEVANT", "selected": False} for i in range(80)]
     rows += [{"keyword": "unselected", "label": "SERVICE", "service": "Drain Cleaning", "selected": False, "avg_monthly_searches": 5000}]
     out = planner.compact_keywords(rows)
-    kws = out["keywords_by_service"]["Drain Cleaning"]
-    assert len(kws) == planner.PER_SERVICE and "unselected" not in kws
-    assert kws[0] == "drain cleaning 1"  # strongest known volume first
-    assert all(out["monthly_searches"][k] is not None for k in out["monthly_searches"])
-    assert not any(k in out["monthly_searches"] for k in kws if int(k.rsplit(" ", 1)[1]) % 2 == 0)  # unknown stays unknown
+    pairs = out["keywords_by_service"]["Drain Cleaning"]
+    assert len(pairs) == planner.PER_SERVICE and "unselected" not in [k for k, _ in pairs]
+    assert pairs[0] == ["drain cleaning 1", 99]  # strongest known volume first
+    assert all(v is None for k, v in pairs if int(k.rsplit(" ", 1)[1]) % 2 == 0)  # unknown stays unknown (null), never 0
     assert len(out["irrelevant_terms"]) == planner.MAX_IRRELEVANT
+    assert len({k for k, _ in pairs}) == len(pairs)  # each keyword once
     assert len(json.dumps(out)) < len(json.dumps(rows)) / 3

@@ -95,7 +95,7 @@ def test_invalid_ai_json_is_retried_then_rejected(db):
     with pytest.raises(ai_service.AIOutputInvalid):
         ai_service.generate(db, "DRAFT_CAMPAIGN", _draft_payload())
     from app.models import AIRun
-    bad = db.query(AIRun).filter(AIRun.validation_ok.is_(False), AIRun.error.like("Invalid AI output%")).all()
+    bad = db.query(AIRun).filter(AIRun.validation_ok.is_(False), AIRun.error.like("%Invalid AI output%")).all()
     assert len(bad) >= 2 and all(r.parsed_output is None for r in bad)  # rejected output is recorded and never parsed
     inject("ai", "schema_mismatch", method="CHALLENGE", times=2)
     with pytest.raises(ai_service.AIOutputInvalid):

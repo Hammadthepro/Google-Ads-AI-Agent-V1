@@ -36,12 +36,11 @@ PER_SERVICE, MAX_IRRELEVANT = 25, 40
 
 
 def compact_keywords(table: list[dict]) -> dict:
-    """The researched keywords in the shape the AI needs, without repeating field names per row: the draft request used to be
-    ~7,000 tokens for 150 rows, which on an 8,000 tokens/minute Groq plan fails whenever anything else ran in the same minute.
-    Volumes are included only where a source actually reported one (None never becomes 0)."""
-    by_service: dict[str, list[str]] = {}
+    """The researched keywords in the shape the AI needs: per service, [keyword, monthly searches] pairs strongest first (a volume is
+    given only where a source reported one; null means unknown, never zero), plus the terms to exclude. Each keyword appears once:
+    the earlier format repeated every keyword again in a separate volume map, which alone cost ~20% of the draft request."""
+    by_service: dict[str, list[list]] = {}
     irrelevant: list[str] = []
-    volumes: dict[str, int] = {}
     ranked = sorted(table, key=lambda r: (-(r.get("avg_monthly_searches") or 0), -(r.get("relevance_score") or 0)))
     for r in ranked:
         kw = r.get("keyword")
@@ -54,27 +53,28 @@ def compact_keywords(table: list[dict]) -> dict:
         if not r.get("selected"):
             continue
         group = by_service.setdefault(r.get("service") or "Generic", [])
-        if len(group) >= PER_SERVICE:
-            continue
-        group.append(kw)
-        if r.get("avg_monthly_searches") is not None:
-            volumes[kw] = r["avg_monthly_searches"]
-    return {"keywords_by_service": by_service, "irrelevant_terms": irrelevant, "monthly_searches": volumes,
-            "note": f"Up to {PER_SERVICE} strongest keywords per service; the full researched list is used to check the draft."}
+        if len(group) < PER_SERVICE:
+            group.append([kw, r.get("avg_monthly_searches")])
+    return {"keywords_by_service": by_service, "irrelevant_terms": irrelevant}
+
+
+def draft_services(services: list[dict]) -> list[dict]:
+    """Each service once, with the one landing page the ad group uses (the task's service rows repeat the URL under two keys)."""
+    return [{"name": x["name"], "landing_page": x.get("landing_page") or x.get("landing_page_url") or ""} for x in services]
 
 
 def draft(db: Session, task: Task, business: Business, *, scope: str, services: list[dict], keyword_table: list[dict],
           feasibility: dict | None, measurement_ctx: dict, extra: dict | None = None) -> CampaignPlan:
     payload = _common_payload(db, business, measurement_ctx)
     rule_ids = payload.pop("_rule_ids")
-    payload.update({"services": services, "monthly_budget": (task.fields or {}).get("monthly_budget"),
+    payload.update({"services": draft_services(services), "monthly_budget": (task.fields or {}).get("monthly_budget"),
                     "feasibility": {k: (feasibility or {}).get("summary", {}).get(k) for k in
                                     ("status", "expected_weekly_conversions", "weekly_target", "allowed_cost_per_lead")},
                     "keyword_table": compact_keywords(keyword_table),
                     "note": task.note or "", **(extra or {})})
     purpose = {"CAMPAIGN": "DRAFT_CAMPAIGN", "AD_GROUP": "DRAFT_AD_GROUP", "AD": "DRAFT_AD"}[scope]
     if scope == "AD_GROUP":
-        payload["service"] = services[0]
+        payload["service"] = payload["services"][0]
     if scope == "AD":
         payload["service"] = services[0]["name"]
     if scope in ("CAMPAIGN", "AD_GROUP"):

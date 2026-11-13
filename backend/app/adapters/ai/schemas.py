@@ -84,6 +84,40 @@ class CampaignDraft(Strict):
     rationale: str = ""
 
 
+# ---- staged campaign drafting: a fixed plan first, then each ad group's content against that plan -------------------
+class AdGroupPlan(Strict):
+    name: str
+    service: str
+    landing_page: str
+
+
+class CampaignSpec(Strict):
+    """Step 1: everything campaign-level. Budget, bidding, targeting and the ad group list are fixed here and never changed later."""
+    campaign_name: str
+    bidding_strategy: Literal["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CLICKS"]
+    budget_allocation: list[BudgetShare] = Field(default_factory=list)
+    ad_groups: list[AdGroupPlan] = Field(min_length=1)
+    campaign_negatives: list[str] = Field(default_factory=list)
+    sitelinks: list[Sitelink] = Field(default_factory=list)
+    callouts: list[str] = Field(default_factory=list)
+    use_call_asset: bool = True
+    ad_schedule_note: str = ""
+    location_note: str = ""
+    rationale: str = ""
+
+
+class AdGroupContent(Strict):
+    """Step 2: what an ad group contains. It cannot carry a name change, budget, bidding or targeting."""
+    name: str
+    keywords: list[KeywordDraft] = Field(default_factory=list)
+    negatives: list[str] = Field(default_factory=list)
+    ads: list[AdCopy] = Field(default_factory=list, max_length=3)
+
+
+class AdGroupContentBatch(Strict):
+    ad_groups: list[AdGroupContent] = Field(min_length=1)
+
+
 class AdFix(Strict):
     ads: list[AdCopy]
     changes: list[str] = Field(default_factory=list)
@@ -141,6 +175,8 @@ SCHEMAS = {
     "LABEL_KEYWORDS": KeywordLabels,
     "EXTRACT_COMPETITOR_ADS": CompetitorAdsExtraction,
     "DRAFT_CAMPAIGN": CampaignDraft,
+    "DRAFT_CAMPAIGN_SPEC": CampaignSpec,
+    "DRAFT_AD_GROUP_CONTENT": AdGroupContentBatch,
     "DRAFT_AD_GROUP": AdGroupDraft,
     "DRAFT_AD": AdCopy,
     "FIX_ADS": AdFix,

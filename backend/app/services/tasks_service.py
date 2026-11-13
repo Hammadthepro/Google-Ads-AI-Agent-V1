@@ -129,7 +129,7 @@ STEP_NAMES = {"load": "Load account", "measurement": "Conversion measurement aud
               "validate": "Validation", "approval": "Approval request", "account_audit": "Read-only account audit (90 days)"}
 # the stage key each step reports its live events under (the research audits report their own website / gbp / competitors stages)
 STAGE_OF_STEP = {"load": "account", "audits": "research"}
-DRAFT_PURPOSES = ("DRAFT_CAMPAIGN", "DRAFT_AD_GROUP", "DRAFT_AD")
+DRAFT_PURPOSES = ("DRAFT_CAMPAIGN", "DRAFT_CAMPAIGN_SPEC", "DRAFT_AD_GROUP_CONTENT", "DRAFT_AD_GROUP", "DRAFT_AD")
 RESEARCH_MAX_AGE_DAYS = 14   # a draft retry reuses this task's research only while it is this fresh
 ACTIVE_STATUSES = ("QUEUED", "RUNNING", "RETRYING_DRAFT")
 
@@ -404,7 +404,10 @@ class Runner:
                 runs = sorted((r for r in self.db.scalars(select(AIRun).where(AIRun.task_id == self.task.id, AIRun.purpose.in_(DRAFT_PURPOSES)))
                                if r.id not in before), key=lambda r: (r.created_at, r.attempt))
                 calls = [{"provider": r.provider, "model": r.model, "attempt": r.attempt, "ok": bool(r.validation_ok),
-                          "error": (r.error or "")[:500], "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "latency_ms": r.latency_ms}
+                          "purpose": r.purpose, "stage": r.stage, "error": (r.error or "")[:500], "error_kind": r.error_kind,
+                          "finish_reason": r.finish_reason, "provider_status": r.provider_status, "prompt_estimate": r.prompt_estimate,
+                          "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "total_tokens": (r.tokens_in or 0) + (r.tokens_out or 0),
+                          "latency_ms": r.latency_ms}
                          for r in runs]
                 plan = self.ctx.get("plan")
                 self._record_attempt(attempt, status=status, error=error, finished_at=clock.now().isoformat(), calls=calls,

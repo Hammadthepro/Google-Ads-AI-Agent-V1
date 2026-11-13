@@ -117,6 +117,13 @@ Groq is used as soon as `GROQ_API_KEY` and `GROQ_MODEL` are set — here or on t
 | `GROQ_API_KEY` 🔒 | when: Groq is used | — | Groq API key (starts with gsk_). | integrations_service.py |
 | `GROQ_MODEL` | when: Groq is used | — | Groq model that writes drafts and explanations. Exact Groq model ID. | adapters/ai/__init__.py |
 | `GROQ_CHALLENGER_MODEL` | optional | — | Groq model that critiques plans. Blank = GROQ_MODEL (no independent second opinion). | adapters/ai/__init__.py |
+| `GROQ_TPM_LIMIT` | optional | — | Tokens per minute of the Groq plan for the drafting model. 0 = learn it from Groq's rate-limit headers. | adapters/ai/__init__.py |
+| `AI_DRAFT_MAX_OUTPUT_TOKENS` | optional | — | Output-token budget (max_tokens) of a one-request campaign draft. Default 6000. | services/drafting.py |
+| `AI_STAGE_MAX_OUTPUT_TOKENS` | optional | — | Output-token budget of one stage of a staged campaign draft. Default 4000. | services/drafting.py |
+| `AI_OUTPUT_TOKENS_BASE` | optional | — | Expected campaign-level output (including reasoning) per draft request, used to size requests. Default 1500. | services/drafting.py |
+| `AI_OUTPUT_TOKENS_PER_AD_GROUP` | optional | — | Expected output per ad group (keywords, negatives, one ad), used to size requests. Default 800. | services/drafting.py |
+| `AI_CHARS_PER_TOKEN` | optional | — | Characters per token for the conservative prompt-size estimate. Default 3.3. | services/ai_service.py |
+| `AI_TOKEN_SAFETY_MARGIN` | optional | — | Share of a per-minute token limit kept unused. Default 0.08. | services/ai_service.py |
 
 ### AI (Claude)
 
