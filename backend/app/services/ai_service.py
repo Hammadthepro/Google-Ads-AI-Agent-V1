@@ -207,7 +207,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
             research_events.emit("ai_waiting", f"{who}: waiting {wait:.0f}s for the per-minute token window before the {what}",
                                  level="warn", purpose=purpose, provider=who, model=model, seconds=round(wait, 1), reason=why, stage=stage or None)
             time.sleep(wait)
-        research_events.emit("ai_request", f"Asking {who} ({model}) for {what}", purpose=purpose, provider=who, model=model,
+        research_events.emit("ai_request", f"Asking {who} ({model}) for {what}", purpose=purpose, provider=who, model=model, role=role,
                              attempt=attempt, approx_input=estimate, max_output=max_output_tokens, stage=stage or None)
         try:
             raw = _complete(provider, purpose, system, user, model_role, send_out)
@@ -251,7 +251,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                 last_error = run.error
                 continue
             research_events.emit("ai_failed", f"{who}: {exc.message}", level="error", purpose=purpose, provider=who, model=model,
-                                 error_kind=kind, limit=exc.details.get("limit") or None, requested=exc.details.get("requested") or None,
+                                 error_kind=kind, role=role, limit=exc.details.get("limit") or None, requested=exc.details.get("requested") or None,
                                  reason=exc.message, stage=stage or None)
             reason = exc.message if kind in ("auth_failure", "invalid_input", "invalid_response", "malformed_json", "context_length") \
                 else f"AI provider error ({kind}): {exc.message}"
@@ -305,7 +305,8 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         run.parsed_output = parsed.model_dump()
         run.validation_ok = True
         db.flush()
-        research_events.emit("ai_result", f"{who} returned a valid {what}", purpose=purpose, provider=who, model=raw.model,
+        research_events.emit("ai_result", f"{who} returned a valid {what}", purpose=purpose, provider=who, model=raw.model, role=role,
+                             latency_ms=raw.latency_ms,
                              usage_in=raw.tokens_in, usage_out=raw.tokens_out, attempt=attempt, finish_reason=raw.finish_reason or None,
                              stage=stage or None)
         return parsed, run

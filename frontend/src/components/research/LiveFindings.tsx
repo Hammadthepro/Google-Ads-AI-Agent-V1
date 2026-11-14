@@ -1,3 +1,4 @@
+import { EvidenceButtons } from "./Explorers";
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { cx, ErrorBox } from "../ui";
@@ -238,7 +239,7 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
       <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-5 py-3">
         <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
         {statusLine}
-        {sources.length > 0 && <span className="ml-auto rounded bg-slate-100 px-1.5 py-px text-2xs font-medium text-slate-600">{sources.length} source{sources.length === 1 ? "" : "s"}</span>}
+        <span className="ml-auto flex gap-1.5"><EvidenceButtons sources={sources} competitors={model.competitors} /></span>
       </header>
       <ErrorBox error={error} />
       <div className="grid xl:grid-cols-[minmax(0,1.15fr)_minmax(380px,1fr)]">
@@ -271,7 +272,7 @@ export function LiveFindings({ url, active, steps: givenSteps, title = "Research
       <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-5 py-3">
         <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
         {statusLine}
-        {sources.length > 0 && <span className="ml-auto rounded bg-slate-100 px-1.5 py-px text-2xs font-medium text-slate-600">{sources.length} source{sources.length === 1 ? "" : "s"}</span>}
+        <span className="ml-auto flex gap-1.5"><EvidenceButtons sources={sources} competitors={model.competitors} /></span>
       </header>
       <ErrorBox error={error} />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_280px]">

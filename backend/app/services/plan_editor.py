@@ -189,7 +189,6 @@ def versions(db: Session, plan: CampaignPlan) -> list[CampaignPlan]:
 
 
 def edit_approval(db: Session, actor: User, approval_id: str, edits: list[dict], note: str = "") -> dict:
-    from app.services.tasks_service import Runner
     auth_service.require(actor, "approvals.submit")
     old = approvals.get(db, approval_id)
     auth_service.require_client_access(db, actor, old.client_id)
@@ -202,11 +201,38 @@ def edit_approval(db: Session, actor: User, approval_id: str, edits: list[dict],
     new_draft, log, field_changes = apply(plan.draft, plan.scope, edits)
     if field_changes:
         task.fields = {**(task.fields or {}), **field_changes}
+    return _new_version(db, actor, old, plan, task, new_draft, log, note, status="EDITED", event="plan.edited")
+
+
+def restore_version(db: Session, actor: User, approval_id: str, version_plan_id: str, note: str = "") -> dict:
+    """Make an earlier version current again, as a NEW version (versions are never changed): rebuilt payload, re-validated, fresh approval."""
+    auth_service.require(actor, "approvals.submit")
+    old = approvals.get(db, approval_id)
+    auth_service.require_client_access(db, actor, old.client_id)
+    if old.status not in ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED"):
+        raise Conflict(f"Approval is {old.status}; only an open approval can be replaced by a restored version")
+    plan = db.get(CampaignPlan, (old.context or {}).get("plan_id") or "")
+    task = db.get(Task, old.task_id) if old.task_id else None
+    src = db.get(CampaignPlan, version_plan_id)
+    if not plan or not task or not src or src.task_id != plan.task_id or src.scope != plan.scope:
+        raise NotFound("That version does not belong to this plan")
+    if src.id == plan.id:
+        raise Conflict("That version is already current")
+    if src.draft == plan.draft:
+        raise Conflict(f"Version {src.version} is identical to the current version {plan.version}; there is nothing to restore")
+    return _new_version(db, actor, old, plan, task, src.draft, [f"Restored version {src.version}"], note, status="RESTORED", event="plan.restored",
+                        original=src.original or src.draft)
+
+
+def _new_version(db: Session, actor: User, old, plan: CampaignPlan, task: Task, new_draft: dict, log: list[str], note: str, *,
+                 status: str, event: str, original: dict | None = None) -> dict:
+    from app.services.tasks_service import Runner
+    top = max([v.version for v in versions(db, plan)] + [plan.version])
     new_plan = CampaignPlan(task_id=plan.task_id, client_id=plan.client_id, business_id=plan.business_id, scope=plan.scope,
-                            version=plan.version + 1, draft=new_draft, challenger=plan.challenger, human_comparison=plan.human_comparison,
+                            version=top + 1, draft=new_draft, challenger=plan.challenger, human_comparison=plan.human_comparison,
                             playbook_rule_ids=plan.playbook_rule_ids, draft_ai_run_id=plan.draft_ai_run_id,
                             challenger_ai_run_id=plan.challenger_ai_run_id, competition=plan.competition,
-                            original=plan.original or plan.draft, parent_plan_id=plan.id, status="EDITED",
+                            original=original or plan.original or plan.draft, parent_plan_id=plan.id, status=status,
                             change_summary="; ".join(log) + (f" — {note}" if note else ""), edited_by_id=actor.id,
                             source_type=plan.source_type)
     db.add(new_plan)
@@ -215,13 +241,13 @@ def edit_approval(db: Session, actor: User, approval_id: str, edits: list[dict],
     runner = Runner(db, task)
     runner.ctx["plan"] = new_plan
     payload, _atype, _title, _cur, proposed = runner.build_payload()
-    new = approvals.edit_payload(db, actor, approval_id, payload, lambda p, b: validation.validate(db, p, b, task_id=task.id))
+    new = approvals.edit_payload(db, actor, old.id, payload, lambda p, b: validation.validate(db, p, b, task_id=task.id))
     d = diff(new_plan.original, new_plan.draft, new_plan.scope)
     new.proposed_state = proposed
     new.context = {**(old.context or {}), "draft": new_plan.draft, "plan_id": new_plan.id, "plan_version": new_plan.version,
                    "diff_from_original": d, "edit_log": log}
     task.plan_id, task.approval_id = new_plan.id, new.id
-    activity.log(db, "plan.edited", actor=actor, entity="plan", entity_id=new_plan.id, client_id=plan.client_id,
+    activity.log(db, event, actor=actor, entity="plan", entity_id=new_plan.id, client_id=plan.client_id,
                  details={"changes": log, "note": note, "new_approval": new.id, "old_approval": old.id})
     return {"approval_id": new.id, "plan_id": new_plan.id, "plan_version": new_plan.version, "changes": log, "diff": d,
             "validation_passed": new.validation_summary.get("passed", True)}

@@ -79,9 +79,12 @@ def review_draft(db: Session, draft: dict, evidence: dict, *, kind: str, task_id
                   "independence": _reviewer()["independence"]}
         report["lifecycle"] = _lifecycle(st, True, True, "performed", "", _runs(db, "CHALLENGE", payload, task_id))
         research_events.emit("challenger_result", f"Challenger AI verdict: {parsed.verdict} with {len(parsed.objections)} objection(s)",
-                             verdict=parsed.verdict, objections=len(parsed.objections))
+                             verdict=parsed.verdict, objections=len(parsed.objections), provider=st.get("provider"),
+                             model=run.model, tokens_in=run.tokens_in, tokens_out=run.tokens_out, latency_ms=run.latency_ms,
+                             high=sum(1 for o in parsed.objections if o.severity == "HIGH"))
         return report, run.id
-    research_events.emit("challenger_failed", f"Independent review not performed: {rep['reason']}", level="warn", error_kind=kind_err)
+    research_events.emit("challenger_failed", f"Independent review not performed: {rep['reason']}", level="warn", error_kind=kind_err,
+                         provider=st.get("provider"), model=st.get("model"), reason=rep["reason"])
     return {**rep, "error_kind": kind_err, "lifecycle": _lifecycle(st, True, True, "failed", rep["reason"], _runs(db, "CHALLENGE", payload, task_id))}, None
 
 

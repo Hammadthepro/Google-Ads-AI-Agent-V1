@@ -4,7 +4,8 @@ import { useEventStream } from "../research/LiveFindings";
 import { buildModel, buildStream, type ResearchEvent } from "../research/model";
 import { ResearchScene } from "../research/ResearchScene";
 import type { StageState } from "../research/sceneLayout";
-import { buildStages, draftActivity, metric, providerName, waitLeft, type BuildStage } from "./buildModel";
+import { EvidenceButtons } from "../research/Explorers";
+import { aiRoleActivity, buildStages, draftActivity, metric, providerName, waitLeft, type BuildStage, type RoleActivity } from "./buildModel";
 
 const RESEARCH = new Set(["research", "keywords"]);
 const fmt$ = (v: any) => (typeof v === "number" ? `$${v.toLocaleString(undefined, { maximumFractionDigits: v < 100 ? 2 : 0 })}` : "—");
@@ -124,6 +125,27 @@ function DraftPanel({ events, live, stage }: { events: ResearchEvent[]; live: bo
   );
 }
 
+const ROLE_TONE: Record<RoleActivity["status"], string> = { idle: "bg-slate-300", working: "bg-brand-500", done: "bg-emerald-600", failed: "bg-rose-600", not_performed: "bg-amber-500" };
+const ROLE_STATUS: Record<RoleActivity["status"], string> = { idle: "Not used yet", working: "Working", done: "Done", failed: "Failed", not_performed: "Review not performed" };
+
+/** The two AIs of this run: provider, model, what each is doing, and the tokens and time the providers reported. */
+export function AIRoleStrip({ events, live }: { events: ResearchEvent[]; live: boolean }) {
+  const a = useMemo(() => aiRoleActivity(events), [events]);
+  const card = (title: string, r: RoleActivity) => (
+    <div aria-label={`${title} activity`} className="min-w-0 rounded-md border border-slate-200 px-3 py-2">
+      <div className="flex items-center gap-2 text-xs">
+        <span aria-hidden className={cx("h-2 w-2 shrink-0 rounded-full", ROLE_TONE[r.status], r.status === "working" && live && "motion-safe:animate-pulse")} />
+        <span className="font-semibold text-slate-900">{title}</span><span className="text-slate-500">{ROLE_STATUS[r.status]}</span>
+      </div>
+      <div className="mt-0.5 truncate text-2xs text-slate-500">{r.provider ? <>{providerName(r.provider)}{r.model && <span className="ml-1 font-mono">{r.model}</span>}</> : "provider not used in this run"}</div>
+      <div className="mt-1 break-words text-xs text-slate-700">{r.text}</div>
+      {(r.requests > 0 || r.tokensIn > 0) && <div className="tabular mt-1 text-2xs text-slate-400">
+        {r.requests} request{r.requests === 1 ? "" : "s"}{r.failed ? ` · ${r.failed} failed` : ""} · {(r.tokensIn + r.tokensOut).toLocaleString()} tokens
+        {r.latencyMs ? ` · ${(r.latencyMs / 1000).toFixed(1)} s` : ""}</div>}
+    </div>);
+  return <div className="grid gap-2 sm:grid-cols-2">{card("Main AI", a.main)}{card("Challenger AI", a.challenger)}</div>;
+}
+
 function StagePanel({ k, events, stage, live, stages, model, subject }: { k: string; events: ResearchEvent[]; stage?: BuildStage; live: boolean; stages: StageState;
   model: ReturnType<typeof buildModel>; subject?: { website?: string; business?: string } }) {
   const pending = !stage || stage.status === "waiting";
@@ -215,7 +237,8 @@ export function BuildWorkspace({ task, active, subject }: { task: any; active: b
     <section aria-label="Build workspace" className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-3">
         <h2 className="text-[13px] font-semibold text-slate-900">Build workspace</h2>
-        <span role="status" aria-live="polite" className={cx("flex items-center gap-1.5 text-xs", conn.c)}>
+        <span className="flex gap-1.5"><EvidenceButtons sources={model.sources} competitors={model.competitors} /></span>
+        <span role="status" aria-live="polite" className={cx("ml-auto flex items-center gap-1.5 text-xs", conn.c)}>
           {live && !error && <span className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden />}{conn.t}</span>
       </header>
       <nav aria-label="Workflow stages" className="pane-scroll overflow-x-auto border-b border-slate-100 px-3 py-2">
@@ -230,6 +253,7 @@ export function BuildWorkspace({ task, active, subject }: { task: any; active: b
         </ol>
       </nav>
       <div className="p-5">
+        <div className="mb-4"><AIRoleStrip events={events} live={live} /></div>
         {(() => { const s = stages.find((x) => x.key === view); return s && (s.status === "failed" || s.status === "stopped") && s.summary ? (
           <p className={cx("mb-4 break-words rounded-md px-3 py-2 text-[13px]", s.status === "failed" ? "bg-rose-50 text-rose-900" : "bg-amber-50 text-amber-950")}>{s.summary}</p>) : null; })()}
         <StagePanel k={view} events={events} stage={stages.find((s) => s.key === view)} live={live} stages={sceneStages} model={model} subject={subject} />

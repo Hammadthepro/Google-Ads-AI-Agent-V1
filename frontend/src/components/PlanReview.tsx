@@ -60,9 +60,9 @@ export function CompetitionPanel({ comp }: { comp: any }) {
   );
 }
 
-export function DiffView({ diff }: { diff: any }) {
+export function DiffView({ diff, empty = "No difference from the AI-consolidated original." }: { diff: any; empty?: string }) {
   if (!diff) return null;
-  if (!diff.changed) return <EmptyState message="No difference from the AI-consolidated original." />;
+  if (!diff.changed) return <EmptyState message={empty} />;
   return (
     <div className="space-y-3 text-sm">
       {diff.campaign.map((c: any) => <div key={c.field}><b>{c.field.replace(/_/g, " ")}</b>: <del className="text-rose-700">{String(c.from)}</del> → <ins className="text-emerald-700 no-underline">{String(c.to)}</ins></div>)}
@@ -157,6 +157,37 @@ export function PlanEditor({ approvalId, draft, scope }: { approvalId: string; d
   );
 }
 
+/** Every version of this plan (immutable), a comparison of the current version with any earlier one, and restore: an earlier version
+ *  becomes a NEW version that is re-validated and needs a fresh approval. */
+function Versions({ planId, approvalId, versions, canRestore }: { planId: string; approvalId: string; versions: any[]; canRestore: boolean }) {
+  const nav = useNavigate();
+  const [against, setAgainst] = useState("");
+  const cmp = useQuery({ queryKey: ["plan-diff", planId, against], enabled: !!against, queryFn: () => api.get(`/plans/${planId}/diff?against=${against}`) });
+  const restore = useAction((id: string) => api.post(`/approvals/${approvalId}/restore-version`, { plan_id: id }), [["plan-versions", planId], ["approvals"]]);
+  const label = (v: any) => v.change_summary || (v.version === 1 ? "AI-consolidated original" : "");
+  return (
+    <Card title="Versions">
+      <ul aria-label="Plan versions" className="space-y-1.5 text-sm">{versions.map((v: any) => (
+        <li key={v.id} className="flex flex-wrap items-center gap-2">
+          <Badge tone={v.is_current ? "blue" : "slate"}>v{v.version}{v.is_current ? " · current" : ""}</Badge><StatusBadge value={v.status} />
+          <span className="min-w-0 flex-1 break-words">{label(v)}</span><span className="text-xs text-slate-400">{dt(v.created_at)}</span>
+          {!v.is_current && <Button size="sm" onClick={() => setAgainst(v.id)} disabled={against === v.id}>Compare</Button>}
+          {!v.is_current && canRestore && (
+            <Button size="sm" disabled={restore.isPending} onClick={() => {
+              if (window.confirm(`Restore version ${v.version} as a new version? It is re-validated and needs a new approval; the current approval is superseded.`))
+                restore.mutate(v.id, { onSuccess: (r: any) => nav(`/approvals/${r.approval_id}`) });
+            }}>Restore</Button>)}
+        </li>))}</ul>
+      {against && (
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          <div className="mb-2 text-xs text-slate-500">Changes from v{versions.find((v) => v.id === against)?.version} to the current version</div>
+          {cmp.isLoading ? <Spinner /> : <DiffView diff={cmp.data} empty="These two versions are identical." />}
+        </div>)}
+      <ErrorBox error={restore.error || cmp.error} />
+    </Card>
+  );
+}
+
 export function PlanReview({ planId, approvalId, canEdit, editable }: { planId: string; approvalId: string; canEdit: boolean; editable: boolean }) {
   const plan = useQuery({ queryKey: ["plan", planId], queryFn: () => api.get(`/plans/${planId}`) });
   const diff = useQuery({ queryKey: ["plan-diff", planId], queryFn: () => api.get(`/plans/${planId}/diff`) });
@@ -167,11 +198,7 @@ export function PlanReview({ planId, approvalId, canEdit, editable }: { planId: 
     <div className="space-y-5">
       <Card title="AI competition"><CompetitionPanel comp={p.competition} /></Card>
       <Card title={<span>Original AI plan → current version {p.version}</span>}><DiffView diff={diff.data} /></Card>
-      {(versions.data?.length ?? 0) > 1 && (
-        <Card title="Versions">
-          <ul className="space-y-1 text-sm">{versions.data.map((v: any) => <li key={v.id} className="flex flex-wrap gap-2"><Badge tone={v.is_current ? "blue" : "slate"}>v{v.version}</Badge><StatusBadge value={v.status} /><span>{v.change_summary || "AI-consolidated original"}</span><span className="text-slate-400">{dt(v.created_at)}</span></li>)}</ul>
-        </Card>
-      )}
+      {(versions.data?.length ?? 0) > 1 && <Versions planId={planId} approvalId={approvalId} versions={versions.data} canRestore={canEdit && editable} />}
       {canEdit && editable ? <Card title="Edit this plan"><PlanEditor approvalId={approvalId} draft={p.draft} scope={p.scope} /></Card>
         : <p className="text-xs text-slate-500">Only open approvals can be edited. <Link className="text-brand-700" to="/approvals">Back to approvals</Link></p>}
     </div>
