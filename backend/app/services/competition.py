@@ -314,11 +314,11 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
     if report.get("performed"):
         challenges["challenger_on_final"] = {"report": report, "run_id": review_run}
         merged = {**merge_challenges(challenges, final), **{k: report.get(k) for k in ("performed", "kind", "reviewer", "independence",
-                                                                                         "confidence", "limitations", "run_id")}}
+                                                                                         "confidence", "limitations", "run_id", "lifecycle")}}
     else:
         merged = report
     comp["challenges"] = challenges
-    comp["independent_review"] = {k: merged.get(k) for k in ("performed", "reason", "independence", "reviewer")}
+    comp["independent_review"] = {k: merged.get(k) for k in ("performed", "reason", "independence", "reviewer", "lifecycle")}
     return {"draft": final, "competition": comp, "challenger": merged,
             "draft_run_id": (runs.get("internal") or runs.get("claude")).id,
             "challenger_run_id": review_run}

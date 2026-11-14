@@ -121,7 +121,20 @@ def get_task(task_id: str, user: User = Depends(require("clients.view")), db: Se
     if not t:
         raise NotFound("Task not found")
     auth_service.require_client_access(db, user, t.client_id)
-    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t)}
+    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "account_binding": tasks_service.account_binding(db, t)}
+
+
+class BindAccountIn(BaseModel):
+    account_id: str | None = None  # needed only when several accounts are linked to the client
+
+
+@router.post("/tasks/{task_id}/bind-account", tags=["tasks"])
+def bind_account(task_id: str, body: BindAccountIn | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """New approval version bound to the client's linked Google Ads account (from the stored plan; nothing is sent to Google Ads)."""
+    t = tasks_service.bind_account(db, user, task_id, (body.account_id if body else None))
+    db.expire_all()
+    t = db.get(Task, task_id)
+    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "account_binding": tasks_service.account_binding(db, t)}
 
 
 @router.post("/tasks/{task_id}/retry-draft", tags=["tasks"])

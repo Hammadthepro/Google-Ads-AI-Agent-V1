@@ -26,7 +26,7 @@ from app.core.errors import NotFound, ValidationFailed
 from app.core.util import fingerprint
 from app.db.session import session_scope
 from app.models import AIRoleConfig
-from app.services import activity, integrations_service
+from app.services import activity, integrations_service, token_caps
 
 ROLES = {"main": "Main AI", "challenger": "Challenger AI"}
 # What the Challenger reviews. Trivial or deterministic work (classification, labelling, formatting, calculations) is never sent to it.
@@ -146,7 +146,8 @@ def resolve(role: str) -> dict:
             if ref_disabled:  # a role that borrows the Groq integration's key is off when that integration is switched off
                 key = ""
             out.update(provider=row.provider, model=row.model, enabled=bool(row.enabled), api_key=key, model_meta=row.model_meta or {},
-                       pricing=row.pricing or None, review_policy=review_policy(row), ref_disabled=ref_disabled)
+                       pricing=row.pricing or None, review_policy=review_policy(row), ref_disabled=ref_disabled,
+                       caps=dict(row.caps or {}))
             out["configured"] = bool(key and row.model)
             out["reason"] = ("" if out["configured"] else
                              f"{ROLES[role]} uses the {ref[0].title()} integration's key, and that integration is disabled" if ref_disabled else
@@ -223,6 +224,11 @@ def serialize(db: Session, row: AIRoleConfig | None, role: str) -> dict:
                       "steps": (row.last_test_steps if row else []) or [], "error": row.last_error if row else "",
                       "error_kind": row.last_error_kind if row else ""},
         "pricing": (row.pricing if row else {}) or {},
+        "caps": (row.caps if row else {}) or {}, "cap_fields": token_caps.FIELDS,
+        # what the provider itself enforces, reported next to the app's own caps (never confused with them)
+        "provider_limits": {"context_window": ((row.model_meta if row else {}) or {}).get("context_window"),
+                            "max_output": ((row.model_meta if row else {}) or {}).get("max_output"),
+                            "tokens_per_minute": "reported by the provider in its response headers when it sends them; not stored"},
         **({"review_policy": review_policy(row), "reviews": REVIEWS} if role == "challenger" else {}),
         "updated_at": row.updated_at.isoformat() if row else None,
     }
@@ -298,6 +304,9 @@ def save(db: Session, role: str, body: dict, user) -> AIRoleConfig:
     if "pricing" in body:
         row.pricing = _validate_pricing(body.get("pricing"))
         changed.append("pricing")
+    if "caps" in body:
+        row.caps = token_caps.validate(body.get("caps"), row.model_meta or {})
+        changed.append("caps")
     if role == "challenger" and isinstance(body.get("review_policy"), dict):
         row.review_policy = {k: bool(v) for k, v in body["review_policy"].items() if k in REVIEWS}
         changed.append("review_policy")

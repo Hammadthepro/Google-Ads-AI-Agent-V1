@@ -14,7 +14,7 @@ export const KIND_LABEL: Record<string, string> = {
   tpm_exceeded: "Request larger than the per-minute token limit", rate_limited: "Per-minute token budget used up",
   context_length: "Longer than the model's context window", output_truncated: "Answer cut off at the output-token limit",
   malformed_json: "Malformed JSON", schema_invalid: "Did not match the campaign schema", auth_failure: "API key rejected",
-  outage: "Provider unavailable", timeout: "Provider timed out", invalid_input: "Request rejected by the provider",
+  app_cap_exceeded: "Over an application token cap (not sent)", outage: "Provider unavailable", timeout: "Provider timed out", invalid_input: "Request rejected by the provider",
 };
 
 const TONE: Record<string, string> = { failed: "red", succeeded: "green", running: "blue", queued: "amber" };

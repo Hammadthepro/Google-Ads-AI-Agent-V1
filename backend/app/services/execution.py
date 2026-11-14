@@ -243,11 +243,24 @@ def execute(db: Session, actor: User, approval_id: str) -> Operation:
     # named in the payload, linked to this approval and the same account: nothing is ever substituted.
     if payload.get("operations"):
         if not payload.get("customer_id") or account is None:
-            raise SafetyBlocked("This draft has no Google Ads account yet. Link the client's account, then prepare the task again for an approval bound to it.",
-                                details={"reasons": ["no target Google Ads account"]})
+
+            biz = db.get(Business, a.business_id) if a.business_id else None
+            binding = accounts_service.deployment_binding(db, biz) if biz else None
+            if binding and binding["account"] is not None:
+                raise SafetyBlocked(f"This approval was prepared before {accounts_service.fmt_cid(binding['account'].customer_id)} was linked to the "
+                                    "client, so it is not bound to any account. Use “Bind to linked account” on the task: it prepares a new version "
+                                    "bound to that account, which needs approval again.",
+                                    details={"reasons": ["approval not bound to an account"], "action": "bind_account", "task_id": a.task_id,
+                                             "customer_id": binding["account"].customer_id})
+            raise SafetyBlocked(binding["message"] if binding else "No Google Ads account is bound to this approval.",
+                                details={"reasons": ["no target Google Ads account"], "action": "link_account",
+                                         "binding_status": binding["status"] if binding else "none"})
         if str(payload["customer_id"]) != str(account.customer_id):
             raise SafetyBlocked("The payload's customer does not match the approval's account",
                                 details={"reasons": ["target customer mismatch"]})
+        if account.client_id != a.client_id or account.is_manager:  # ownership is re-checked at execution, not trusted from preparation
+            raise SafetyBlocked("The bound Google Ads account is no longer linked to this client. Prepare the change again for the client's account.",
+                                details={"reasons": ["account no longer linked to the client"]})
     adapter = registry.get("google_ads")
     try:
         safety.check(db, policy="APPROVAL", client=client, account=account, approval=a, actor=actor,

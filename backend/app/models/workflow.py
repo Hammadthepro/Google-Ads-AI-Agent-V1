@@ -99,6 +99,7 @@ class FixTrackerItem(TimestampMixin, Base):
 class AIRun(TimestampMixin, Base):
     __tablename__ = "ai_runs"
     task_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    client_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     purpose: Mapped[str] = mapped_column(String(40))
     provider: Mapped[str] = mapped_column(String(20))
     model: Mapped[str] = mapped_column(String(100), default="")

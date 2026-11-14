@@ -104,4 +104,31 @@ describe("AI roles", () => {
     expect(screen.queryByText("AI usage")).toBeNull();
     expect(screen.queryByRole("button", { name: "Test Connection" })).toBeNull();
   });
+
+  it("saves token caps as numbers, shows provider limits separately, and breaks usage down by client", async () => {
+    const puts: any[] = [];
+    const main = role("main", { caps: {}, cap_fields: { max_input_tokens: "Max input tokens per request", max_output_tokens: "Max output tokens per request",
+      max_total_tokens: "Max total tokens per request", task_budget_tokens: "Token budget per task", client_daily_tokens: "Tokens per client per day",
+      client_monthly_tokens: "Tokens per client per month" }, provider_limits: { context_window: 131072, max_output: 32768 } });
+    globalThis.fetch = vi.fn(async (u: any, init?: any) => {
+      const url = String(u);
+      if (url.includes("/ai/usage")) return json({ models: [{ role: "main", provider: "groq", model: "m", requests: 3, failed: 0, input_tokens: 900, output_tokens: 300, total_tokens: 1200, errors: {} }],
+        tasks: [], totals: {}, clients: [{ client: "ABC Home & Commercial Services", requests: 3, failed: 0, input_tokens: 900, output_tokens: 300, by_role: { main: 1000, challenger: 200 } }],
+        daily: [], monthly: [], note: "Tokens as reported by each provider." });
+      if (init?.method === "PUT") { puts.push(JSON.parse(init.body)); return json(main); }
+      return json(overview(main, role("challenger")));
+    }) as any;
+    mount();
+    const region = await screen.findByRole("region", { name: "Main AI settings" });
+    const limits = within(region).getByLabelText("Provider limits");
+    expect(within(limits).getByText("131,072 tokens")).toBeInTheDocument();
+    expect(within(limits).getByText("32,768 tokens")).toBeInTheDocument();
+    fireEvent.change(within(region).getByLabelText("Tokens per client per day"), { target: { value: "250,000" } });
+    fireEvent.click(within(region).getByRole("button", { name: "Save configuration" }));
+    await waitFor(() => expect(puts.length).toBe(1));
+    expect(puts[0].caps).toEqual({ client_daily_tokens: "250000" });
+    const byClient = await screen.findByRole("table", { name: "Usage clients" });
+    expect(within(byClient).getByText("ABC Home & Commercial Services")).toBeInTheDocument();
+    expect(within(byClient).getByText("1,200")).toBeInTheDocument();
+  });
 });

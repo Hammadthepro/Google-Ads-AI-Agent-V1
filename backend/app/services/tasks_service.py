@@ -840,6 +840,79 @@ def run_retry_draft(task_id: str) -> str:
         db.close()
 
 
+PLAN_TYPES = ("BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_AD", "EDIT_AD")
+
+
+def account_binding(db: Session, t: Task) -> dict:
+    """What the task deploys to now, what its approval is bound to, and whether a rebind is needed (for the task page)."""
+    from app.models import Approval
+    biz = db.get(Business, t.business_id) if t.business_id else None
+    if biz is None:
+        return {"status": "none", "message": "No business on this task.", "rebind_available": False}
+    b = accounts_service.deployment_binding(db, biz)
+    ap = db.get(Approval, t.approval_id) if t.approval_id else None
+    bound = db.get(GoogleAdsAccount, ap.google_ads_account_id) if ap and ap.google_ads_account_id else None
+    acct = b["account"]
+    needs = bool(ap and acct is not None and (bound is None or bound.id != acct.id) and t.plan_id and t.task_type in PLAN_TYPES
+                 and ap.status in ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED", "APPROVED", "INVALIDATED"))
+    return {"status": b["status"], "message": b["message"], "customer_id": acct.customer_id if acct else None,
+            "customer_display": accounts_service.fmt_cid(acct.customer_id) if acct else None, "candidates": b["candidates"],
+            "stale_selection": b["stale_selection"], "approval_customer_id": bound.customer_id if bound else None,
+            "approval_status": ap.status if ap else None, "rebind_available": needs,
+            # several accounts are linked and none is chosen: the user picks one (bind_account with account_id); nothing is guessed
+            "choice_needed": bool(b["status"] == "ambiguous" and ap and t.plan_id and t.task_type in PLAN_TYPES)}
+
+
+def bind_account(db: Session, actor: User, task_id: str, account_id: str | None = None) -> Task:
+    """Prepare a new approval version bound to the client's linked account, from the stored plan and research (no new AI draft).
+    The previous approval is invalidated; the new one must be validated and approved again. Nothing is sent to Google Ads."""
+    from app.models import Approval
+    auth_service.require(actor, "tasks.run")
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, actor, t.client_id)
+    if t.status in ACTIVE_STATUSES:
+        raise Conflict("This task is running; wait for it to finish.")
+    if account_id:  # an explicit choice, only among the accounts linked to this client
+        biz = db.get(Business, t.business_id) if t.business_id else None
+        cands = accounts_service.deployment_binding(db, biz)["candidates"] if biz else []
+        if account_id not in {c["id"] for c in cands}:
+            raise ValidationFailed("That Google Ads account is not linked to this client. Link it on the Google Ads accounts page first.")
+        biz.google_ads_account_id = account_id
+        activity.log(db, "business.deployment_account", actor=actor, entity="business", entity_id=biz.id, client_id=t.client_id,
+                     details={"google_ads_account_id": account_id})
+        db.flush()
+    st = account_binding(db, t)
+    if not st["rebind_available"]:
+        raise ValidationFailed(st["message"] if st["customer_id"] is None else
+                               "The approval is already bound to the client's linked account, or this task has no plan to bind.")
+    old = db.get(Approval, t.approval_id)
+    r = Runner(db, t)
+    info = research_for_retry(db, t)
+    r.ctx.update(info["ctx"])
+    r.ctx["plan"] = db.get(CampaignPlan, t.plan_id)
+    t.status, t.error = "RUNNING", ""
+    db.commit()
+    label = {"validate": f"Validation (bound to {st['customer_display']})", "approval": f"Approval request (bound to {st['customer_display']})"}
+    r._execute(["validate", "approval"], label={**label, "start": f"Binding the plan to {st['customer_display']}"})
+    t = r.task
+    new = db.get(Approval, t.approval_id) if t.approval_id else None
+    if new is not None and old is not None and new.id != old.id:
+        new.payload_version, new.supersedes_id = old.payload_version + 1, old.id
+        if old.status != "INVALIDATED":
+            before = old.status
+            old.status = "INVALIDATED"
+            from app.services import approvals
+            approvals._event(db, old, "INVALIDATED", actor, f"Superseded by a version bound to {st['customer_display']}",
+                             before={"status": before}, after={"superseded_by": new.id})
+        old.superseded_by_id = new.id
+    activity.log(db, "task.bind_account", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id,
+                 details={"customer_id": st["customer_id"], "old_approval": old.id if old else None, "new_approval": new.id if new else None})
+    db.commit()
+    return t
+
+
 def decide_budget(db: Session, actor: User, task_id: str, body: dict) -> Task:
     """Team confirmation of the budget recommendation. Resumes the task from the start with the decision applied."""
     auth_service.require(actor, "tasks.run")

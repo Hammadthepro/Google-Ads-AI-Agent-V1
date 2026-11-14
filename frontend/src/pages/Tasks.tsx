@@ -7,6 +7,7 @@ import { clientOptions, useAction, useClients } from "../lib/hooks";
 import { Badge, Button, Card, DataSourceBadge, dt, ErrorBox, Field, FieldGroup, Input, Notice, PageHeader, Select, Spinner, StatusBadge, Table, Textarea } from "../components/ui";
 import { BuildWorkspace } from "../components/campaignBuild/BuildWorkspace";
 import { DraftFailure } from "../components/campaignBuild/DraftRetry";
+import { AccountBinding } from "../components/campaignBuild/AccountBinding";
 
 const TASKS: { value: string; label: string; needs: "business" | "campaign" | "ad_group" | "ad" }[] = [
   { value: "BUILD_CAMPAIGN", label: "Build a new campaign", needs: "business" },
@@ -243,6 +244,7 @@ export function TaskDetail() {
       {(t.draft_retry?.available || t.status === "RETRYING_DRAFT" || (t.status === "RUNNING" && t.draft_attempts?.at(-1)?.kind === "retry")
         || (t.status === "FAILED" && t.draft_attempts?.at(-1)?.status === "failed")) ? <DraftFailure task={t} />
         : t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
+      {TERMINAL.includes(t.status) && <AccountBinding task={t} />}
       {t.status === "AWAITING_BUDGET_DECISION" && <BudgetDecision task={t} />}
       {t.status === "AWAITING_APPROVAL" && <Notice tone="amber">The workflow stopped at the approval stage. Nothing has been changed in Google Ads.</Notice>}
       {WORKSPACE_TYPES.includes(t.task_type) && <BuildWorkspace task={t} active={!TERMINAL.includes(t.status)} />}
