@@ -200,7 +200,8 @@ def post_message(db: Session, user: User, conv_id: str, text: str, *, choice: di
         if len(hits) == 1:
             conv.client_id, conv.title = hits[0].id, hits[0].name
         else:
-            pool = hits or allc[:8]
+            # most recently worked-on first: an alphabetical first eight could hide the client the user means
+            pool = hits or sorted(allc, key=lambda c: c.updated_at or c.created_at, reverse=True)[:8]
             if not pool:
                 return _answer_text(db, conv, "There are no clients you can access yet. Create one first.", um)
             return _ask(db, conv, user, original_text, reading["intent"], "client", "Which client is this about?",

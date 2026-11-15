@@ -152,7 +152,7 @@ def test_campaign_draft_is_prepared_without_account_or_budget_and_cannot_be_depl
     approver = Api(SUPER)  # the requester cannot approve their own request
     assert approver.post(f"/approvals/{appr['id']}/approve", {"payload_hash": appr["payload_hash"]}).status_code == 200
     r = approver.post(f"/approvals/{appr['id']}/execute")
-    assert r.status_code == 423 and "no Google Ads account" in r.text
+    assert r.status_code == 423 and "No Google Ads account is linked to" in r.text and "Google Ads accounts page" in r.text
     assert api.get(f"/clients/{cid}/structure").json()["campaigns"] == []
 
 

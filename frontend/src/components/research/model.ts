@@ -3,10 +3,13 @@
 export type ResearchEvent = { seq: number; kind: string; stage: string; level: "info" | "warn" | "error"; title: string; data: Record<string, any>; at: string };
 
 export type PageNode = { url: string; path: string; state: "fetching" | "extracted" | "failed" | "blocked"; title?: string; words?: number; h1?: string; headings?: string[]; status?: number; stage: string; seq: number };
-export type CompetitorNode = { name: string; url?: string; basis: string; provider?: string; lat?: number; lon?: number; distance_km?: number; seq: number };
+export type CompetitorOrigin = "client" | "discovered";
+export type CompetitorNode = { name: string; url?: string; basis: string; provider?: string; lat?: number; lon?: number; distance_km?: number; seq: number;
+  /** client = supplied in the client profile; discovered = found by research. verified = its website was actually read. */
+  origin: CompetitorOrigin; providers: string[]; verified: boolean; mentions: number };
 export type KeywordNode = { seed: string; provider: string; count: number; examples: string[]; seq: number };
 export type LocationNode = { label: string; lat: number; lon: number; role: string; seq: number };
-export type SourceItem = { key: string; label: string; url?: string; provider: string; kind: string; seq: number; at: string };
+export type SourceItem = { key: string; label: string; url?: string; provider: string; kind: string; seq: number; at: string; cached?: boolean; detail?: string };
 
 export type ResearchModel = {
   pages: PageNode[]; competitors: CompetitorNode[]; keywords: KeywordNode[]; locations: LocationNode[]; sources: SourceItem[];
@@ -60,10 +63,23 @@ export function buildModel(events: ResearchEvent[]): ResearchModel {
         pages.set(d.url, { ...p, state: e.kind === "crawl_blocked" ? "blocked" : "failed", status: typeof d.status === "number" ? d.status : undefined }); break;
       }
       case "competitor_identified": {
-        const key = (d.url ? hostOf(d.url) : "") || e.title.toLowerCase();
-        if (!competitors.has(key)) competitors.set(key, { name: e.title, url: d.url, basis: d.basis ?? "", provider: d.provider, lat: d.lat, lon: d.lon, distance_km: d.distance_km, seq: e.seq });
+        const key = (d.url ? hostOf(d.url) : "") || e.title.toLowerCase().trim();
+        const origin: CompetitorOrigin = /supplied by the client/i.test(d.basis ?? "") ? "client" : "discovered";
+        const prov = d.provider || (origin === "client" ? "client profile" : "");
+        const cur = competitors.get(key);
+        if (!cur) competitors.set(key, { name: e.title, url: d.url, basis: d.basis ?? "", provider: d.provider, lat: d.lat, lon: d.lon, distance_km: d.distance_km, seq: e.seq,
+          origin, providers: prov ? [prov] : [], verified: false, mentions: 1 });
+        else {  // the same business found again (another provider or query): one entry, every source kept
+          cur.mentions += 1;
+          if (prov && !cur.providers.includes(prov)) cur.providers.push(prov);
+          if (origin === "client") cur.origin = "client";
+          cur.url ??= d.url; cur.lat ??= d.lat; cur.lon ??= d.lon; cur.distance_km ??= d.distance_km;
+        }
         break;
       }
+      case "serp_query": addSource({ key: `serp:${d.engine ?? ""}:${d.query ?? e.title}:${d.location ?? ""}`, label: d.query ? `“${d.query}”` : e.title, provider: "serpapi",
+        kind: "Google search", seq: e.seq, at: e.at, cached: !!d.served_from_cache, detail: [d.engine, d.location].filter(Boolean).join(" · ") }); break;
+      case "sponsored_ad": if (d.url) addSource({ key: `ad:${d.url}`, label: e.title, url: d.url, provider: "serpapi", kind: "Public ad", seq: e.seq, at: e.at, detail: d.query ? `seen for “${d.query}”` : undefined }); break;
       case "keyword_discovery": keywords.push({ seed: d.seed ?? e.title, provider: d.provider ?? "", count: d.count ?? 0, examples: d.examples ?? [], seq: e.seq }); break;
       case "location_identified": if (typeof d.lat === "number") locations.push({ label: e.title, lat: d.lat, lon: d.lon, role: d.role ?? "", seq: e.seq }); break;
       case "web_result": addSource({ key: d.url, label: e.title, url: d.url, provider: "tavily", kind: "Web result", seq: e.seq, at: e.at }); break;
@@ -72,7 +88,8 @@ export function buildModel(events: ResearchEvent[]): ResearchModel {
     }
   }
   m.pages = [...pages.values()];
-  m.competitors = [...competitors.values()];
+  const readHosts = new Set(m.pages.filter((p) => p.state === "extracted" && p.stage === "competitors").map((p) => hostOf(p.url)));
+  m.competitors = [...competitors.values()].map((c) => ({ ...c, verified: !!c.url && readHosts.has(hostOf(c.url)) }));
   m.sources = [...sources.values()];
   return m;
 }

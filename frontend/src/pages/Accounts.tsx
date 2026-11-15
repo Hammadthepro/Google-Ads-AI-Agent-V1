@@ -16,6 +16,8 @@ export default function Accounts() {
   const [allowFor, setAllowFor] = useState<any>(null);
   const [reason, setReason] = useState("");
   const [clientId, setClientId] = useState("");
+  const [relink, setRelink] = useState<{ a: any; to: string } | null>(null);
+  const changeLink = (a: any, to: string) => (a.client_id && a.client_id !== to ? setRelink({ a, to }) : link.mutate({ id: a.id, client_id: to }));
   const structure = useQuery({ queryKey: ["structure", clientId], enabled: !!clientId, queryFn: () => api.get(`/clients/${clientId}/structure`) });
   const linkable = (accounts.data ?? []).filter((a: any) => !a.is_manager);  // manager accounts hold no campaigns and are listed separately above
   const nameOf = (id: string) => clients.data?.find((c: any) => c.id === id)?.name;
@@ -32,9 +34,14 @@ export default function Accounts() {
             { key: "customer_id", label: "Customer ID", render: (a) => <span className="font-mono text-xs">{a.customer_id_display ?? a.customer_id}</span> },
             { key: "status", label: "Status", render: (a) => <StatusBadge value={a.status} /> },
             { key: "descriptive_name", label: "Name", render: (a) => a.descriptive_name },
-            { key: "client_id", label: "Client", render: (a) => can("clients.edit") ? (
-              <Select value={a.client_id ?? ""} onChange={(e) => link.mutate({ id: a.id, client_id: e.target.value })}
-                options={[{ value: "", label: "— not linked —" }, ...clientOptions(clients.data)]} />) : nameOf(a.client_id) },
+            { key: "client_id", label: "Linked client", render: (a) => (
+              <div className="flex min-w-[14rem] flex-col gap-1">
+                {a.client_id ? <Badge tone="green" dot>{nameOf(a.client_id) ?? "linked"}</Badge> : <Badge>not linked</Badge>}
+                {can("clients.edit") && (
+                  <Select aria-label={`Change the client linked to ${a.customer_id_display ?? a.customer_id}`} value={a.client_id ?? ""}
+                    onChange={(e) => changeLink(a, e.target.value)}
+                    options={[{ value: "", label: a.client_id ? "Unlink…" : "Link to a client…" }, ...clientOptions(clients.data)]} />)}
+              </div>) },
             { key: "auto_tagging_enabled", label: "Auto-tagging" },
             { key: "writes_allowed", label: "Write allowlist", render: (a) => (
               <div className="flex items-center gap-2">{a.writes_allowed ? <Badge tone="amber">allowed</Badge> : <Badge>not allowed</Badge>}
@@ -47,6 +54,11 @@ export default function Accounts() {
           ]} />
         )}
       </Card>
+      <ConfirmDialog open={!!relink} title={relink?.to ? `Move ${relink?.a.customer_id_display ?? relink?.a.customer_id} to ${nameOf(relink.to) ?? "another client"}?` : `Unlink ${relink?.a.customer_id_display ?? relink?.a.customer_id ?? ""}?`}
+        tone="danger" confirmLabel={relink?.to ? "Move account" : "Unlink"}
+        body={<>This account is linked to <b>{nameOf(relink?.a.client_id) ?? "a client"}</b>. Open approvals bound to it for that client are invalidated
+          and must be prepared again. Nothing changes in Google Ads.</>}
+        onCancel={() => setRelink(null)} onConfirm={() => relink && link.mutate({ id: relink.a.id, client_id: relink.to }, { onSuccess: () => setRelink(null) })} />
       <ConfirmDialog open={!!allowFor} title={`Allow writes to ${allowFor?.descriptive_name || allowFor?.customer_id_display || ""}?`} tone="danger" confirmLabel="Allow writes"
         body={<>This adds the account to the write allowlist. It changes nothing in Google Ads: every change still needs its own approval, the deployment
           permit, execution mode and the Super Admin key. The reason is recorded in the activity log.</>}

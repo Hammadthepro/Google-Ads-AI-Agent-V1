@@ -26,7 +26,7 @@ from app.models import AIRun
 from app.services import ai_service, research_events
 
 BUSINESS_KEYS = ("business_name", "website", "city", "phone", "radius_miles", "verified_claims", "brand_rules", "excluded_services",
-                 "playbook_rules")
+                 "playbook_rules", "revision")
 TOP_KEYWORDS = (8, 4, 0)   # strongest keywords per service shown to the planning stage, reduced only if the plan request is too large
 
 

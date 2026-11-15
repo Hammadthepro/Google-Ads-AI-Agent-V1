@@ -423,6 +423,8 @@ class Runner:
         from app.services import serp_research
         serp_ev = serp_research.evidence_summary(((self.ctx.get("keywords") or {}).get("discovery") or {}).get("serp"))
         ev = {"search_evidence": serp_ev} if serp_ev else {}  # absent = no Google search was performed; the prompt says so
+        if self.ctx.get("revision"):
+            ev["revision"] = self.ctx["revision"]
         if tt == "BUILD_CAMPAIGN":
             plan = planner.draft(self.db, self.task, self.business, scope="CAMPAIGN", services=self._services_for_task(),
                                  keyword_table=kw, feasibility=self.ctx.get("feasibility"), measurement_ctx=mctx, extra=ev or None)
@@ -678,7 +680,54 @@ class Runner:
             self.task.status, self.task.error = "FAILED", exc.message
             self.db.commit()
             return
-        self._execute(keys, label={"draft": f"AI draft (retry, attempt {attempt})", "start": f"Draft retry (attempt {attempt}) started"})
+        rev = next((a for a in (self.task.fields or {}).get("draft_attempts") or [] if a.get("attempt") == attempt and a.get("kind") == "revision"), None)
+        if rev is None:
+            self._execute(keys, label={"draft": f"AI draft (retry, attempt {attempt})", "start": f"Draft retry (attempt {attempt}) started"})
+            return
+        self._revise(attempt, rev, keys)
+
+    def _revise(self, attempt: int, rev: dict, keys: list[str]) -> None:
+        """A new version of an existing draft: same stored research, the team's instructions, a new immutable plan version and a new
+        approval that supersedes the previous one. If the new draft fails, the previous version and approval stay exactly as they were."""
+        from app.models import Approval
+        from app.services import approvals
+        prev_plan = self.db.get(CampaignPlan, rev["prev_plan_id"])
+        prev_appr = self.db.get(Approval, rev["prev_approval_id"]) if rev.get("prev_approval_id") else None
+        prev_status = rev.get("prev_task_status") or "AWAITING_APPROVAL"
+        self.ctx["revision"] = {"instructions": rev.get("instructions") or "Regenerate: write a fresh alternative draft from the same research.",
+                                "previous": {"version": prev_plan.version, **plan_structure(prev_plan.draft, prev_plan.scope)}}
+        what = "Revision" if rev.get("instructions") else "Regenerated draft"
+        self._execute(keys, label={"draft": f"AI draft ({what.lower()}, v{prev_plan.version + 1})", "start": f"{what} started from stored research"})
+        t = self.task
+        new_plan = self.db.get(CampaignPlan, t.plan_id) if t.plan_id and t.plan_id != prev_plan.id else None
+        if new_plan is None or t.status == "FAILED":  # keep the previous version usable
+            err = t.error
+            t.plan_id, t.approval_id, t.status = prev_plan.id, prev_appr.id if prev_appr else t.approval_id, prev_status
+            t.error = f"The revision failed and nothing changed; version {prev_plan.version} and its approval are still current. {err}"[:1200]
+            self._record_attempt(attempt, status="failed", error=err[:1200], finished_at=clock.now().isoformat())
+            self.db.commit()
+            return
+        top = max([v.version for v in self.db.scalars(select(CampaignPlan).where(CampaignPlan.task_id == t.id, CampaignPlan.scope == new_plan.scope,
+                                                                                 CampaignPlan.id != new_plan.id))] + [prev_plan.version])
+        new_plan.version = top + 1  # versions are immutable rows; a new one never reuses a number
+        new_plan.parent_plan_id = prev_plan.id
+        new_plan.change_summary = (f"AI revision: {rev['instructions'][:300]}" if rev.get("instructions") else "AI regenerated from the same research")
+        new_plan.edited_by_id = rev.get("requested_by")
+        prev_plan.status = "SUPERSEDED"
+        new_appr = self.db.get(Approval, t.approval_id) if t.approval_id else None
+        if new_appr is not None and prev_appr is not None and new_appr.id != prev_appr.id:
+            new_appr.payload_version, new_appr.supersedes_id = prev_appr.payload_version + 1, prev_appr.id
+            new_appr.context = {**(new_appr.context or {}), "plan_version": new_plan.version}
+            if prev_appr.status not in ("INVALIDATED", "EXECUTED", "EXECUTING"):
+                before = prev_appr.status
+                prev_appr.status = "INVALIDATED"
+                approvals._event(self.db, prev_appr, "INVALIDATED", self.actor, f"Superseded by plan version {new_plan.version}",
+                                 before={"status": before}, after={"superseded_by": new_appr.id})
+            prev_appr.superseded_by_id = new_appr.id
+        activity.log(self.db, "plan.revised", actor=self.actor, entity="plan", entity_id=new_plan.id, client_id=t.client_id,
+                     details={"version": new_plan.version, "instructions": rev.get("instructions", "")[:500], "previous_plan": prev_plan.id,
+                              "previous_approval": prev_appr.id if prev_appr else None, "new_approval": t.approval_id})
+        self.db.commit()
 
     def _rehydrate(self) -> None:
         """Load this task's stored research into the run context, exactly as the original run produced it."""
@@ -794,6 +843,60 @@ def draft_retry_state(db: Session, t: Task) -> dict:
     return {"available": True, "reason": "", "researched_at": info["researched_at"]}
 
 
+REVISABLE_APPROVALS = ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED", "APPROVED")
+MAX_INSTRUCTIONS = 2000
+
+
+def revision_state(db: Session, t: Task) -> dict:
+    """Whether the current draft can be regenerated or revised with instructions (a new version from the stored research)."""
+    from app.models import Approval
+    if "draft" not in FLOWS.get(t.task_type, []) or not t.plan_id:
+        return {"available": False, "reason": ""}
+    if t.status in ACTIVE_STATUSES:
+        return {"available": False, "running": True, "reason": "A draft is being prepared."}
+    ap = db.get(Approval, t.approval_id) if t.approval_id else None
+    if ap is not None and ap.status not in REVISABLE_APPROVALS:
+        return {"available": False, "reason": f"The approval is {ap.status.replace('_', ' ').lower()}; an executed or closed version is not revised."}
+    info = research_for_retry(db, t)
+    if info["problems"]:
+        return {"available": False, "stale": info["stale"], "reason": " ".join(info["problems"])}
+    plan = db.get(CampaignPlan, t.plan_id)
+    return {"available": True, "reason": "", "researched_at": info["researched_at"], "current_version": plan.version if plan else None}
+
+
+def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "") -> tuple[Task, int]:
+    """Queue a new AI version of this task's draft from its stored research (empty instructions = regenerate). One at a time:
+    the status change is a single conditional UPDATE. The current version and approval stay valid until the new one exists."""
+    auth_service.require(actor, "tasks.run")
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, actor, t.client_id)
+    instructions = (instructions or "").strip()
+    if len(instructions) > MAX_INSTRUCTIONS:
+        raise ValidationFailed(f"Keep the instructions under {MAX_INSTRUCTIONS} characters")
+    st = revision_state(db, t)
+    if not st["available"]:
+        raise (Conflict if st.get("running") else RetryUnavailable)(st["reason"] or "This task has no draft to revise.")
+    prev_status = t.status
+    res = db.execute(update(Task).where(Task.id == t.id, Task.status == prev_status).values(status="RETRYING_DRAFT", error="")
+                     .execution_options(synchronize_session=False))
+    if res.rowcount != 1:
+        db.rollback()
+        raise Conflict("A new draft was already started for this task.")
+    db.refresh(t)
+    attempts = [dict(a) for a in (t.fields or {}).get("draft_attempts") or []]
+    attempt = max([a.get("attempt", 0) for a in attempts] + [1]) + 1
+    attempts.append({"attempt": attempt, "kind": "revision", "status": "queued", "instructions": instructions, "requested_by": actor.id,
+                     "requested_at": clock.now().isoformat(), "prev_plan_id": t.plan_id, "prev_approval_id": t.approval_id,
+                     "prev_task_status": prev_status})
+    t.fields = {**(t.fields or {}), "draft_attempts": attempts}
+    flag_modified(t, "fields")
+    activity.log(db, "task.revise_draft", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id,
+                 details={"attempt": attempt, "instructions": instructions[:500]})
+    return t, attempt
+
+
 def retry_draft(db: Session, actor: User, task_id: str) -> tuple[Task, int]:
     """Queue a retry of the failed AI drafting stage. One retry at a time: the FAILED -> RETRYING_DRAFT change is a single conditional
     UPDATE, so repeated clicks or concurrent requests start exactly one retry and the others get a conflict."""
@@ -838,6 +941,79 @@ def run_retry_draft(task_id: str) -> str:
         return task.status
     finally:
         db.close()
+
+
+PLAN_TYPES = ("BUILD_CAMPAIGN", "ADD_AD_GROUP", "ADD_AD", "EDIT_AD")
+
+
+def account_binding(db: Session, t: Task) -> dict:
+    """What the task deploys to now, what its approval is bound to, and whether a rebind is needed (for the task page)."""
+    from app.models import Approval
+    biz = db.get(Business, t.business_id) if t.business_id else None
+    if biz is None:
+        return {"status": "none", "message": "No business on this task.", "rebind_available": False}
+    b = accounts_service.deployment_binding(db, biz)
+    ap = db.get(Approval, t.approval_id) if t.approval_id else None
+    bound = db.get(GoogleAdsAccount, ap.google_ads_account_id) if ap and ap.google_ads_account_id else None
+    acct = b["account"]
+    needs = bool(ap and acct is not None and (bound is None or bound.id != acct.id) and t.plan_id and t.task_type in PLAN_TYPES
+                 and ap.status in ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED", "APPROVED", "INVALIDATED"))
+    return {"status": b["status"], "message": b["message"], "customer_id": acct.customer_id if acct else None,
+            "customer_display": accounts_service.fmt_cid(acct.customer_id) if acct else None, "candidates": b["candidates"],
+            "stale_selection": b["stale_selection"], "approval_customer_id": bound.customer_id if bound else None,
+            "approval_status": ap.status if ap else None, "rebind_available": needs,
+            # several accounts are linked and none is chosen: the user picks one (bind_account with account_id); nothing is guessed
+            "choice_needed": bool(b["status"] == "ambiguous" and ap and t.plan_id and t.task_type in PLAN_TYPES)}
+
+
+def bind_account(db: Session, actor: User, task_id: str, account_id: str | None = None) -> Task:
+    """Prepare a new approval version bound to the client's linked account, from the stored plan and research (no new AI draft).
+    The previous approval is invalidated; the new one must be validated and approved again. Nothing is sent to Google Ads."""
+    from app.models import Approval
+    auth_service.require(actor, "tasks.run")
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, actor, t.client_id)
+    if t.status in ACTIVE_STATUSES:
+        raise Conflict("This task is running; wait for it to finish.")
+    if account_id:  # an explicit choice, only among the accounts linked to this client
+        biz = db.get(Business, t.business_id) if t.business_id else None
+        cands = accounts_service.deployment_binding(db, biz)["candidates"] if biz else []
+        if account_id not in {c["id"] for c in cands}:
+            raise ValidationFailed("That Google Ads account is not linked to this client. Link it on the Google Ads accounts page first.")
+        biz.google_ads_account_id = account_id
+        activity.log(db, "business.deployment_account", actor=actor, entity="business", entity_id=biz.id, client_id=t.client_id,
+                     details={"google_ads_account_id": account_id})
+        db.flush()
+    st = account_binding(db, t)
+    if not st["rebind_available"]:
+        raise ValidationFailed(st["message"] if st["customer_id"] is None else
+                               "The approval is already bound to the client's linked account, or this task has no plan to bind.")
+    old = db.get(Approval, t.approval_id)
+    r = Runner(db, t)
+    info = research_for_retry(db, t)
+    r.ctx.update(info["ctx"])
+    r.ctx["plan"] = db.get(CampaignPlan, t.plan_id)
+    t.status, t.error = "RUNNING", ""
+    db.commit()
+    label = {"validate": f"Validation (bound to {st['customer_display']})", "approval": f"Approval request (bound to {st['customer_display']})"}
+    r._execute(["validate", "approval"], label={**label, "start": f"Binding the plan to {st['customer_display']}"})
+    t = r.task
+    new = db.get(Approval, t.approval_id) if t.approval_id else None
+    if new is not None and old is not None and new.id != old.id:
+        new.payload_version, new.supersedes_id = old.payload_version + 1, old.id
+        if old.status != "INVALIDATED":
+            before = old.status
+            old.status = "INVALIDATED"
+            from app.services import approvals
+            approvals._event(db, old, "INVALIDATED", actor, f"Superseded by a version bound to {st['customer_display']}",
+                             before={"status": before}, after={"superseded_by": new.id})
+        old.superseded_by_id = new.id
+    activity.log(db, "task.bind_account", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id,
+                 details={"customer_id": st["customer_id"], "old_approval": old.id if old else None, "new_approval": new.id if new else None})
+    db.commit()
+    return t
 
 
 def decide_budget(db: Session, actor: User, task_id: str, body: dict) -> Task:

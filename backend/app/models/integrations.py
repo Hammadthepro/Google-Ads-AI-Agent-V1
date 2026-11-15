@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONType, TimestampMixin, utcnow
@@ -128,4 +128,19 @@ class AIRoleConfig(TimestampMixin, Base):
     last_error_kind: Mapped[str] = mapped_column(String(40), default="")
     pricing: Mapped[dict] = mapped_column(JSONType, default=dict)       # optional USD per 1M tokens {input, output} entered by an admin
     review_policy: Mapped[dict] = mapped_column(JSONType, default=dict)  # challenger: which outputs it reviews
+    caps: Mapped[dict] = mapped_column(JSONType, default=dict)           # application token caps (token_caps.FIELDS); provider limits are separate
     updated_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class AITokenLedger(TimestampMixin, Base):
+    """Tokens used (and reserved by requests in flight) per AI role and bucket: a task, a client's day, a client's month.
+    Reservations are taken by one atomic UPDATE ... WHERE used + n <= cap, so concurrent requests cannot exceed a cap."""
+
+    __tablename__ = "ai_token_ledger"
+    __table_args__ = (UniqueConstraint("workspace_id", "role", "scope", "scope_key", "period", name="uq_ai_token_ledger_bucket"),)
+    workspace_id: Mapped[str] = mapped_column(String(32))
+    role: Mapped[str] = mapped_column(String(16))
+    scope: Mapped[str] = mapped_column(String(16))
+    scope_key: Mapped[str] = mapped_column(String(32))
+    period: Mapped[str] = mapped_column(String(10))
+    used: Mapped[int] = mapped_column(BigInteger, default=0)

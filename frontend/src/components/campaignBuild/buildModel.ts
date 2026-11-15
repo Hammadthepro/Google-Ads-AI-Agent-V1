@@ -74,3 +74,29 @@ export const providerName = (p: string) => {
   const name = who.startsWith("internal") ? "Groq (internal AI)" : who.startsWith("claude") ? "Claude" : who;
   return rest.length ? `${name} · ${rest.join(" · ")}` : name;
 };
+
+export type RoleActivity = { provider?: string; model?: string; status: "idle" | "working" | "done" | "failed" | "not_performed"; requests: number; failed: number;
+  tokensIn: number; tokensOut: number; latencyMs: number; text: string; verdict?: string; objections?: number; high?: number };
+
+/** What the Main AI and the Challenger AI did in this run, from the recorded AI events only (requests, tokens and latency as the
+ *  provider reported them). A Challenger that did not run says why; nothing is shown as reviewed when it was not. */
+export function aiRoleActivity(events: ResearchEvent[]): { main: RoleActivity; challenger: RoleActivity } {
+  const blank = (): RoleActivity => ({ status: "idle", requests: 0, failed: 0, tokensIn: 0, tokensOut: 0, latencyMs: 0, text: "Not used yet in this run" });
+  const out = { main: blank(), challenger: blank() };
+  for (const e of events) {
+    const d = e.data ?? {};
+    if (e.kind === "challenger_dispatched") Object.assign(out.challenger, { status: "working", provider: d.provider, model: d.model, text: "Reviewing the draft against its evidence" });
+    else if (e.kind === "challenger_result") Object.assign(out.challenger, { status: "done", verdict: d.verdict, objections: d.objections, high: d.high,
+      text: `Verdict ${d.verdict} · ${d.objections ?? 0} objection(s)${d.high ? `, ${d.high} high` : ""}` });
+    else if (e.kind === "challenger_failed") Object.assign(out.challenger, { status: "not_performed", text: d.reason || e.title.replace(/^Independent review not performed: /, "") });
+    if (!["ai_request", "ai_result", "ai_failed"].includes(e.kind) || !d.role) continue;
+    const r = d.role === "challenger" ? out.challenger : d.role === "main" ? out.main : null;
+    if (!r) continue;
+    r.provider = d.provider ?? r.provider; r.model = d.model ?? r.model;
+    if (e.kind === "ai_request") { r.requests += 1; if (r.status !== "not_performed") { r.status = "working"; r.text = e.title; } }
+    if (e.kind === "ai_result") { r.tokensIn += d.usage_in ?? 0; r.tokensOut += d.usage_out ?? 0; r.latencyMs += d.latency_ms ?? 0;
+      if (d.role === "main") { r.status = "done"; r.text = e.title; } }
+    if (e.kind === "ai_failed" && e.level === "error") { r.failed += 1; if (d.role === "main") { r.status = "failed"; r.text = d.reason ?? e.title; } }
+  }
+  return out;
+}

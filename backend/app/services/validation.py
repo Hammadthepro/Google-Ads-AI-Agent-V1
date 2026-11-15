@@ -55,8 +55,14 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
     if unbound_draft:
         # A draft prepared before any account is linked is validated locally. Google's validate-only check needs a customer, so it runs
         # (and execution is allowed) only once the draft is bound to one; execution refuses an unbound payload.
-        warnings.append(_err("DEPLOYMENT_ACCOUNT_MISSING", "No Google Ads account is linked: this draft was validated locally only. "
-                             "Google's own validation and deployment need a linked account.", severity="warning"))
+        from app.services.accounts_service import deployment_binding, fmt_cid  # local: accounts_service imports this module's neighbours
+        b = deployment_binding(db, business)
+        if b["status"] == "linked":
+            msg = (f"This draft was prepared before {fmt_cid(b['account'].customer_id)} was linked to the client, so it is not bound to it yet. "
+                   "Use “Bind to linked account” on the task to prepare a new version for that account; it then needs approval again.")
+        else:
+            msg = b["message"] + " This draft was validated locally only; Google's own validation and deployment need the bound account."
+        warnings.append(_err("DEPLOYMENT_ACCOUNT_MISSING", msg, severity="warning"))
     elif not payload.get("customer_id"):
         errors.append(_err("REQUIRED", "customer_id is required"))
     if not ops and not internal_only:

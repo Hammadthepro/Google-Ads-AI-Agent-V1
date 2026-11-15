@@ -8,6 +8,7 @@ import { Badge, Button, cx, dt, ErrorBox, Field, Input, Notice, Select, since } 
  *  once to the server (to test or save) and dropped from memory afterwards; it is never stored in the browser and never shown again. */
 
 const KIND_TEXT: Record<string, string> = {
+  app_cap_exceeded: "Over an application token cap",
   auth_failure: "API key rejected", insufficient_credits: "Insufficient credits or quota", rate_limited: "Rate limited", rpm_exceeded: "Requests-per-minute limit",
   tpm_exceeded: "Tokens-per-minute limit", context_length: "Context window exceeded", output_truncated: "Output-token limit", timeout: "Timed out",
   network: "Network error", outage: "Provider unavailable", unsupported_model: "Unknown or unavailable model", unsupported_capability: "Unsupported capability",
@@ -24,7 +25,11 @@ const ROLE_TEXT: Record<string, { title: string; short: string; text: string; ac
     accent: "bg-plum-500", ring: "ring-plum-200" },
 };
 
-type Form = { provider: string; model: string; api_key: string; enabled: boolean; pricing: { input: string; output: string }; review_policy: Record<string, boolean> };
+type Form = { provider: string; model: string; api_key: string; enabled: boolean; pricing: { input: string; output: string }; review_policy: Record<string, boolean>;
+  caps: Record<string, string> };
+const CAP_ORDER = ["max_input_tokens", "max_output_tokens", "max_total_tokens", "task_budget_tokens", "client_daily_tokens", "client_monthly_tokens"];
+const capsOf = (c: any): Record<string, string> => Object.fromEntries(CAP_ORDER.map((k) => [k, c?.[k] != null ? String(c[k]) : ""]));
+const capsBody = (c: Record<string, string>) => Object.fromEntries(Object.entries(c).filter(([, v]) => v.trim() !== "").map(([k, v]) => [k, v.replace(/[,\s]/g, "")]));
 
 const fmt = (n?: number | null) => (typeof n === "number" ? n.toLocaleString() : "—");
 
@@ -56,7 +61,8 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
   const qc = useQueryClient();
   const t = ROLE_TEXT[role];
   const init = (): Form => ({ provider: data.provider || "", model: data.model || "", api_key: "", enabled: !!data.enabled,
-    pricing: { input: data.pricing?.input?.toString() ?? "", output: data.pricing?.output?.toString() ?? "" }, review_policy: data.review_policy ?? {} });
+    pricing: { input: data.pricing?.input?.toString() ?? "", output: data.pricing?.output?.toString() ?? "" }, review_policy: data.review_policy ?? {},
+    caps: capsOf(data.caps) });
   const [f, setF] = useState<Form>(init);
   const [manual, setManual] = useState(false);
   useEffect(() => { setF(init()); }, [data.updated_at, data.provider, data.model, data.enabled]);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -78,7 +84,8 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
   const probe = () => ({ provider: f.provider, model: f.model, ...(f.api_key ? { api_key: f.api_key } : {}) });
   const dirty = f.provider !== (data.provider || "") || f.model !== (data.model || "") || !!f.api_key || f.enabled !== !!data.enabled
     || f.pricing.input !== (data.pricing?.input?.toString() ?? "") || f.pricing.output !== (data.pricing?.output?.toString() ?? "")
-    || (role === "challenger" && JSON.stringify(f.review_policy) !== JSON.stringify(data.review_policy ?? {}));
+    || (role === "challenger" && JSON.stringify(f.review_policy) !== JSON.stringify(data.review_policy ?? {}))
+    || JSON.stringify(capsBody(f.caps)) !== JSON.stringify(capsBody(capsOf(data.caps)));
   const [label, tone] = STATUS[data.status] ?? STATUS.NOT_CONFIGURED;
   const sameAsMain = role === "challenger" && other && f.provider && f.provider === other.provider;
   const lastTest = test.data ?? (data.last_test?.at ? { ok: data.last_test.ok, steps: data.last_test.steps, error: data.last_test.error ? { message: data.last_test.error, kind: data.last_test.error_kind } : null, recorded: true, at: data.last_test.at } : null);
@@ -86,6 +93,7 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
     provider: f.provider, model: f.model, enabled: f.enabled, ...(f.api_key ? { api_key: f.api_key } : {}),
     pricing: f.pricing.input !== "" && f.pricing.output !== "" ? { input: f.pricing.input, output: f.pricing.output } : {},
     ...(role === "challenger" ? { review_policy: f.review_policy } : {}),
+    caps: capsBody(f.caps),
   }, { onSuccess: () => { setF((x) => ({ ...x, api_key: "" })); qc.invalidateQueries({ queryKey: ["ai-roles"] }); } });
   const id = `ai_${role}`;
   const configured = data.status !== "NOT_CONFIGURED";
@@ -175,6 +183,25 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
           </fieldset>)}
         {sameAsMain && <Notice tone="amber">{f.model === other.model ? "Same provider and model as the Main AI: its reviews are not an independent second opinion." : "Same provider as the Main AI (different model): limited independence."}</Notice>}
 
+        <details className="text-xs" open={Object.values(capsBody(capsOf(data.caps))).length > 0}>
+          <summary className="cursor-pointer text-slate-500 hover:text-slate-800">
+            Token caps{Object.keys(capsBody(capsOf(data.caps))).length ? ` · ${Object.keys(capsBody(capsOf(data.caps))).length} set` : " (optional)"}</summary>
+          <p className="mt-1.5 text-slate-500">The app's own limits for the {t.title}, enforced on the server before a request is sent. Leave a field empty for no cap.
+            A request over a cap is not sent and the task shows which cap stopped it.</p>
+          <div className="mt-2 grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-3">
+            {CAP_ORDER.map((k) => (
+              <Field key={k} label={data.cap_fields?.[k] ?? k.replace(/_/g, " ")}>
+                <Input inputMode="numeric" placeholder="no cap" value={f.caps[k] ?? ""} disabled={!canManage}
+                  onChange={(e) => setF({ ...f, caps: { ...f.caps, [k]: e.target.value } })} /></Field>))}
+          </div>
+          <dl aria-label="Provider limits" className="mt-2 grid max-w-2xl grid-cols-2 gap-x-4 gap-y-1 rounded border border-slate-100 bg-slate-50/60 px-3 py-2 text-2xs sm:grid-cols-3">
+            <div className="col-span-full font-medium text-slate-600">Set by the provider, not by these caps</div>
+            <div><dt className="text-slate-400">Context window</dt><dd className="tabular text-slate-700">{data.provider_limits?.context_window ? `${fmt(data.provider_limits.context_window)} tokens` : "not stated by the provider"}</dd></div>
+            <div><dt className="text-slate-400">Maximum output</dt><dd className="tabular text-slate-700">{data.provider_limits?.max_output ? `${fmt(data.provider_limits.max_output)} tokens` : "not stated by the provider"}</dd></div>
+            <div><dt className="text-slate-400">Tokens / requests per minute</dt><dd className="text-slate-700">read from the provider's response headers when sent</dd></div>
+          </dl>
+        </details>
+
         <details className="text-xs">
           <summary className="cursor-pointer text-slate-500 hover:text-slate-800">Cost tracking (optional)</summary>
           <p className="mt-1.5 text-slate-500">Costs are shown only when known: the provider reports the charge (OpenRouter), or you enter your price here. Otherwise usage shows tokens without a cost.</p>
@@ -236,6 +263,7 @@ function Usage() {
         <Select className="w-auto" value={String(days)} onChange={(e) => setDays(Number(e.target.value))} options={[7, 30, 90].map((d) => ({ value: String(d), label: `Last ${d} days` }))} />
       </header>
       <ErrorBox error={q.error} />
+      {q.data && rows.length > 0 && <UsageBreakdowns data={q.data} />}
       {q.data && !rows.length ? <p className="px-5 py-6 text-center text-[13px] text-slate-500">No AI requests in this period.</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-xs">
@@ -253,6 +281,34 @@ function Usage() {
           </table>
         </div>)}
     </section>
+  );
+}
+
+/** Usage by client, day and month (tokens as the providers reported them; no costs invented). */
+function UsageBreakdowns({ data }: { data: any }) {
+  const [view, setView] = useState<"clients" | "daily" | "monthly">("clients");
+  const rows: any[] = data[view] ?? [];
+  const label = (r: any) => view === "clients" ? (r.client || "—") : view === "daily" ? r.day : r.month;
+  return (
+    <div className="border-b border-slate-100 px-4 pb-3 sm:px-5 sm:pl-[52px]">
+      <div role="tablist" aria-label="Usage breakdown" className="mb-2 flex gap-1">
+        {([["clients", "By client"], ["daily", "Daily"], ["monthly", "Monthly"]] as const).map(([k, l]) => (
+          <button key={k} role="tab" aria-selected={view === k} onClick={() => setView(k)}
+            className={cx("rounded px-2 py-1 text-xs", view === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100")}>{l}</button>))}
+      </div>
+      <table aria-label={`Usage ${view}`} className="w-full text-left text-xs">
+        <thead className="text-slate-500"><tr>{[view === "clients" ? "Client" : view === "daily" ? "Day" : "Month", "Requests", "Failed", "Main AI tokens", "Challenger tokens", "Total tokens"].map((h) => <th key={h} className="py-1 pr-3 font-medium">{h}</th>)}</tr></thead>
+        <tbody className="divide-y divide-slate-100">{rows.map((r, i) => (
+          <tr key={i} className="text-slate-700">
+            <td className="py-1 pr-3">{label(r)}</td><td className="tabular py-1 pr-3">{fmt(r.requests)}</td>
+            <td className={cx("tabular py-1 pr-3", r.failed && "text-rose-700")}>{fmt(r.failed)}</td>
+            <td className="tabular py-1 pr-3">{fmt((r.by_role?.main ?? 0) + (r.by_role?.second_drafter ?? 0))}</td>
+            <td className="tabular py-1 pr-3">{fmt(r.by_role?.challenger ?? 0)}</td>
+            <td className="tabular py-1 pr-3 font-medium">{fmt(r.input_tokens + r.output_tokens)}</td>
+          </tr>))}</tbody>
+      </table>
+      {data.note && <p className="mt-1.5 text-2xs text-slate-400">{data.note}</p>}
+    </div>
   );
 }
 

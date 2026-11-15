@@ -121,7 +121,41 @@ def get_task(task_id: str, user: User = Depends(require("clients.view")), db: Se
     if not t:
         raise NotFound("Task not found")
     auth_service.require_client_access(db, user, t.client_id)
-    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t)}
+    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "account_binding": tasks_service.account_binding(db, t),
+            "revision": tasks_service.revision_state(db, t)}
+
+
+class BindAccountIn(BaseModel):
+    account_id: str | None = None  # needed only when several accounts are linked to the client
+
+
+@router.post("/tasks/{task_id}/bind-account", tags=["tasks"])
+def bind_account(task_id: str, body: BindAccountIn | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """New approval version bound to the client's linked Google Ads account (from the stored plan; nothing is sent to Google Ads)."""
+    t = tasks_service.bind_account(db, user, task_id, (body.account_id if body else None))
+    db.expire_all()
+    t = db.get(Task, task_id)
+    return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "account_binding": tasks_service.account_binding(db, t)}
+
+
+class ReviseIn(BaseModel):
+    instructions: str = ""  # empty = regenerate from the same research
+
+
+@router.post("/tasks/{task_id}/revise-draft", tags=["tasks"])
+def revise_draft(task_id: str, body: ReviseIn, sync: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """A new AI version of the draft from this task's stored research (regenerate, or revise with instructions). The current version
+    and its approval stay valid until the new version exists; the new one is challenged, validated and needs approval. Nothing is sent
+    to Google Ads."""
+    t, attempt = tasks_service.revise_draft(db, user, task_id, body.instructions)
+    db.commit()
+    if sync:
+        tasks_service.run_retry_draft(t.id)
+        db.expire_all()
+        t = db.get(Task, t.id)
+        return {**tasks_service.serialize(t), "revision": tasks_service.revision_state(db, t), "attempt": attempt}
+    runner = dispatch(t.id, "retry_draft")
+    return {**tasks_service.serialize(t), "attempt": attempt, "runner": runner}
 
 
 @router.post("/tasks/{task_id}/retry-draft", tags=["tasks"])
@@ -220,6 +254,19 @@ class PlanEditIn(BaseModel):
 def plan_edit(approval_id: str, body: PlanEditIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     from app.services import plan_editor
     out = plan_editor.edit_approval(db, user, approval_id, body.edits, body.note)
+    db.commit()
+    return out
+
+
+class RestoreIn(BaseModel):
+    plan_id: str
+    note: str = ""
+
+
+@router.post("/approvals/{approval_id}/restore-version", tags=["approvals"])
+def restore_version(approval_id: str, body: RestoreIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import plan_editor
+    out = plan_editor.restore_version(db, user, approval_id, body.plan_id, body.note)
     db.commit()
     return out
 

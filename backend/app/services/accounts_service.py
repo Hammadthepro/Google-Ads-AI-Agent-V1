@@ -45,10 +45,38 @@ def link(db: Session, user: User, account_id: str, client_id: str | None) -> Goo
         raise NotFound("Account not found")
     if a.is_manager and client_id:
         raise ValidationFailed("A manager (MCC) account holds no campaigns and cannot be linked to a client. Link one of its client accounts.")
+    if client_id:
+        auth_service.require_client_access(db, user, client_id)
+    prev = a.client_id
     a.client_id = client_id
-    activity.log(db, "ads_account.linked", actor=user, entity="google_ads_account", entity_id=a.id, client_id=client_id)
+    invalidated = []
+    if prev != client_id:
+        invalidated = invalidate_for_account_change(db, user, a, prev)
+        if prev:  # the previous client's businesses no longer choose an account that is not theirs
+            for b in db.scalars(select(Business).where(Business.client_id == prev, Business.google_ads_account_id == a.id)):
+                b.google_ads_account_id = None
+    activity.log(db, "ads_account.linked", actor=user, entity="google_ads_account", entity_id=a.id, client_id=client_id,
+                 details={"customer_id": a.customer_id, "previous_client_id": prev, "invalidated_approvals": invalidated})
     reaudit_measurement(db, user, client_id)
     return a
+
+
+def invalidate_for_account_change(db: Session, user: User | None, account: GoogleAdsAccount, previous_client_id: str | None) -> list[str]:
+    """An approval is bound to an exact account AND client. When the account is linked to another client (or unlinked), every open
+    approval bound to it for the previous client is invalidated: it must be prepared again for the right account."""
+    from app.models import Approval
+    from app.services import approvals
+    out = []
+    for ap in db.scalars(select(Approval).where(Approval.google_ads_account_id == account.id,
+                                                Approval.status.in_(("PENDING_APPROVAL", "APPROVED", "VALIDATION_FAILED", "CHANGES_REQUESTED")))):
+        if ap.client_id == account.client_id:
+            continue
+        before = ap.status
+        ap.status = "INVALIDATED"
+        approvals._event(db, ap, "INVALIDATED", user, f"Google Ads account {fmt_cid(account.customer_id)} was linked to another client or unlinked",
+                         before={"status": before}, after={"account_client_id": account.client_id})
+        out.append(ap.id)
+    return out
 
 
 def reaudit_measurement(db: Session, user: User | None, client_id: str | None) -> list[str]:
@@ -200,8 +228,41 @@ def _upsert_negative(db, account, level, campaign_id, ad_group_id, ext_id, kw):
     row.text, row.match_type = kw.get("text", ""), kw.get("match_type", "EXACT")
 
 
+def fmt_cid(cid: str) -> str:
+    return f"{cid[:3]}-{cid[3:6]}-{cid[6:]}" if cid and len(cid) == 10 else cid or ""
+
+
+def deployment_binding(db: Session, business: Business) -> dict:
+    """THE source of truth for which Google Ads account a business deploys to.
+
+    An account belongs to a client only through GoogleAdsAccount.client_id (set on the Google Ads accounts page). A business's own
+    `google_ads_account_id` can only CHOOSE among the accounts linked to its client: a stale choice (an account that was unlinked, moved
+    to another client or no longer exists) is ignored and reported, never followed. With several linked accounts and no valid choice the
+    binding is ambiguous and nothing is guessed. Manager (MCC) accounts are never deployment targets.
+    Returns {account, status: linked|none|ambiguous, message, candidates, stale_selection}."""
+    from app.models import Client
+    linked = list(db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == business.client_id,
+                                                            GoogleAdsAccount.is_manager.is_(False)).order_by(GoogleAdsAccount.customer_id)))
+    client = db.get(Client, business.client_id)
+    cname = client.name if client else "this client"
+    chosen = next((a for a in linked if a.id == business.google_ads_account_id), None) if business.google_ads_account_id else None
+    stale = bool(business.google_ads_account_id and chosen is None)
+    cands = [{"id": a.id, "customer_id": a.customer_id, "display": fmt_cid(a.customer_id), "name": a.descriptive_name or ""} for a in linked]
+    note = (" The business's previously selected account is no longer linked to this client and was ignored." if stale else "")
+    if chosen is None and len(linked) == 1:
+        chosen = linked[0]
+    if chosen is not None:
+        return {"account": chosen, "status": "linked", "candidates": cands, "stale_selection": stale,
+                "message": f"Deploys to {fmt_cid(chosen.customer_id)}{' — ' + chosen.descriptive_name if chosen.descriptive_name else ''}, "
+                           f"linked to {cname}.{note}"}
+    if linked:
+        return {"account": None, "status": "ambiguous", "candidates": cands, "stale_selection": stale,
+                "message": f"{len(linked)} Google Ads accounts are linked to {cname} ({', '.join(c['display'] for c in cands)}) and this business "
+                           f"does not choose one. Choose the account to deploy to on the task; nothing is guessed.{note}"}
+    return {"account": None, "status": "none", "candidates": [], "stale_selection": stale,
+            "message": f"No Google Ads account is linked to {cname}. Link the client's account on the Google Ads accounts page "
+                       f"(Admin → Google Ads accounts → choose {cname} in the Client column).{note}"}
+
+
 def account_for_business(db: Session, business: Business) -> GoogleAdsAccount | None:
-    if business.google_ads_account_id:
-        return db.get(GoogleAdsAccount, business.google_ads_account_id)
-    return db.scalar(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == business.client_id,
-                                                    GoogleAdsAccount.is_manager.is_(False)))
+    return deployment_binding(db, business)["account"]

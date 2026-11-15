@@ -12,7 +12,7 @@ from app.api.deps import require
 from app.core import clock
 from app.core.errors import NotFound
 from app.db.session import get_db
-from app.models import AIRun, User
+from app.models import AIRun, Client, User
 from app.services import ai_roles
 
 router = APIRouter(tags=["ai"])
@@ -31,6 +31,7 @@ class RoleIn(BaseModel):
     enabled: bool | None = None
     pricing: dict | None = None       # optional USD per 1M tokens {input, output}
     review_policy: dict | None = None  # challenger only
+    caps: dict | None = None           # application token caps (token_caps.FIELDS); empty value = no cap
 
 
 class ProbeIn(BaseModel):
@@ -84,9 +85,25 @@ def usage(days: int = 30, user: User = Depends(require("integrations.manage")), 
     rows = db.scalars(select(AIRun).where(AIRun.created_at >= since)).all()
     groups: dict[tuple, dict] = {}
     by_task: dict[str, dict] = {}
+    by_client: dict[str, dict] = {}
+    by_day: dict[str, dict] = {}
+    by_month: dict[str, dict] = {}
+
+    def _add(bucket: dict, key: str, r: AIRun, **extra) -> None:
+        b = bucket.setdefault(key, {**extra, "requests": 0, "input_tokens": 0, "output_tokens": 0, "failed": 0, "by_role": {}})
+        b["requests"] += 1
+        b["input_tokens"] += r.tokens_in or 0
+        b["output_tokens"] += r.tokens_out or 0
+        b["failed"] += 0 if r.validation_ok else 1
+        role = r.role or "main"
+        b["by_role"][role] = b["by_role"].get(role, 0) + (r.tokens_in or 0) + (r.tokens_out or 0)
+    names = {c.id: c.name for c in db.scalars(select(Client))}
     for r in rows:
         if r.provider_status == "assembled":
             continue
+        _add(by_client, r.client_id or "", r, client_id=r.client_id, client=names.get(r.client_id, "") if r.client_id else "Not tied to a client")
+        _add(by_day, r.created_at.strftime("%Y-%m-%d"), r, day=r.created_at.strftime("%Y-%m-%d"))
+        _add(by_month, r.created_at.strftime("%Y-%m"), r, month=r.created_at.strftime("%Y-%m"))
         key = (r.role or "main", r.provider, r.model or "—")
         g = groups.setdefault(key, {"role": key[0], "provider": key[1], "model": key[2], "requests": 0, "ok": 0, "failed": 0, "not_sent": 0,
                                     "input_tokens": 0, "output_tokens": 0, "latency_ms": 0, "cost_usd": 0.0, "cost_known": 0,
@@ -120,5 +137,8 @@ def usage(days: int = 30, user: User = Depends(require("integrations.manage")), 
     out.sort(key=lambda g: -g["total_tokens"])
     return {"days": days, "since": since.isoformat(), "models": out,
             "tasks": sorted(by_task.values(), key=lambda t: -(t["input_tokens"] + t["output_tokens"])),
+            "clients": sorted(by_client.values(), key=lambda t: -(t["input_tokens"] + t["output_tokens"])),
+            "daily": sorted(by_day.values(), key=lambda t: t["day"]), "monthly": sorted(by_month.values(), key=lambda t: t["month"]),
+            "note": "Tokens as reported by each provider. Requests refused by an application cap or the per-minute budget were not sent and used no tokens.",
             "totals": {"requests": sum(g["requests"] for g in out), "input_tokens": sum(g["input_tokens"] for g in out),
                        "output_tokens": sum(g["output_tokens"] for g in out)}}

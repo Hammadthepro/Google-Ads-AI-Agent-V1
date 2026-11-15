@@ -12,12 +12,12 @@ from sqlalchemy.orm import Session
 from app.adapters import registry
 from app.adapters.ai import serialize
 from app.adapters.ai.prompts import BASE_RULES, PROMPTS
-from app.adapters.ai.schemas import SCHEMAS
+from app.adapters.ai.schemas import NORMALIZERS, SCHEMAS
 from app.adapters.base import AdapterError
 from app.core.errors import AppError
 from app.core.util import payload_hash
 from app.models import AIRun
-from app.services import research_events
+from app.services import research_events, token_caps
 
 RATE_WAIT_MAX = 65.0  # Groq's per-minute windows: wait for the window it names (up to a minute), never forever
 
@@ -32,6 +32,12 @@ class TokenBudgetExceeded(AIOutputInvalid):
     code = "ai_token_budget"
 
 
+class TokenCapExceeded(AIOutputInvalid):
+    """Over an application token cap set by an administrator (per request, task, client day or month). Nothing was sent."""
+    status_code = 429
+    code = "ai_token_cap"
+
+
 class OutputTruncated(AIOutputInvalid):
     """The provider stopped at the output-token limit: the JSON is incomplete and is never used."""
     code = "ai_output_truncated"
@@ -41,6 +47,7 @@ ERROR_TEXT = {
     "tpm_exceeded": "request larger than the per-minute token limit", "rate_limited": "per-minute token budget used up",
     "context_length": "request longer than the model's context window", "output_truncated": "output cut off at the output-token limit",
     "malformed_json": "malformed JSON", "schema_invalid": "output did not match the required schema",
+    "app_cap_exceeded": "over an application token cap",
 }
 
 
@@ -78,6 +85,19 @@ def budget_for(provider) -> int | None:
     if not limit:
         return None
     return int(limit * (1 - float(get_settings().AI_TOKEN_SAFETY_MARGIN or 0)))
+
+
+def _caps(role: str) -> dict:
+    from app.services import ai_roles
+    try:
+        return dict(ai_roles.resolve(role).get("caps") or {})
+    except Exception:  # noqa: BLE001 - no role config (e.g. an overridden provider in tests): no application caps
+        return {}
+
+
+def _workspace(db: Session) -> str:
+    from app.services import integrations_service
+    return integrations_service.workspace_id(db)
 
 
 def _extract_json(text: str) -> dict:
@@ -120,7 +140,8 @@ def _cost(provider, raw) -> tuple[float | None, str]:
 def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = None,
              model_role: str = "draft", max_attempts: int = 2, provider=None,
              label: str | None = None, max_output_tokens: int | None = None, stage: str = "",
-             split_on_truncation: bool = False, check=None, role: str | None = None) -> tuple[BaseModel, AIRun]:
+             split_on_truncation: bool = False, check=None, role: str | None = None,
+             client_id: str | None = None) -> tuple[BaseModel, AIRun]:
     """`provider`/`label` let the AI competition run the SAME prompt through a specific provider (label <= 20 chars).
     `max_output_tokens` caps the answer; `stage` names a step of a staged draft; `check(parsed) -> [errors]` adds rules the schema
     cannot express (treated exactly like schema errors). With `split_on_truncation`, a cut-off answer or a request over the per-minute
@@ -136,6 +157,13 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
     attempt = 0
     who = label or provider.name
     what = purpose.replace("_", " ").lower() + (f" ({stage})" if stage else "")
+    cap_role = "challenger" if role == "challenger" else "main"  # the second drafter is a Main AI request
+    caps = _caps(cap_role)
+    if client_id is None and task_id:
+        from app.models import Task
+        t = db.get(Task, task_id)
+        client_id = t.client_id if t else None
+    wsid = _workspace(db) if caps else None
     while attempt < max_attempts:  # (max_attempts can grow when a rate-limit window is being waited out)
         attempt += 1
         if last_error:
@@ -144,7 +172,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         estimate = estimate_tokens(system, serialize(user))
         run = AIRun(task_id=task_id, purpose=purpose, provider=who[:20], prompt_template_id=spec["id"],
                     prompt_version=spec["version"], input_hash=payload_hash(payload), attempt=attempt, stage=stage[:60],
-                    prompt_estimate=estimate, role=role[:20], request_id=uuid.uuid4().hex)
+                    prompt_estimate=estimate, role=role[:20], request_id=uuid.uuid4().hex, client_id=client_id)
         db.add(run)
         model = getattr(provider, "challenger_model" if model_role == "challenger" else "model", None) or getattr(provider, "name", "")
         limit = budget_for(provider)
@@ -158,17 +186,33 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                                  reason=f"request of ~{estimate:,} tokens is larger than the {limit:,}-token per-minute budget")
             raise TokenBudgetExceeded(f"The {what} request needs ~{estimate:,} tokens but {model} allows about {limit:,} per minute; "
                                       "nothing was sent", details={"error_kind": "tpm_exceeded", "estimate": estimate, "limit": limit})
+        taken, reserved, send_out = [], 0, max_output_tokens
+        if caps:  # the application's own caps: checked and reserved before anything is sent
+            try:
+                p = token_caps.plan(caps, estimate=estimate, requested_output=max_output_tokens,
+                                    default_output=getattr(provider, "MAX_TOKENS", None), task_id=task_id, client_id=client_id)
+                taken, reserved = token_caps.reserve(wsid, cap_role, p), p.reserve
+            except token_caps.CapExceeded as exc:
+                run.model, run.error_kind, run.provider_status = model, "app_cap_exceeded", "not_sent"
+                run.error = f"app_cap_exceeded: {exc.message}"
+                db.flush()
+                research_events.emit("ai_failed", f"{who}: {exc.message}", level="error", purpose=purpose, provider=who, model=model,
+                                     error_kind="app_cap_exceeded", reason=exc.message, stage=stage or None, **{f"cap_{k}": v for k, v in exc.details.items()})
+                raise TokenCapExceeded(exc.message, details={**exc.details, "error_kind": "app_cap_exceeded", "role": cap_role}) from None
+            if p.max_output and getattr(provider, "supports_max_tokens", False):
+                send_out = p.max_output
         wait, why = _rate_wait(provider, estimate, model_role)
         if wait > 0:
             wait = min(wait, RATE_WAIT_MAX)
             research_events.emit("ai_waiting", f"{who}: waiting {wait:.0f}s for the per-minute token window before the {what}",
                                  level="warn", purpose=purpose, provider=who, model=model, seconds=round(wait, 1), reason=why, stage=stage or None)
             time.sleep(wait)
-        research_events.emit("ai_request", f"Asking {who} ({model}) for {what}", purpose=purpose, provider=who, model=model,
+        research_events.emit("ai_request", f"Asking {who} ({model}) for {what}", purpose=purpose, provider=who, model=model, role=role,
                              attempt=attempt, approx_input=estimate, max_output=max_output_tokens, stage=stage or None)
         try:
-            raw = _complete(provider, purpose, system, user, model_role, max_output_tokens)
+            raw = _complete(provider, purpose, system, user, model_role, send_out)
         except AdapterError as exc:
+            token_caps.settle(wsid, cap_role, taken, reserved, 0) if taken else None
             kind = exc.details.get("error_kind") or ("tpm_exceeded" if exc.details.get("too_large") else exc.kind)
             if kind == "invalid_response":  # the provider answered with unusable output: same handling as malformed JSON
                 kind = "malformed_json"
@@ -207,11 +251,16 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                 last_error = run.error
                 continue
             research_events.emit("ai_failed", f"{who}: {exc.message}", level="error", purpose=purpose, provider=who, model=model,
-                                 error_kind=kind, limit=exc.details.get("limit") or None, requested=exc.details.get("requested") or None,
+                                 error_kind=kind, role=role, limit=exc.details.get("limit") or None, requested=exc.details.get("requested") or None,
                                  reason=exc.message, stage=stage or None)
             reason = exc.message if kind in ("auth_failure", "invalid_input", "invalid_response", "malformed_json", "context_length") \
                 else f"AI provider error ({kind}): {exc.message}"
             raise AIOutputInvalid(f"{reason}; nothing was executed", details={**exc.to_dict(), "error_kind": kind}) from exc
+        except Exception:
+            token_caps.settle(wsid, cap_role, taken, reserved, 0) if taken else None
+            raise
+        if taken:  # replace the worst-case reservation by what the provider reports it used
+            token_caps.settle(wsid, cap_role, taken, reserved, (raw.tokens_in or 0) + (raw.tokens_out or 0) or reserved)
         run.model, run.raw_output = raw.model, raw.text[:60000]
         run.tokens_in, run.tokens_out, run.latency_ms = raw.tokens_in, raw.tokens_out, raw.latency_ms
         run.finish_reason, run.provider_status = (raw.finish_reason or "")[:30], (raw.status or "ok")[:40]
@@ -240,7 +289,8 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                                  stage=stage or None)
             continue
         try:
-            parsed = schema.model_validate(data)
+            norm = NORMALIZERS.get(purpose)
+            parsed = schema.model_validate(norm(data) if norm else data)
             extra = list(check(parsed)) if check else []
             if extra:
                 raise ValueError("; ".join(extra))
@@ -255,7 +305,8 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
         run.parsed_output = parsed.model_dump()
         run.validation_ok = True
         db.flush()
-        research_events.emit("ai_result", f"{who} returned a valid {what}", purpose=purpose, provider=who, model=raw.model,
+        research_events.emit("ai_result", f"{who} returned a valid {what}", purpose=purpose, provider=who, model=raw.model, role=role,
+                             latency_ms=raw.latency_ms,
                              usage_in=raw.tokens_in, usage_out=raw.tokens_out, attempt=attempt, finish_reason=raw.finish_reason or None,
                              stage=stage or None)
         return parsed, run

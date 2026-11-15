@@ -416,6 +416,18 @@ class GeminiProvider(AIProvider):
         r = _send("gemini", self.http, "POST", f"{SPECS['gemini'].base_url}/models/{self.model}:generateContent", self.model,
                   headers=self._headers(), json=body, timeout=TIMEOUT)
         data = r.json()
+        # Thinking models spend hidden reasoning tokens from the SAME maxOutputTokens budget. When reasoning used most of it and the
+        # answer was cut off (or never started), ask once more with room for both, up to the model's stated output limit. Without
+        # this, a review is silently "not performed" whenever the model thinks for long.
+        first = (data.get("candidates") or [{}])[0]
+        um = data.get("usageMetadata") or {}
+        thoughts, cap = int(um.get("thoughtsTokenCount") or 0), body["generationConfig"]["maxOutputTokens"]
+        ceiling = int(self.model_meta.get("max_output") or 65536)
+        if str(first.get("finishReason") or "") == "MAX_TOKENS" and thoughts >= cap // 2 and cap < ceiling:
+            body["generationConfig"]["maxOutputTokens"] = min(ceiling, cap + max(thoughts, cap))
+            r = _send("gemini", self.http, "POST", f"{SPECS['gemini'].base_url}/models/{self.model}:generateContent", self.model,
+                      headers=self._headers(), json=body, timeout=TIMEOUT)
+            data = r.json()
         cands = data.get("candidates") or []
         if not cands:
             reason = (data.get("promptFeedback") or {}).get("blockReason") or "no candidates"
@@ -426,6 +438,9 @@ class GeminiProvider(AIProvider):
         if finish in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT"):
             raise InvalidResponse(f"Gemini stopped the answer ({finish})", adapter="gemini", details={"error_kind": "malformed_json", "finish": finish})
         u = data.get("usageMetadata") or {}
+        if finish == "MAX_TOKENS" and not text.strip() and int(u.get("thoughtsTokenCount") or 0):
+            raise InvalidResponse(f"Gemini used its whole output budget ({int(u.get('thoughtsTokenCount') or 0):,} tokens) on reasoning and "
+                                  "returned no answer", adapter="gemini", details={"error_kind": "output_truncated", "thinking_exhausted": True})
         return RawCompletion(text=text, model=data.get("modelVersion") or self.model, tokens_in=int(u.get("promptTokenCount") or 0),
                              tokens_out=int(u.get("candidatesTokenCount") or 0) + int(u.get("thoughtsTokenCount") or 0),
                              latency_ms=int((time.monotonic() - started) * 1000),

@@ -207,3 +207,63 @@ SCHEMAS = {
     "EXPLAIN": TextSummary,
     "AUDIT_SUMMARY": TextSummary,
 }
+
+
+# ------------------------------------------------------------------------------------------------ tolerant reading of reviews
+_CATEGORIES = set(Objection.model_fields["category"].annotation.__args__)
+_ALIASES = {"CLAIM": "UNSUPPORTED_CLAIM", "UNSUPPORTED_CLAIMS": "UNSUPPORTED_CLAIM", "INTENT": "WEAK_INTENT", "KEYWORD": "IRRELEVANT_KEYWORD",
+            "KEYWORDS": "IRRELEVANT_KEYWORD", "OVERLAP": "KEYWORD_OVERLAP", "LANDING": "LANDING_PAGE", "AD_COPY": "AD_MESSAGING",
+            "MESSAGING": "AD_MESSAGING", "POLICY_RISK": "POLICY", "EXCLUSION": "MISSING_EXCLUSION", "NEGATIVES": "MISSING_EXCLUSION",
+            "TRACKING": "MEASUREMENT", "BUDGET_ASSUMPTIONS": "BUDGET", "FINANCIAL": "BUDGET"}
+_SEVERITY = {"CRITICAL": "HIGH", "MAJOR": "HIGH", "MODERATE": "MEDIUM", "MED": "MEDIUM", "MINOR": "LOW", "INFO": "LOW"}
+_VERDICT = {"APPROVED": "APPROVE", "ACCEPT": "APPROVE", "REVISION": "REVISE", "NEEDS_REVISION": "REVISE", "CHANGES_REQUESTED": "REVISE",
+            "REJECTED": "REJECT"}
+
+
+def _key(v) -> str:
+    return str(v or "").strip().upper().replace(" ", "_").replace("-", "_")
+
+
+def normalize_challenge(data: dict) -> dict:
+    """Read a review the way a person would: case, synonyms and extra fields do not make a substantive review "not performed".
+    Only the form is repaired (unknown category -> OTHER, severity/verdict synonyms, confidence as 0-1); no content is invented, and a
+    review that has no verdict at all still fails validation."""
+    if not isinstance(data, dict):
+        return data
+    out = {k: data[k] for k in ChallengeReport.model_fields if k in data}
+    v = _key(out.get("verdict"))
+    if v:
+        out["verdict"] = _VERDICT.get(v, v)
+    c = out.get("confidence")
+    try:
+        c = float(str(c).rstrip("%")) if c is not None and c != "" else None
+        out["confidence"] = None if c is None else (c / 100 if 1 < c <= 100 else c) if 0 <= c <= 100 else None
+    except ValueError:
+        out["confidence"] = None
+    for k in ("agreements", "limitations"):
+        if isinstance(out.get(k), str):
+            out[k] = [out[k]]
+        if isinstance(out.get(k), list):
+            out[k] = [x if isinstance(x, str) else str(x.get("text") or x.get("message") or x) if isinstance(x, dict) else str(x) for x in out[k]]
+    objs = []
+    for o in out.get("objections") or []:
+        if not isinstance(o, dict):
+            o = {"message": str(o)}
+        o2 = {k: o[k] for k in Objection.model_fields if k in o}
+        o2.setdefault("message", str(o.get("issue") or o.get("text") or o.get("description") or ""))
+        o2.setdefault("suggestion", str(o.get("recommended_correction") or o.get("correction") or o.get("fix") or ""))
+        cat = _key(o2.get("category"))
+        o2["category"] = cat if cat in _CATEGORIES else _ALIASES.get(cat, "OTHER")
+        sev = _key(o2.get("severity"))
+        o2["severity"] = sev if sev in ("LOW", "MEDIUM", "HIGH") else _SEVERITY.get(sev, "MEDIUM")
+        for k in ("target", "message", "suggestion", "evidence"):
+            if k in o2 and not isinstance(o2[k], str):
+                o2[k] = str(o2[k])
+        if o2["message"]:
+            objs.append(o2)
+    if "objections" in out or objs:
+        out["objections"] = objs
+    return out
+
+
+NORMALIZERS = {"CHALLENGE": normalize_challenge}
