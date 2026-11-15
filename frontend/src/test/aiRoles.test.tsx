@@ -115,15 +115,18 @@ describe("AI roles", () => {
       if (url.includes("/ai/usage")) return json({ models: [{ role: "main", provider: "groq", model: "m", requests: 3, failed: 0, input_tokens: 900, output_tokens: 300, total_tokens: 1200, errors: {} }],
         tasks: [], totals: {}, clients: [{ client: "ABC Home & Commercial Services", requests: 3, failed: 0, input_tokens: 900, output_tokens: 300, by_role: { main: 1000, challenger: 200 } }],
         daily: [], monthly: [], note: "Tokens as reported by each provider." });
+      if (url.includes("/budget")) return json({ role: "main", caps: { client_daily_tokens: 250000 }, day: "2026-11-15", clients: [] });
       if (init?.method === "PUT") { puts.push(JSON.parse(init.body)); return json(main); }
       return json(overview(main, role("challenger")));
     }) as any;
     mount();
     const region = await screen.findByRole("region", { name: "Main AI settings" });
+    const section = within(region).getByRole("region", { name: "Main AI token limits" });  // visible without expanding anything
+    expect(within(section).getByText(/Application limits · set here, enforced before sending/)).toBeInTheDocument();
     const limits = within(region).getByLabelText("Provider limits");
     expect(within(limits).getByText("131,072 tokens")).toBeInTheDocument();
     expect(within(limits).getByText("32,768 tokens")).toBeInTheDocument();
-    fireEvent.change(within(region).getByLabelText("Tokens per client per day"), { target: { value: "250,000" } });
+    fireEvent.change(within(region).getByLabelText(/^Tokens per client per day/), { target: { value: "250,000" } });
     fireEvent.click(within(region).getByRole("button", { name: "Save configuration" }));
     await waitFor(() => expect(puts.length).toBe(1));
     expect(puts[0].caps).toEqual({ client_daily_tokens: "250000" });

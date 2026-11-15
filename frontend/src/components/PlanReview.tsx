@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAction } from "../lib/hooks";
+import { ResearchAppendix } from "./ResearchAppendix";
+import { ChallengerFindings } from "./campaignBuild/ChallengerFindings";
 import { Badge, Button, Card, dt, EmptyState, ErrorBox, Field, Input, Notice, Select, Spinner, StatusBadge, Textarea } from "./ui";
 
 const SIDE_LABEL: Record<string, string> = { internal: "Internal AI", claude: "Claude" };
@@ -196,11 +198,13 @@ export function PlanReview({ planId, approvalId, canEdit, editable }: { planId: 
   const p = plan.data;
   return (
     <div className="space-y-5">
+      {editable && p.task_id && <ChallengerFindings taskId={p.task_id} />}
       <Card title="AI competition"><CompetitionPanel comp={p.competition} /></Card>
       <Card title={<span>Original AI plan → current version {p.version}</span>}><DiffView diff={diff.data} /></Card>
       {(versions.data?.length ?? 0) > 1 && <Versions planId={planId} approvalId={approvalId} versions={versions.data} canRestore={canEdit && editable} />}
-      {canEdit && editable ? <Card title="Edit this plan"><PlanEditor approvalId={approvalId} draft={p.draft} scope={p.scope} /></Card>
+      {canEdit && editable ? <Card title={<span id="edit">Edit this plan</span>}><PlanEditor approvalId={approvalId} draft={p.draft} scope={p.scope} /></Card>
         : <p className="text-xs text-slate-500">Only open approvals can be edited. <Link className="text-brand-700" to="/approvals">Back to approvals</Link></p>}
+      <ResearchAppendix planId={planId} />
     </div>
   );
 }

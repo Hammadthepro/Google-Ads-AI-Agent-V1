@@ -123,6 +123,17 @@ class AdFix(Strict):
     changes: list[str] = Field(default_factory=list)
 
 
+class ProposedFix(Strict):
+    """A change the app can apply deterministically (the same operations a person uses in the plan editor). Names must match the draft."""
+    op: Literal["remove_keyword", "add_keyword", "add_negative", "remove_negative", "set_landing_page", "remove_ad_group",
+                "rename_campaign", "set_bidding"]
+    ad_group: str = ""
+    text: str = ""
+    match_type: str = ""
+    url: str = ""
+    value: str = ""
+
+
 class Objection(Strict):
     category: Literal["UNSUPPORTED_CLAIM", "WEAK_INTENT", "IRRELEVANT_KEYWORD", "KEYWORD_OVERLAP", "BUDGET",
                       "LANDING_PAGE", "AD_MESSAGING", "POLICY", "MISSING_EXCLUSION", "MEASUREMENT", "OTHER"]
@@ -131,6 +142,7 @@ class Objection(Strict):
     message: str
     suggestion: str = ""          # the recommended correction
     evidence: str = ""            # what in the given inputs supports the objection
+    fix: list[ProposedFix] = Field(default_factory=list)  # optional machine-applicable form of `suggestion`
 
 
 class ChallengeReport(Strict):
@@ -249,7 +261,12 @@ def normalize_challenge(data: dict) -> dict:
     for o in out.get("objections") or []:
         if not isinstance(o, dict):
             o = {"message": str(o)}
-        o2 = {k: o[k] for k in Objection.model_fields if k in o}
+        o2 = {k: o[k] for k in Objection.model_fields if k in o and k != "fix"}
+        raw_fix = o.get("fix") or o.get("fixes") or []
+        raw_fix = [raw_fix] if isinstance(raw_fix, dict) else raw_fix if isinstance(raw_fix, list) else []
+        ops = set(ProposedFix.model_fields["op"].annotation.__args__)
+        o2["fix"] = [{k: str(f[k]) for k in ProposedFix.model_fields if k in f and f[k] is not None}
+                     for f in raw_fix if isinstance(f, dict) and str(f.get("op", "")) in ops]
         o2.setdefault("message", str(o.get("issue") or o.get("text") or o.get("description") or ""))
         o2.setdefault("suggestion", str(o.get("recommended_correction") or o.get("correction") or o.get("fix") or ""))
         cat = _key(o2.get("category"))

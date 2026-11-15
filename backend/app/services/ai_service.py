@@ -208,7 +208,7 @@ def generate(db: Session, purpose: str, payload: dict, *, task_id: str | None = 
                                  level="warn", purpose=purpose, provider=who, model=model, seconds=round(wait, 1), reason=why, stage=stage or None)
             time.sleep(wait)
         research_events.emit("ai_request", f"Asking {who} ({model}) for {what}", purpose=purpose, provider=who, model=model, role=role,
-                             attempt=attempt, approx_input=estimate, max_output=max_output_tokens, stage=stage or None)
+                             attempt=attempt, approx_input=estimate, max_output=send_out, requested_output=max_output_tokens, stage=stage or None)
         try:
             raw = _complete(provider, purpose, system, user, model_role, send_out)
         except AdapterError as exc:

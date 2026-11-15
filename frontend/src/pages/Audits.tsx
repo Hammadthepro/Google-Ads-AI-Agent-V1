@@ -314,6 +314,7 @@ function Lifecycle({ status }: { status: string }) {
 
 export function AuditDetail() {
   const { id } = useParams();
+  const { can } = useAuth();
   const nav = useNavigate();
   const q = useQuery({ queryKey: ["audit", id], queryFn: () => api.get(`/audits/${id}`),
     refetchInterval: (query) => (ACTIVE.includes((query.state.data as any)?.status) ? 1500 : false) });
@@ -332,7 +333,11 @@ export function AuditDetail() {
         subtitle={<>{a.business ? <Link to={`/businesses/${a.business_id}`} className="font-medium text-brand-700 hover:underline">{a.business.name}</Link> : "Business"}
           {" · started "}{dt(a.started_at)}{a.finished_at ? ` · finished ${dt(a.finished_at)}${secs !== null ? ` (${secs})` : ""}` : ""}</>}
         meta={<Lifecycle status={a.status} />}
-        actions={<><StatusBadge value={a.status} />{active ? <Badge>Data pending</Badge> : <DataSourceBadge source={a.source_type} />}</>} />
+        actions={<><StatusBadge value={a.status} />{active ? <Badge>Data pending</Badge> : <DataSourceBadge source={a.source_type} />}
+          {!active && a.status !== "FAILED" && can("audits.run") && (a.audit_type === "KEYWORD"
+            ? <Link to="/audits"><Button size="sm">Re-run keyword research…</Button></Link>
+            : <Button size="sm" disabled={retry.isPending} onClick={() => { if (window.confirm("Run this audit again? It runs as a new audit with fresh data; this result is kept in the history.")) retry.mutate({}, { onSuccess: (rows: any) => rows[0] && nav(`/audits/${rows[0].id}`) }); }}>
+                {retry.isPending ? "Starting…" : "Re-run audit"}</Button>)}</>} />
       {STATE_COPY[a.status] && <Notice tone={a.status === "SKIPPED" || a.status === "CANCELLED" ? "amber" : "blue"}>{STATE_COPY[a.status]}{a.status === "SKIPPED" && a.summary ? ` ${a.summary}` : ""}</Notice>}
       {a.status === "FAILED" && (
         <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50/70 px-5 py-4 text-[13px] text-rose-950">

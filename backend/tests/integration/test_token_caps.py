@@ -65,8 +65,16 @@ def test_per_request_caps_limit_the_output_and_refuse_oversized_input_without_se
     p = Counting()
     registry.override("ai", p)
     _caps(ws, max_output_tokens=1000)
-    _explain()
+    from app.services import research_events
+    seen = []
+    orig = research_events.emit
+    research_events.emit = lambda kind, title, **d: seen.append((kind, d)) or orig(kind, title, **d)
+    try:
+        _explain()
+    finally:
+        research_events.emit = orig
     assert p.sent == [1000]  # the answer is capped at the application limit, not the adapter's 6,000 default
+    assert [d["max_output"] for k, d in seen if k == "ai_request"] == [1000]  # the recorded request says what was really sent
     _caps(ws, max_input_tokens=20)
     with session_scope() as db:
         with pytest.raises(ai_service.TokenCapExceeded, match="application cap is 20 per request. Nothing was sent") as e:

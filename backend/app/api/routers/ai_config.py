@@ -76,6 +76,34 @@ def revoke_role_key(role: str, user: User = Depends(require("integrations.manage
     return ai_roles.serialize(db, row, role)
 
 
+@router.get("/ai/roles/{role}/budget")
+def role_budget(role: str, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
+    """The application caps of a role and what each client has left today and this month (from the enforcement ledger)."""
+    from datetime import datetime, timezone
+    from app.models import AITokenLedger
+    from app.services import integrations_service, token_caps
+    _role(role)
+    caps = (ai_roles._row(db, role).caps if ai_roles._row(db, role) else {}) or {}
+    ws = integrations_service.workspace_id(db)
+    now = datetime.now(timezone.utc)
+    day, month = now.strftime("%Y-%m-%d"), now.strftime("%Y-%m")
+    rows = db.scalars(select(AITokenLedger).where(AITokenLedger.workspace_id == ws, AITokenLedger.role == role,
+                                                  AITokenLedger.scope.in_(("client_day", "client_month")), AITokenLedger.period.in_((day, month))))
+    used: dict[str, dict] = {}
+    for r in rows:
+        used.setdefault(r.scope_key, {})[r.scope] = r.used
+    names = {c.id: c.name for c in db.scalars(select(Client))}
+    out = []
+    for cid, u in used.items():
+        d, m = u.get("client_day", 0), u.get("client_month", 0)
+        out.append({"client_id": cid, "client": names.get(cid, cid), "used_today": d, "used_month": m,
+                    "left_today": (caps["client_daily_tokens"] - d) if caps.get("client_daily_tokens") else None,
+                    "left_month": (caps["client_monthly_tokens"] - m) if caps.get("client_monthly_tokens") else None})
+    out.sort(key=lambda x: -x["used_month"])
+    return {"role": role, "caps": caps, "fields": token_caps.FIELDS, "day": day, "month": month, "clients": out,
+            "note": "Budgets are counted only while a cap is set; usage before a cap was set is in AI usage, not here."}
+
+
 @router.get("/ai/usage")
 def usage(days: int = 30, user: User = Depends(require("integrations.manage")), db: Session = Depends(get_db)):
     """What each role, provider and model consumed. Tokens and latency come from provider responses; cost only where it is known

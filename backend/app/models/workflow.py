@@ -147,6 +147,8 @@ class CampaignPlan(TimestampMixin, Base):
     parent_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     change_summary: Mapped[str] = mapped_column(Text, default="")
     edited_by_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # the research and measurements this version was built from, captured from persisted records when the version is created
+    evidence: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
 class ValidationRun(TimestampMixin, Base):
@@ -237,3 +239,21 @@ class Operation(TimestampMixin, Base):
     enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+
+
+class ChallengerResolution(TimestampMixin, Base):
+    """What the team did about one Challenger objection: applied its fix (a new plan version), edited manually, asked the Main AI to
+    revise, or dismissed it with a reason. Kept for every action; never deleted, so dismissed concerns stay in the audit history."""
+
+    __tablename__ = "challenger_resolutions"
+    task_id: Mapped[str] = mapped_column(String(32), index=True)
+    plan_id: Mapped[str] = mapped_column(String(32), index=True)          # the version the objection was raised on
+    approval_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    objection_key: Mapped[str] = mapped_column(String(64), index=True)
+    objection: Mapped[dict] = mapped_column(JSONType, default=dict)
+    action: Mapped[str] = mapped_column(String(16))                       # applied | dismissed | revise_requested | edited | reopened
+    reason: Mapped[str] = mapped_column(Text, default="")
+    edits: Mapped[list] = mapped_column(JSONType, default=list)
+    result_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    result_approval_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

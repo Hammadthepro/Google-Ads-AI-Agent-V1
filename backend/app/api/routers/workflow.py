@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.adapters import registry
 from app.api.deps import current_user, require
 from app.core.config import get_settings
-from app.core.errors import NotFound
+from app.core.errors import NotFound, ValidationFailed
 from app.db.session import get_db
 from app.models import AIRun, Approval, Business, CampaignPlan, Operation, Task, User, ValidationRun
 from app.services import approvals, auth_service, execution, experiments, learning, tasks_service, validation
@@ -122,7 +122,51 @@ def get_task(task_id: str, user: User = Depends(require("clients.view")), db: Se
         raise NotFound("Task not found")
     auth_service.require_client_access(db, user, t.client_id)
     return {**tasks_service.serialize(t), "draft_retry": tasks_service.draft_retry_state(db, t), "account_binding": tasks_service.account_binding(db, t),
-            "revision": tasks_service.revision_state(db, t)}
+            "revision": tasks_service.revision_state(db, t), "actions": tasks_service.actions(db, t)}
+
+
+class RerunIn(BaseModel):
+    action: str
+    instructions: str = ""
+    confirm_supersede: bool = False
+
+
+@router.post("/tasks/{task_id}/rerun", tags=["tasks"])
+def rerun(task_id: str, body: RerunIn, sync: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Run part of a task again. Only the stages listed by GET /tasks/{id} "actions" for that action run; earlier stored research is
+    reused unless the action is a research refresh. A new version never silently replaces an approved one."""
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, user, t.client_id)
+    allowed = {a["key"] for a in tasks_service.actions(db, t)}
+    if body.action not in allowed:
+        raise ValidationFailed(f"“{body.action}” is not available for this task now")
+    if body.action == "rerun_challenger":
+        from app.services import challenger_resolution
+        out = challenger_resolution.rereview(db, user, task_id)
+        db.commit()
+        return {"action": body.action, "challenger": out}
+    if body.action == "rerun_audit":
+        new = tasks_service.create(db, user, {"task_type": t.task_type, "client_id": t.client_id, "business_id": t.business_id,
+                                              "fields": {k: v for k, v in (t.fields or {}).items() if k != "draft_attempts"}, "note": t.note})
+        db.commit()
+        return {"action": body.action, "new_task_id": new.id, "runner": dispatch(new.id)}
+    if body.action == "retry_draft":
+        t, attempt = tasks_service.retry_draft(db, user, task_id)
+    elif body.action == "resume":
+        t, attempt = tasks_service.resume(db, user, task_id)
+    else:
+        if body.action == "revise" and not body.instructions.strip():
+            raise ValidationFailed("Write what should change")
+        start = {"regenerate": "draft", "revise": "draft", "rerun_feasibility": "feasibility", "refresh_research": "audits"}[body.action]
+        t, attempt = tasks_service.revise_draft(db, user, task_id, body.instructions if body.action == "revise" else "", from_key=start,
+                                                confirm_supersede=body.confirm_supersede)
+    db.commit()
+    if sync:
+        tasks_service.run_retry_draft(t.id)
+        return {"action": body.action, "attempt": attempt, "runner": "sync"}
+    return {"action": body.action, "attempt": attempt, "runner": dispatch(t.id, "retry_draft")}
 
 
 class BindAccountIn(BaseModel):
@@ -217,6 +261,26 @@ def get_plan(plan_id: str, user: User = Depends(require("clients.view")), db: Se
     return _plan(p, db)
 
 
+@router.get("/plans/{plan_id}/appendix", tags=["planner"])
+def plan_appendix(plan_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The Research & Evidence Appendix of this exact version, captured when the version was created."""
+    from app.services import research_appendix
+    p = db.get(CampaignPlan, plan_id)
+    if not p:
+        raise NotFound("Plan not found")
+    auth_service.require_client_access(db, user, p.client_id)
+    ev = p.evidence or {}
+    if ev.get("version"):
+        return {**ev, "plan_id": p.id, "plan_version": p.version, "captured_with_version": True}
+    if ev.get("error"):
+        return {"plan_id": p.id, "plan_version": p.version, "captured_with_version": False, "error": ev["error"]}
+    t = db.get(Task, p.task_id)
+    out = research_appendix.build(db, t, None, p.draft)
+    return {**out, "plan_id": p.id, "plan_version": p.version, "captured_with_version": False,
+            "note": "This version was created before evidence was captured with each version, so this appendix was assembled now from the "
+                    "task's persisted research records. If the task's research was refreshed since, it may differ from what the version used."}
+
+
 @router.get("/plans/{plan_id}/versions", tags=["planner"])
 def plan_versions(plan_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
     from app.services import plan_editor
@@ -254,6 +318,42 @@ class PlanEditIn(BaseModel):
 def plan_edit(approval_id: str, body: PlanEditIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     from app.services import plan_editor
     out = plan_editor.edit_approval(db, user, approval_id, body.edits, body.note)
+    db.commit()
+    return out
+
+
+class ResolveIn(BaseModel):
+    action: str                     # apply | dismiss | revise | edited | reopen
+    reason: str = ""
+    confirm_supersede: bool = False  # required to replace an APPROVED version with a new one
+
+
+@router.get("/tasks/{task_id}/challenger", tags=["tasks"])
+def challenger_findings(task_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """The current version's Challenger findings with the change each would make and what the team did about it."""
+    from app.services import challenger_resolution
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, user, t.client_id)
+    return challenger_resolution.findings(db, t)
+
+
+@router.post("/tasks/{task_id}/challenger/{key}/resolve", tags=["tasks"])
+def resolve_finding(task_id: str, key: str, body: ResolveIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import challenger_resolution
+    out = challenger_resolution.resolve(db, user, task_id, key, body.action, reason=body.reason, confirm_supersede=body.confirm_supersede)
+    db.commit()
+    if out.get("queued"):
+        dispatch(task_id, "retry_draft")
+    return {**out, "findings": challenger_resolution.findings(db, db.get(Task, task_id))}
+
+
+@router.post("/tasks/{task_id}/challenger/rereview", tags=["tasks"])
+def rereview(task_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Run the independent review again on the current version. Changes nothing in the draft or the approval."""
+    from app.services import challenger_resolution
+    out = challenger_resolution.rereview(db, user, task_id)
     db.commit()
     return out
 

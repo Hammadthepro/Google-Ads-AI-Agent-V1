@@ -5,6 +5,7 @@ import { buildModel, buildStream, type ResearchEvent } from "../research/model";
 import { ResearchScene } from "../research/ResearchScene";
 import type { StageState } from "../research/sceneLayout";
 import { EvidenceButtons } from "../research/Explorers";
+import { DraftScene } from "./DraftScene";
 import { aiRoleActivity, buildStages, draftActivity, metric, providerName, waitLeft, type BuildStage, type RoleActivity } from "./buildModel";
 
 const RESEARCH = new Set(["research", "keywords"]);
@@ -82,7 +83,8 @@ function DraftPanel({ events, live, stage }: { events: ResearchEvent[]; live: bo
   const { calls, plan, started } = useMemo(() => draftActivity(events), [events]);
   const now = useNow(live && calls.some((c) => c.state === "waiting"));
   if (!started) return <Waiting text="Drafting starts once research, keywords and feasibility are done." />;
-  return (
+  return (<>
+    <DraftScene events={events} live={live} className="mb-5 h-[320px] sm:h-[400px]" />
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
       <div>
         <div className="mb-2 text-xs font-medium text-slate-500">AI providers{stage?.attempt ? ` · attempt ${stage.attempt}` : ""}</div>
@@ -122,7 +124,7 @@ function DraftPanel({ events, live, stage }: { events: ResearchEvent[]; live: bo
           </div>)}
       </div>
     </div>
-  );
+  </>);
 }
 
 const ROLE_TONE: Record<RoleActivity["status"], string> = { idle: "bg-slate-300", working: "bg-brand-500", done: "bg-emerald-600", failed: "bg-rose-600", not_performed: "bg-amber-500" };

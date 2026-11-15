@@ -188,12 +188,16 @@ def versions(db: Session, plan: CampaignPlan) -> list[CampaignPlan]:
                            .order_by(CampaignPlan.version, CampaignPlan.created_at)))
 
 
-def edit_approval(db: Session, actor: User, approval_id: str, edits: list[dict], note: str = "") -> dict:
+def edit_approval(db: Session, actor: User, approval_id: str, edits: list[dict], note: str = "", *, supersede_approved: bool = False) -> dict:
+    """`supersede_approved`: the person confirmed that an APPROVED (not executed) version is replaced by a new version that needs approval
+    again. The approved version itself is never changed."""
     auth_service.require(actor, "approvals.submit")
     old = approvals.get(db, approval_id)
     auth_service.require_client_access(db, actor, old.client_id)
-    if old.status not in ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED"):
-        raise Conflict(f"Approval is {old.status}; only an open approval can be edited (an approved version is never changed)")
+    allowed = ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED") + (("APPROVED",) if supersede_approved else ())
+    if old.status not in allowed:
+        raise Conflict(f"Approval is {old.status}; " + ("confirm that the approved version is superseded by a new version that needs approval again"
+                       if old.status == "APPROVED" else "only an open approval can be edited (an approved version is never changed)"))
     plan = db.get(CampaignPlan, (old.context or {}).get("plan_id") or "")
     task = db.get(Task, old.task_id) if old.task_id else None
     if not plan or not task:
@@ -221,19 +225,22 @@ def restore_version(db: Session, actor: User, approval_id: str, version_plan_id:
     if src.draft == plan.draft:
         raise Conflict(f"Version {src.version} is identical to the current version {plan.version}; there is nothing to restore")
     return _new_version(db, actor, old, plan, task, src.draft, [f"Restored version {src.version}"], note, status="RESTORED", event="plan.restored",
-                        original=src.original or src.draft)
+                        original=src.original or src.draft, evidence=src.evidence or {})
 
 
 def _new_version(db: Session, actor: User, old, plan: CampaignPlan, task: Task, new_draft: dict, log: list[str], note: str, *,
-                 status: str, event: str, original: dict | None = None) -> dict:
+                 status: str, event: str, original: dict | None = None, evidence: dict | None = None) -> dict:
     from app.services.tasks_service import Runner
     top = max([v.version for v in versions(db, plan)] + [plan.version])
     new_plan = CampaignPlan(task_id=plan.task_id, client_id=plan.client_id, business_id=plan.business_id, scope=plan.scope,
-                            version=top + 1, draft=new_draft, challenger=plan.challenger, human_comparison=plan.human_comparison,
+                            version=top + 1, draft=new_draft, human_comparison=plan.human_comparison,
+                            # the review was of an earlier version: it keeps saying which one until it is run again
+                            challenger={**(plan.challenger or {}), "reviewed_version": (plan.challenger or {}).get("reviewed_version", plan.version)}
+                            if plan.challenger else {},
                             playbook_rule_ids=plan.playbook_rule_ids, draft_ai_run_id=plan.draft_ai_run_id,
                             challenger_ai_run_id=plan.challenger_ai_run_id, competition=plan.competition,
                             original=original or plan.original or plan.draft, parent_plan_id=plan.id, status=status,
-                            change_summary="; ".join(log) + (f" — {note}" if note else ""), edited_by_id=actor.id,
+                            change_summary="; ".join(log) + (f" — {note}" if note else ""), edited_by_id=actor.id, evidence=evidence if evidence is not None else (plan.evidence or {}),
                             source_type=plan.source_type)
     db.add(new_plan)
     db.flush()

@@ -2,6 +2,8 @@
 Nothing is changed in Google Ads by a task run."""
 from __future__ import annotations
 
+import copy
+
 import traceback
 
 from datetime import timedelta
@@ -14,6 +16,7 @@ from app.adapters import registry
 from app.adapters.base import AdapterError
 from app.core import clock
 from app.core.errors import Conflict, NotFound, ValidationFailed
+from app.core.util import normalize_term
 from app.db.session import SessionLocal
 from app.models import AIRun, Ad, AdGroup, Audit, Business, Campaign, CampaignPlan, Client, FeasibilityResult, GoogleAdsAccount, Keyword, Task, User
 from app.services import (accounts_service, activity, ai_service, approvals, audits, auth_service, clients_service, feasibility,
@@ -33,6 +36,24 @@ TASK_TYPES = {
 }
 
 
+ELIGIBLE_PARENT = ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUESTED", "APPROVED")
+
+
+def parent_campaign_plan(db: Session, client_id: str, plan_id: str):
+    """The current version of an unpublished campaign plan of this client, and its approval. Raises when it cannot take an ad group."""
+    from app.models import Approval
+    p = db.get(CampaignPlan, plan_id)
+    if not p or p.client_id != client_id or p.scope != "CAMPAIGN":
+        raise ValidationFailed("Select a campaign that belongs to this client")
+    owner = db.get(Task, p.task_id)
+    if owner is None or owner.plan_id != p.id:
+        raise ValidationFailed("That is not the current version of the campaign plan; choose the campaign again")
+    ap = db.get(Approval, owner.approval_id) if owner.approval_id else None
+    if ap is not None and ap.status not in ELIGIBLE_PARENT:
+        raise ValidationFailed(f"The campaign plan's approval is {ap.status.replace('_', ' ').lower()}; it cannot take a new ad group")
+    return p, ap
+
+
 def create(db: Session, actor: User, data: dict) -> Task:
     ttype = data.get("task_type")
     if ttype not in TASK_TYPES:
@@ -48,6 +69,15 @@ def create(db: Session, actor: User, data: dict) -> Task:
     needs = TASK_TYPES[ttype]["needs"]
     business_id = data.get("business_id")
     campaign_id, ad_group_id, ad_id = data.get("campaign_id"), data.get("ad_group_id"), data.get("ad_id")
+    parent_plan = None
+    if ttype == "ADD_AD_GROUP" and not campaign_id and fields.get("parent_plan_id"):
+        # an approved (or pending) internal campaign plan that is not published yet: the new ad group becomes a new version of THAT plan,
+        # never a second campaign. Its approval is superseded only with explicit confirmation when it is already approved.
+        parent_plan, parent_appr = parent_campaign_plan(db, client.id, fields["parent_plan_id"])
+        if parent_appr is not None and parent_appr.status == "APPROVED" and not fields.get("confirm_supersede"):
+            raise Conflict("This campaign is approved. Adding an ad group creates a new version of it that must be approved again; confirm to continue.")
+        business_id = business_id or parent_plan.business_id
+        needs = "business"
     if needs in ("campaign", "ad_group", "ad"):
         if ad_id:
             ad = db.get(Ad, ad_id)
@@ -160,6 +190,8 @@ class Runner:
         self.campaign = db.get(Campaign, task.campaign_id) if task.campaign_id else None
         self.ad_group = db.get(AdGroup, task.ad_group_id) if task.ad_group_id else None
         self.ad = db.get(Ad, task.ad_id) if task.ad_id else None
+        pid = (task.fields or {}).get("parent_plan_id") if task.task_type == "ADD_AD_GROUP" and not task.campaign_id else None
+        self.parent_plan: CampaignPlan | None = db.get(CampaignPlan, pid) if pid else None  # an unpublished campaign plan being expanded
         self.ctx: dict = {}
 
     def step(self, name: str, fn, key: str = ""):
@@ -247,6 +279,8 @@ class Runner:
         return out
 
     def _existing_keywords(self) -> dict[str, list[str]]:
+        if self.parent_plan is not None:  # the unpublished campaign's own ad groups: the new one must not overlap them
+            return {g["name"]: [k["text"] for k in g.get("keywords", [])] for g in (self.parent_plan.draft or {}).get("ad_groups", [])}
         if not self.campaign:
             return {}
         out = {}
@@ -306,6 +340,9 @@ class Runner:
         if self.task.task_type == "BUILD_CAMPAIGN":
             monthly, target, camp_ids = float(f.get("monthly_budget") or 0), float(f.get("weekly_target") or 0), None
             self._needs_recommendation = monthly <= 0
+        elif self.parent_plan is not None:  # the unpublished campaign's own budget and target
+            pf = (self.db.get(Task, self.parent_plan.task_id).fields or {})
+            monthly, target, camp_ids = float(pf.get("monthly_budget") or 0), float(pf.get("weekly_target") or 0), None
         else:
             monthly = self.campaign.monthly_budget_micros / 1e6 or self.campaign.daily_budget_micros * 30.4 / 1e6
             target = self.campaign.weekly_conversion_target or 0
@@ -344,8 +381,9 @@ class Runner:
                              **{k: s.get(k) for k in ("daily_budget", "expected_weekly_conversions", "realistic_weekly_range", "allowed_cost_per_lead",
                                                       "expected_cost_per_lead", "recommended_monthly_budget")})
         thin = ""
-        if self.task.task_type == "ADD_AD_GROUP" and self.campaign:
-            groups = len(list(self.db.scalars(select(AdGroup).where(AdGroup.campaign_id == self.campaign.id)))) + 1
+        if self.task.task_type == "ADD_AD_GROUP" and (self.campaign or self.parent_plan):
+            groups = (len((self.parent_plan.draft or {}).get("ad_groups", [])) if self.parent_plan is not None else
+                      len(list(self.db.scalars(select(AdGroup).where(AdGroup.campaign_id == self.campaign.id))))) + 1
             per = monthly / groups
             if per < 300:
                 thin = f" Warning: ${per:,.0f}/month per ad group after adding — the campaign budget may be too thin."
@@ -439,6 +477,11 @@ class Runner:
                                  extra={"current_ad": current, "change_request": (self.task.fields or {}).get("change_request", "")})
         self.task.plan_id = plan.id
         self.ctx["plan"] = plan
+        try:  # the research this exact version was built from, from persisted records (shown as the plan's appendix)
+            from app.services import research_appendix
+            plan.evidence = research_appendix.build(self.db, self.task, self.ctx, plan.draft)
+        except Exception as exc:  # noqa: BLE001 - never blocks the draft; the appendix then says it could not be captured
+            plan.evidence = {"version": 0, "error": f"Evidence could not be captured: {type(exc).__name__}"}
         research_events.emit("plan_stored", "Draft campaign structure stored", plan_id=plan.id, scope=plan.scope, **plan_structure(plan.draft, plan.scope))
         return f"Draft created by {registry.get('ai').name} (prompt v{self._prompt_version(plan)})"
 
@@ -472,6 +515,16 @@ class Runner:
         if tt == "BUILD_CAMPAIGN":
             p = planner.build_campaign_payload(self.db, self.task, self.business, self.account, plan.draft)
             return p, "CREATE", f"Build campaign: {p['summary']['campaign_name']}", {"campaign": "does not exist"}, p["summary"]
+        if tt == "ADD_AD_GROUP" and (self.parent_plan is not None or plan.scope == "CAMPAIGN"):
+            # expanding an unpublished campaign: the new ad group becomes a new VERSION of that campaign plan (no second campaign)
+            if plan.scope == "AD_GROUP":
+                plan = self._merge_into_parent(plan)
+                self.ctx["plan"] = plan
+            owner = self.db.get(Task, plan.task_id)
+            p = planner.build_campaign_payload(self.db, owner, self.business, self.account, plan.draft)
+            added = (self.ctx.get("added_ad_group") or plan.change_summary)
+            return (p, "CREATE", f"Build campaign: {p['summary']['campaign_name']} (v{plan.version}, {added})",
+                    {"ad_groups": list(self._existing_keywords())}, p["summary"])
         if tt == "ADD_AD_GROUP":
             p = planner.build_ad_group_payload(self.account, self.campaign, plan.draft)
             return p, "CREATE", f"Add ad group '{plan.draft['name']}' to {self.campaign.name}", {"ad_groups": list(self._existing_keywords())}, p["summary"]
@@ -618,11 +671,57 @@ class Runner:
                      "requires_super_admin": requires_super, "intelligence": self.ctx.get("intelligence"),
                      "data_source": (registry.optional("google_ads").source if registry.optional("google_ads") else "NONE")})
         self.task.approval_id = a.id
+        if self.parent_plan is not None and plan is not None and plan.scope == "CAMPAIGN":
+            self._supersede_parent(a)
         if plan:
             plan.status = "SUBMITTED"
         if a.status == "VALIDATION_FAILED":
             raise Stop("VALIDATION_FAILED", f"Validation failed — approval {a.id} cannot be approved until fixed")
         return f"Approval {a.id} created (hash {a.payload_hash[:12]}…)"
+
+    def _merge_into_parent(self, group_plan: CampaignPlan) -> CampaignPlan:
+        parent = self.parent_plan
+        d = copy.deepcopy(parent.draft)
+        g = dict(group_plan.draft)
+        if any(normalize_term(x["name"]) == normalize_term(g["name"]) for x in d.get("ad_groups", [])):
+            g["name"] = f"{g['name']} ({len(d['ad_groups']) + 1})"
+        d["ad_groups"] = [*d.get("ad_groups", []), g]
+        share = round(100 / len(d["ad_groups"]), 1)
+        d["budget_allocation"] = [{"ad_group": x["name"], "percent": share} for x in d["ad_groups"]]
+        top = max([v.version for v in self.db.scalars(select(CampaignPlan).where(CampaignPlan.task_id == parent.task_id,
+                                                                                 CampaignPlan.scope == "CAMPAIGN"))] + [parent.version])
+        self.ctx["added_ad_group"] = f"added ad group “{g['name']}”"
+        merged = CampaignPlan(task_id=parent.task_id, client_id=parent.client_id, business_id=parent.business_id, scope="CAMPAIGN",
+                              version=top + 1, draft=d, original=parent.original or parent.draft, competition=parent.competition,
+                              challenger={**(group_plan.challenger or {}), "reviewed_scope": "the added ad group"} if group_plan.challenger else {},
+                              human_comparison=group_plan.human_comparison,
+                              playbook_rule_ids=parent.playbook_rule_ids, draft_ai_run_id=group_plan.draft_ai_run_id,
+                              challenger_ai_run_id=group_plan.challenger_ai_run_id, parent_plan_id=parent.id, status="EXPANDED",
+                              change_summary=f"Added ad group “{g['name']}” (task {self.task.id[:8]}); budget split recalculated",
+                              edited_by_id=self.task.created_by_id, source_type=group_plan.source_type,
+                              evidence={**(parent.evidence or {}), "added_ad_group": group_plan.evidence or {}})
+        self.db.add(merged)
+        self.db.flush()
+        self.task.fields = {**(self.task.fields or {}), "ad_group_plan_id": group_plan.id, "merged_plan_id": merged.id}
+        flag_modified(self.task, "fields")
+        return merged
+
+    def _supersede_parent(self, new_approval) -> None:
+        """The expanded version replaces the campaign's previous approval (which was never executed)."""
+        from app.models import Approval
+        owner = self.db.get(Task, self.parent_plan.task_id)
+        old = self.db.get(Approval, owner.approval_id) if owner and owner.approval_id else None
+        if old is not None and old.id != new_approval.id and old.status not in ("INVALIDATED", "EXECUTED", "EXECUTING"):
+            before = old.status
+            old.status, old.superseded_by_id = "INVALIDATED", new_approval.id
+            new_approval.supersedes_id, new_approval.payload_version = old.id, old.payload_version + 1
+            approvals._event(self.db, old, "INVALIDATED", self.actor, "Superseded by an expanded version of the campaign (new ad group)",
+                             before={"status": before}, after={"superseded_by": new_approval.id})
+        prev = self.db.get(CampaignPlan, owner.plan_id) if owner and owner.plan_id else None
+        if prev is not None and prev.id != self.ctx["plan"].id:
+            prev.status = "SUPERSEDED"
+        if owner is not None:
+            owner.plan_id, owner.approval_id = self.ctx["plan"].id, new_approval.id
 
     def s_account_audit(self):
         row = audits.account_audit(self.db, self.business, self.task.id, self.task.created_by_id)
@@ -672,9 +771,17 @@ class Runner:
         self.task.status = "RUNNING"
         self.task.error = ""
         self.db.commit()
-        keys = FLOWS[self.task.task_type][FLOWS[self.task.task_type].index("draft"):]
+        flow = FLOWS[self.task.task_type]
+        queued = next((a for a in (self.task.fields or {}).get("draft_attempts") or [] if a.get("attempt") == attempt), {})
+        start = queued.get("from") or "draft"
+        keys = flow[flow.index(start):] if start in flow else flow[flow.index("draft"):]
         try:
-            self._rehydrate()
+            if start in ("audits", "load", "measurement"):
+                pass  # fresh research: nothing is reused
+            elif queued.get("kind") == "resume":  # whatever finished before the interruption is reused; the rest runs now
+                self.ctx.update(research_for_retry(self.db, self.task)["ctx"])
+            else:
+                self._rehydrate()
         except RetryUnavailable as exc:  # the research changed between the click and the run: say so, keep the history
             self._record_attempt(attempt, status="failed", error=exc.message, finished_at=clock.now().isoformat())
             self.task.status, self.task.error = "FAILED", exc.message
@@ -682,7 +789,10 @@ class Runner:
             return
         rev = next((a for a in (self.task.fields or {}).get("draft_attempts") or [] if a.get("attempt") == attempt and a.get("kind") == "revision"), None)
         if rev is None:
-            self._execute(keys, label={"draft": f"AI draft (retry, attempt {attempt})", "start": f"Draft retry (attempt {attempt}) started"})
+            if queued.get("kind") == "resume":
+                self._execute(keys, label={"start": f"Resumed from “{STEP_NAMES.get(start, start)}” (earlier stages reused)"})
+            else:
+                self._execute(keys, label={"draft": f"AI draft (retry, attempt {attempt})", "start": f"Draft retry (attempt {attempt}) started"})
             return
         self._revise(attempt, rev, keys)
 
@@ -696,8 +806,9 @@ class Runner:
         prev_status = rev.get("prev_task_status") or "AWAITING_APPROVAL"
         self.ctx["revision"] = {"instructions": rev.get("instructions") or "Regenerate: write a fresh alternative draft from the same research.",
                                 "previous": {"version": prev_plan.version, **plan_structure(prev_plan.draft, prev_plan.scope)}}
-        what = "Revision" if rev.get("instructions") else "Regenerated draft"
-        self._execute(keys, label={"draft": f"AI draft ({what.lower()}, v{prev_plan.version + 1})", "start": f"{what} started from stored research"})
+        what = {"audits": "Research refresh", "feasibility": "Feasibility re-run"}.get(rev.get("from") or "", "Revision" if rev.get("instructions") else "Regenerated draft")
+        self._execute(keys, label={"draft": f"AI draft ({what.lower()}, v{prev_plan.version + 1})",
+                                   "start": f"{what} started" + ("" if rev.get("from") == "audits" else " from stored research")})
         t = self.task
         new_plan = self.db.get(CampaignPlan, t.plan_id) if t.plan_id and t.plan_id != prev_plan.id else None
         if new_plan is None or t.status == "FAILED":  # keep the previous version usable
@@ -711,7 +822,9 @@ class Runner:
                                                                                  CampaignPlan.id != new_plan.id))] + [prev_plan.version])
         new_plan.version = top + 1  # versions are immutable rows; a new one never reuses a number
         new_plan.parent_plan_id = prev_plan.id
-        new_plan.change_summary = (f"AI revision: {rev['instructions'][:300]}" if rev.get("instructions") else "AI regenerated from the same research")
+        new_plan.change_summary = (f"AI revision: {rev['instructions'][:300]}" if rev.get("instructions") else
+                                   "Rebuilt after a research refresh" if rev.get("from") == "audits" else
+                                   "Rebuilt after re-running feasibility" if rev.get("from") == "feasibility" else "AI regenerated from the same research")
         new_plan.edited_by_id = rev.get("requested_by")
         prev_plan.status = "SUPERSEDED"
         new_appr = self.db.get(Approval, t.approval_id) if t.approval_id else None
@@ -847,7 +960,7 @@ REVISABLE_APPROVALS = ("PENDING_APPROVAL", "VALIDATION_FAILED", "CHANGES_REQUEST
 MAX_INSTRUCTIONS = 2000
 
 
-def revision_state(db: Session, t: Task) -> dict:
+def revision_state(db: Session, t: Task, *, fresh: bool = False) -> dict:
     """Whether the current draft can be regenerated or revised with instructions (a new version from the stored research)."""
     from app.models import Approval
     if "draft" not in FLOWS.get(t.task_type, []) or not t.plan_id:
@@ -858,13 +971,14 @@ def revision_state(db: Session, t: Task) -> dict:
     if ap is not None and ap.status not in REVISABLE_APPROVALS:
         return {"available": False, "reason": f"The approval is {ap.status.replace('_', ' ').lower()}; an executed or closed version is not revised."}
     info = research_for_retry(db, t)
-    if info["problems"]:
+    if info["problems"] and not fresh:
         return {"available": False, "stale": info["stale"], "reason": " ".join(info["problems"])}
     plan = db.get(CampaignPlan, t.plan_id)
     return {"available": True, "reason": "", "researched_at": info["researched_at"], "current_version": plan.version if plan else None}
 
 
-def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "") -> tuple[Task, int]:
+def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "", *, from_key: str = "draft",
+                 confirm_supersede: bool = False) -> tuple[Task, int]:
     """Queue a new AI version of this task's draft from its stored research (empty instructions = regenerate). One at a time:
     the status change is a single conditional UPDATE. The current version and approval stay valid until the new one exists."""
     auth_service.require(actor, "tasks.run")
@@ -875,9 +989,15 @@ def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "")
     instructions = (instructions or "").strip()
     if len(instructions) > MAX_INSTRUCTIONS:
         raise ValidationFailed(f"Keep the instructions under {MAX_INSTRUCTIONS} characters")
-    st = revision_state(db, t)
+    st = revision_state(db, t, fresh=from_key == "audits")
     if not st["available"]:
         raise (Conflict if st.get("running") else RetryUnavailable)(st["reason"] or "This task has no draft to revise.")
+    if from_key not in FLOWS.get(t.task_type, []):
+        raise ValidationFailed(f"This task has no “{from_key}” stage")
+    from app.models import Approval
+    ap = db.get(Approval, t.approval_id) if t.approval_id else None
+    if ap is not None and ap.status == "APPROVED" and not confirm_supersede:
+        raise Conflict("The current version is approved. A new version supersedes it and needs approval again; confirm to continue.")
     prev_status = t.status
     res = db.execute(update(Task).where(Task.id == t.id, Task.status == prev_status).values(status="RETRYING_DRAFT", error="")
                      .execution_options(synchronize_session=False))
@@ -888,6 +1008,7 @@ def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "")
     attempts = [dict(a) for a in (t.fields or {}).get("draft_attempts") or []]
     attempt = max([a.get("attempt", 0) for a in attempts] + [1]) + 1
     attempts.append({"attempt": attempt, "kind": "revision", "status": "queued", "instructions": instructions, "requested_by": actor.id,
+                     "from": from_key,
                      "requested_at": clock.now().isoformat(), "prev_plan_id": t.plan_id, "prev_approval_id": t.approval_id,
                      "prev_task_status": prev_status})
     t.fields = {**(t.fields or {}), "draft_attempts": attempts}
@@ -895,6 +1016,97 @@ def revise_draft(db: Session, actor: User, task_id: str, instructions: str = "")
     activity.log(db, "task.revise_draft", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id,
                  details={"attempt": attempt, "instructions": instructions[:500]})
     return t, attempt
+
+
+STALE_AFTER = timedelta(minutes=15)
+
+
+def _last_activity(db: Session, t: Task):
+    from sqlalchemy import func
+    from app.models import ResearchEvent
+    ev = db.scalar(select(func.max(ResearchEvent.created_at)).where(ResearchEvent.run_id == t.id))
+    return max([x for x in (t.updated_at, ev) if x is not None], default=t.created_at)
+
+
+def resume_state(db: Session, t: Task) -> dict:
+    """A run is interrupted when it is marked running but nothing has happened for STALE_AFTER (the worker restarted or died)."""
+    if t.status not in ("RUNNING", "QUEUED", "RETRYING_DRAFT"):
+        return {"available": False}
+    idle = clock.real_now() - _last_activity(db, t)
+    if idle < STALE_AFTER:
+        return {"available": False, "running": True, "reason": "The run is active."}
+    flow = FLOWS.get(t.task_type, [])
+    done = {x.get("key") for x in (t.steps or []) if x.get("status") == "DONE"}
+    nxt = next((k for k in flow if k not in done), flow[0] if flow else None)
+    return {"available": bool(nxt), "from": nxt, "idle_minutes": int(idle.total_seconds() // 60),
+            "stages": [STEP_NAMES.get(k, k) for k in flow[flow.index(nxt):]] if nxt else [],
+            "reuses": [STEP_NAMES.get(k, k) for k in flow if k in done]}
+
+
+def resume(db: Session, actor: User, task_id: str) -> tuple[Task, int]:
+    auth_service.require(actor, "tasks.run")
+    t = db.get(Task, task_id)
+    if not t:
+        raise NotFound("Task not found")
+    auth_service.require_client_access(db, actor, t.client_id)
+    st = resume_state(db, t)
+    if not st["available"]:
+        raise Conflict(st.get("reason") or "This run is not interrupted.")
+    res = db.execute(update(Task).where(Task.id == t.id, Task.status == t.status).values(status="RETRYING_DRAFT", error="")
+                     .execution_options(synchronize_session=False))
+    if res.rowcount != 1:
+        db.rollback()
+        raise Conflict("The run was resumed already.")
+    db.refresh(t)
+    attempts = [dict(a) for a in (t.fields or {}).get("draft_attempts") or []]
+    attempt = max([a.get("attempt", 0) for a in attempts] + [1]) + 1
+    attempts.append({"attempt": attempt, "kind": "resume", "status": "queued", "from": st["from"], "requested_by": actor.id,
+                     "requested_at": clock.now().isoformat()})
+    t.fields = {**(t.fields or {}), "draft_attempts": attempts}
+    flag_modified(t, "fields")
+    activity.log(db, "task.resume", actor=actor, entity="task", entity_id=t.id, client_id=t.client_id, details={"from": st["from"]})
+    return t, attempt
+
+
+def actions(db: Session, t: Task) -> list[dict]:
+    """Every re-run that applies to this task now: what runs again, what is reused, and whether an approved version is superseded.
+    The frontend shows exactly these; each maps to a real endpoint."""
+    from app.models import Approval
+    flow = FLOWS.get(t.task_type, [])
+    ap = db.get(Approval, t.approval_id) if t.approval_id else None
+    approved = bool(ap and ap.status == "APPROVED")
+    names = lambda ks: [STEP_NAMES.get(k, k) for k in ks]  # noqa: E731
+    out = []
+    dr = draft_retry_state(db, t)
+    if dr.get("available"):
+        i = flow.index("draft")
+        out.append({"key": "retry_draft", "label": "Retry failed draft", "stages": names(flow[i:]), "reuses": names(flow[:i]), "supersedes_approved": False})
+    rs = resume_state(db, t)
+    if rs.get("available"):
+        out.append({"key": "resume", "label": "Resume interrupted run", "stages": rs["stages"], "reuses": rs["reuses"], "supersedes_approved": False,
+                    "detail": f"No activity for {rs['idle_minutes']} min"})
+    rv = revision_state(db, t)
+    if rv.get("available"):
+        i = flow.index("draft")
+        common = {"supersedes_approved": approved, "reuses": names(flow[:i])}
+        out.append({"key": "regenerate", "label": "Regenerate AI draft", "stages": names(flow[i:]), **common})
+        out.append({"key": "revise", "label": "Revise with instructions", "stages": names(flow[i:]), "needs_instructions": True, **common})
+        if "feasibility" in flow:
+            j = flow.index("feasibility")
+            out.append({"key": "rerun_feasibility", "label": "Re-run feasibility analysis", "stages": names(flow[j:]), "reuses": names(flow[:j]),
+                        "supersedes_approved": approved})
+    rf = revision_state(db, t, fresh=True)
+    if rf.get("available") and "audits" in flow:
+        j = flow.index("audits")
+        out.append({"key": "refresh_research", "label": "Refresh research", "stages": names(flow[j:]), "reuses": [],
+                    "supersedes_approved": approved, "detail": "Fetches the website, competitor and keyword research again"})
+    if t.plan_id and t.status not in ACTIVE_STATUSES and "challenge" in flow:
+        out.append({"key": "rerun_challenger", "label": "Re-run Challenger review", "stages": [STEP_NAMES["challenge"]],
+                    "reuses": ["the current plan version"], "supersedes_approved": False, "detail": "Does not change the draft or the approval"})
+    if t.task_type == "AUDIT_ONLY" and t.status not in ACTIVE_STATUSES:
+        out.append({"key": "rerun_audit", "label": "Re-run audit", "stages": names(flow), "reuses": [], "supersedes_approved": False,
+                    "detail": "Runs as a new task; this result is kept"})
+    return out
 
 
 def retry_draft(db: Session, actor: User, task_id: str) -> tuple[Task, int]:

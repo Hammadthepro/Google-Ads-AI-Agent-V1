@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { ResearchAppendix } from "../components/ResearchAppendix";
 import { Badge, Card, DataSourceBadge, dt, KV, Notice, PageHeader, Spinner, StatusBadge, Table } from "../components/ui";
 
 export function Planner() {
@@ -101,6 +102,7 @@ export function PlanDetail() {
       <Card title="AI draft"><DraftView draft={p.draft} /></Card>
       <Card title="AI challenger (independent review)"><ChallengerView ch={p.challenger} /></Card>
       <Card title="Human plan comparison"><HumanComparison hc={p.human_comparison} /></Card>
+      <ResearchAppendix planId={p.id} />
     </div>
   );
 }

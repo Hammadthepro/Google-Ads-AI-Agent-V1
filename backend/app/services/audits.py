@@ -398,7 +398,9 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                       "relevance_score": score, "relevance_basis": basis, "sources": r["sources"], "metrics": r["metrics"],
                       "first_party": r.get("first_party"), "landing_page": lp_map.get(r.get("service") or "", ""),
                       "selection_basis": "observed volume" if vol is not None else "relevance and intent (no volume data)",
-                      "uncertainty": uncertainty})
+                      "uncertainty": uncertainty,
+                      # Keyword Planner's own request parameters for this row (absent when the row has no planner metrics)
+                      "planner_location": r.get("location"), "planner_language": r.get("language"), "retrieved_at": r.get("retrieved_at")})
     table.sort(key=lambda x: (x["label"] != "SERVICE", -(x["avg_monthly_searches"] or 0), -x["relevance_score"]))
     clusters = {}
     for t in table:

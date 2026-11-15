@@ -97,7 +97,8 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
   }, { onSuccess: () => { setF((x) => ({ ...x, api_key: "" })); qc.invalidateQueries({ queryKey: ["ai-roles"] }); } });
   const id = `ai_${role}`;
   const configured = data.status !== "NOT_CONFIGURED";
-  const summary = data.provider ? `${data.provider_label} · ${data.model || "no model selected"}` : "Not configured";
+  const nCaps = Object.keys(capsBody(capsOf(data.caps))).length;
+  const summary = (data.provider ? `${data.provider_label} · ${data.model || "no model selected"}` : "Not configured") + ` · token limits: ${nCaps ? `${nCaps} set` : "none"}`;
   const canQuickTest = canManage && !!data.provider && data.key.present;
 
   return (
@@ -183,24 +184,7 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
           </fieldset>)}
         {sameAsMain && <Notice tone="amber">{f.model === other.model ? "Same provider and model as the Main AI: its reviews are not an independent second opinion." : "Same provider as the Main AI (different model): limited independence."}</Notice>}
 
-        <details className="text-xs" open={Object.values(capsBody(capsOf(data.caps))).length > 0}>
-          <summary className="cursor-pointer text-slate-500 hover:text-slate-800">
-            Token caps{Object.keys(capsBody(capsOf(data.caps))).length ? ` · ${Object.keys(capsBody(capsOf(data.caps))).length} set` : " (optional)"}</summary>
-          <p className="mt-1.5 text-slate-500">The app's own limits for the {t.title}, enforced on the server before a request is sent. Leave a field empty for no cap.
-            A request over a cap is not sent and the task shows which cap stopped it.</p>
-          <div className="mt-2 grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-3">
-            {CAP_ORDER.map((k) => (
-              <Field key={k} label={data.cap_fields?.[k] ?? k.replace(/_/g, " ")}>
-                <Input inputMode="numeric" placeholder="no cap" value={f.caps[k] ?? ""} disabled={!canManage}
-                  onChange={(e) => setF({ ...f, caps: { ...f.caps, [k]: e.target.value } })} /></Field>))}
-          </div>
-          <dl aria-label="Provider limits" className="mt-2 grid max-w-2xl grid-cols-2 gap-x-4 gap-y-1 rounded border border-slate-100 bg-slate-50/60 px-3 py-2 text-2xs sm:grid-cols-3">
-            <div className="col-span-full font-medium text-slate-600">Set by the provider, not by these caps</div>
-            <div><dt className="text-slate-400">Context window</dt><dd className="tabular text-slate-700">{data.provider_limits?.context_window ? `${fmt(data.provider_limits.context_window)} tokens` : "not stated by the provider"}</dd></div>
-            <div><dt className="text-slate-400">Maximum output</dt><dd className="tabular text-slate-700">{data.provider_limits?.max_output ? `${fmt(data.provider_limits.max_output)} tokens` : "not stated by the provider"}</dd></div>
-            <div><dt className="text-slate-400">Tokens / requests per minute</dt><dd className="text-slate-700">read from the provider's response headers when sent</dd></div>
-          </dl>
-        </details>
+        <TokenLimits role={role} title={t.title} data={data} caps={f.caps} canManage={canManage} onChange={(k, v) => setF({ ...f, caps: { ...f.caps, [k]: v } })} />
 
         <details className="text-xs">
           <summary className="cursor-pointer text-slate-500 hover:text-slate-800">Cost tracking (optional)</summary>
@@ -234,6 +218,56 @@ export function AIRoleRow({ role, data, providers, canManage, other, open, onTog
   );
 }
 
+/** Token limits of one role: the app's own caps (editable, enforced on the server before sending) next to the limits the provider
+ *  enforces, and what each client has left today and this month. */
+function TokenLimits({ role, title, data, caps, canManage, onChange }: { role: string; title: string; data: any; caps: Record<string, string>;
+  canManage: boolean; onChange: (k: string, v: string) => void }) {
+  const budget = useQuery({ queryKey: ["ai-budget", role], enabled: canManage, queryFn: () => api.get(`/ai/roles/${role}/budget`) });
+  const saved = capsBody(capsOf(data.caps));
+  const pl = data.provider_limits ?? {};
+  return (
+    <section aria-label={`${title} token limits`} className="rounded-md border border-slate-200">
+      <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 px-3 py-2">
+        <h4 className="text-xs font-semibold text-slate-900">Token limits</h4>
+        <span className="text-2xs text-slate-500">{Object.keys(saved).length ? `${Object.keys(saved).length} application limit(s) saved` : "No application limits saved"}</span>
+      </header>
+      <div className="grid gap-3 p-3 lg:grid-cols-2">
+        <div>
+          <div className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-slate-500">Application limits · set here, enforced before sending</div>
+          <div className="grid grid-cols-2 gap-2">
+            {CAP_ORDER.map((k) => (
+              <Field key={k} label={data.cap_fields?.[k] ?? k.replace(/_/g, " ")}
+                hint={saved[k] ? `Saved: ${Number(saved[k]).toLocaleString()}` : "Saved: no limit"}>
+                <Input inputMode="numeric" placeholder="no limit" value={caps[k] ?? ""} disabled={!canManage} onChange={(e) => onChange(k, e.target.value)} /></Field>))}
+          </div>
+          <p className="mt-1.5 text-2xs text-slate-500">A request over a limit is not sent; the task shows which limit stopped it. Save with “Save configuration”.</p>
+        </div>
+        <div className="space-y-3">
+          <dl aria-label="Provider limits" className="grid grid-cols-2 gap-x-4 gap-y-1 rounded border border-slate-100 bg-slate-50/60 px-3 py-2 text-2xs">
+            <div className="col-span-full font-medium uppercase tracking-wide text-slate-500">Provider limits · enforced by {data.provider_label || "the provider"}</div>
+            <div><dt className="text-slate-400">Context window</dt><dd className="tabular text-slate-700">{pl.context_window ? `${fmt(pl.context_window)} tokens` : "not stated by the provider"}</dd></div>
+            <div><dt className="text-slate-400">Maximum output</dt><dd className="tabular text-slate-700">{pl.max_output ? `${fmt(pl.max_output)} tokens` : "not stated by the provider"}</dd></div>
+            <div className="col-span-full"><dt className="text-slate-400">Tokens / requests per minute</dt><dd className="text-slate-700">read from the provider's response headers when it sends them</dd></div>
+          </dl>
+          {canManage && (
+            <div aria-label="Remaining budget">
+              <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-slate-500">Remaining client budget · {budget.data?.day ?? "today"}</div>
+              {!saved.client_daily_tokens && !saved.client_monthly_tokens ? <p className="text-2xs text-slate-500">No daily or monthly client limit is set, so nothing is counted against a budget.</p>
+                : !(budget.data?.clients ?? []).length ? <p className="text-2xs text-slate-500">No client has used this role since the limits were set.</p> : (
+                <table className="w-full text-left text-2xs">
+                  <thead className="text-slate-400"><tr><th className="py-0.5 pr-2 font-medium">Client</th><th className="py-0.5 pr-2 font-medium">Left today</th><th className="py-0.5 font-medium">Left this month</th></tr></thead>
+                  <tbody>{budget.data.clients.map((c: any) => (
+                    <tr key={c.client_id}><td className="py-0.5 pr-2 text-slate-700">{c.client}</td>
+                      <td className={cx("tabular py-0.5 pr-2", c.left_today !== null && c.left_today <= 0 && "text-rose-700")}>{c.left_today === null ? "no limit" : fmt(Math.max(c.left_today, 0))}</td>
+                      <td className={cx("tabular py-0.5", c.left_month !== null && c.left_month <= 0 && "text-rose-700")}>{c.left_month === null ? "no limit" : fmt(Math.max(c.left_month, 0))}</td></tr>))}</tbody>
+                </table>)}
+            </div>)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function AIUsageRow({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <section id="card-ai_usage" className="scroll-mt-20" aria-labelledby="h-ai_usage">
@@ -243,7 +277,7 @@ export function AIUsageRow({ open, onToggle }: { open: boolean; onToggle: () => 
           <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-slate-300" />
           <span className="min-w-0">
             <span id="h-ai_usage" className="block truncate text-[13px] font-semibold text-slate-900">AI usage</span>
-            <span className="block truncate text-xs text-slate-500">Requests, tokens, latency, errors and known cost by role, provider and model</span>
+            <span className="block truncate text-xs text-slate-500">Requests, tokens, latency, errors and known cost. Limits are set in Main AI / Challenger AI → Token limits.</span>
           </span>
         </button>
       </div>

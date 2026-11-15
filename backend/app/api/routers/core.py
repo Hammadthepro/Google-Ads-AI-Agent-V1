@@ -186,6 +186,45 @@ def structure(client_id: str, user: User = Depends(require("clients.view")), db:
     return {"campaigns": out, "conversion_actions": conv, "source": registry.get("google_ads").source}
 
 
+@router.get("/clients/{client_id}/campaign-options", tags=["google ads"])
+def campaign_options(client_id: str, user: User = Depends(require("clients.view")), db: Session = Depends(get_db)):
+    """Every campaign of this client a new plan can build on: campaigns that exist in Google Ads (synced) AND internal campaign plans that
+    are approved or awaiting approval but not published yet. An executed plan is not listed twice: once published, its Google Ads
+    campaign is the entry. Each says plainly whether it is published."""
+    from app.models import Approval, CampaignPlan, Client, Task
+    from app.services import accounts_service, tasks_service
+    auth_service.require_client_access(db, user, client_id)
+    client = db.get(Client, client_id)
+    accts = {a.id: a for a in db.scalars(select(GoogleAdsAccount).where(GoogleAdsAccount.client_id == client_id))}
+    out = []
+    for c in db.scalars(select(Campaign).where(Campaign.client_id == client_id).order_by(Campaign.name)):
+        a = accts.get(c.google_ads_account_id)
+        groups = [{"id": g.id, "name": g.name, "status": g.status} for g in db.scalars(select(AdGroup).where(AdGroup.campaign_id == c.id).order_by(AdGroup.name))]
+        out.append({"kind": "google_ads", "id": c.id, "name": c.name, "client": client.name if client else "", "campaign_type": c.campaign_type,
+                    "customer_id": a.customer_id if a else None, "customer_display": accounts_service.fmt_cid(a.customer_id) if a else None,
+                    "approval_status": "—", "publication": f"Published in Google Ads ({c.status.lower()})", "published": True,
+                    "status": c.status, "read_only": c.is_read_only, "business_id": c.business_id, "ad_groups": groups,
+                    "can_add_ad_group": not c.is_read_only})
+    plans = db.scalars(select(CampaignPlan).where(CampaignPlan.client_id == client_id, CampaignPlan.scope == "CAMPAIGN")
+                       .order_by(CampaignPlan.created_at.desc()))
+    for p in plans:
+        owner = db.get(Task, p.task_id)
+        if owner is None or owner.plan_id != p.id:
+            continue  # only the current version of each campaign plan
+        ap = db.get(Approval, owner.approval_id) if owner.approval_id else None
+        if ap is None or ap.status not in tasks_service.ELIGIBLE_PARENT:
+            continue
+        a = accts.get(ap.google_ads_account_id) if ap.google_ads_account_id else None
+        out.append({"kind": "plan", "id": p.id, "name": (p.draft or {}).get("campaign_name") or "Campaign plan", "client": client.name if client else "",
+                    "campaign_type": "SEARCH", "customer_id": a.customer_id if a else None,
+                    "customer_display": accounts_service.fmt_cid(a.customer_id) if a else None,
+                    "approval_status": ap.status, "publication": "Not published (internal plan)", "published": False,
+                    "status": ap.status, "read_only": False, "business_id": p.business_id, "plan_version": p.version, "task_id": p.task_id,
+                    "approval_id": ap.id, "ad_groups": [{"id": None, "name": g["name"], "status": "DRAFT"} for g in (p.draft or {}).get("ad_groups", [])],
+                    "can_add_ad_group": True, "requires_supersede_confirmation": ap.status == "APPROVED"})
+    return {"campaigns": out}
+
+
 # ------------------------------------------------------------------ conversion measurement audit (findings only; no status, no gate)
 @router.post("/businesses/{business_id}/measurement/run", tags=["measurement"])
 def run_measurement(business_id: str, user: User = Depends(require("audits.run")), db: Session = Depends(get_db)):

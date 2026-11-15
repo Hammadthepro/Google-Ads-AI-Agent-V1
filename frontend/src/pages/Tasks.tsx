@@ -9,6 +9,8 @@ import { BuildWorkspace } from "../components/campaignBuild/BuildWorkspace";
 import { DraftFailure } from "../components/campaignBuild/DraftRetry";
 import { AccountBinding } from "../components/campaignBuild/AccountBinding";
 import { DraftRevision } from "../components/campaignBuild/DraftRevision";
+import { ChallengerFindings } from "../components/campaignBuild/ChallengerFindings";
+import { RowActions, TaskActions } from "../components/campaignBuild/TaskActions";
 
 const TASKS: { value: string; label: string; needs: "business" | "campaign" | "ad_group" | "ad" }[] = [
   { value: "BUILD_CAMPAIGN", label: "Build a new campaign", needs: "business" },
@@ -106,9 +108,16 @@ export function TaskForm() {
   const [showOpt, setShowOpt] = useState(false);
   const client = clients.data?.find((c: any) => c.id === clientId);
   const structure = useQuery({ queryKey: ["structure", clientId], enabled: !!clientId, queryFn: () => api.get(`/clients/${clientId}/structure`) });
+  // every campaign a plan can build on: synced Google Ads campaigns AND approved/pending internal plans that are not published yet
+  const options = useQuery({ queryKey: ["campaign-options", clientId], enabled: !!clientId, queryFn: () => api.get(`/clients/${clientId}/campaign-options`) });
+  const [confirmSupersede, setConfirmSupersede] = useState(false);
   const spec = TASKS.find((t) => t.value === type)!;
   const business = client?.businesses.find((b: any) => b.id === businessId) ?? (client?.businesses.length === 1 ? client.businesses[0] : null);
-  const campaigns = (structure.data?.campaigns ?? []).filter((c: any) => !businessId || !c.business_id || c.business_id === businessId);
+  const synced = (structure.data?.campaigns ?? []).filter((c: any) => !businessId || !c.business_id || c.business_id === businessId);
+  const planOptions = type === "ADD_AD_GROUP" ? (options.data?.campaigns ?? []).filter((o: any) => o.kind === "plan" && (!businessId || !o.business_id || o.business_id === businessId)) : [];
+  const optionOf = (id: string) => (options.data?.campaigns ?? []).find((o: any) => o.id === id);
+  const parentPlan = planOptions.find((o: any) => o.id === campaignId);
+  const campaigns = synced;
   const campaign = campaigns.find((c: any) => c.id === campaignId);
   const adGroup = campaign?.ad_groups.find((g: any) => g.id === adGroupId);
   useEffect(() => { if (client && !client.businesses.find((b: any) => b.id === businessId)) setBusinessId(client.businesses[0]?.id ?? ""); }, [clientId, client]);
@@ -158,13 +167,15 @@ export function TaskForm() {
       CHANGE_TARGET: ["weekly_target"], CHANGE_LOCATIONS: ["radius_miles", "zip_codes"], AUDIT_ONLY: [] };
     const clean = Object.fromEntries(Object.entries(fields).filter(([k, v]) => keep[type].includes(k) && v !== "" && v !== undefined));
     if (Object.keys(clar).length) clean.clarifications = clar;
-    return { task_type: type, client_id: clientId, business_id: business?.id, campaign_id: campaignId || undefined, ad_group_id: adGroupId || undefined,
+    if (parentPlan) { clean.parent_plan_id = parentPlan.id; if (confirmSupersede) clean.confirm_supersede = true; }
+    return { task_type: type, client_id: clientId, business_id: business?.id, campaign_id: (!parentPlan && campaignId) || undefined, ad_group_id: adGroupId || undefined,
       ad_id: adId || undefined, fields: clean, human_plan: humanPlan, note };
   };
   const submit = () => run.mutate(buildBody(), { onSuccess: (t: any) => nav(`/tasks/${t.id}`) });
   const check = () => intakeCheck.mutate(buildBody());
   const intake = (run.error as any)?.details?.intake ?? intakeCheck.data;
-  const ready = clientId && (spec.needs === "business" ? !!business : spec.needs === "campaign" ? !!campaignId : spec.needs === "ad_group" ? !!adGroupId : !!adId);
+  const ready = clientId && (spec.needs === "business" ? !!business : spec.needs === "campaign" ? !!campaignId && (!parentPlan?.requires_supersede_confirmation || confirmSupersede)
+    : spec.needs === "ad_group" ? !!adGroupId : !!adId);
 
   return (
     <Card title="Run a task" actions={<span className="text-xs text-slate-500">Runs every step automatically up to the approval stage. Nothing changes in Google Ads.</span>}>
@@ -174,9 +185,20 @@ export function TaskForm() {
         <Field label="Task"><Select value={type} onChange={(e) => setType(e.target.value)} options={TASKS} /></Field>
         {clientId && ["campaign", "ad_group", "ad"].includes(spec.needs) && (
           <Field label="Campaign" hint="Read from your connected Google Ads account">
-            <Select value={campaignId} onChange={(e) => { setCampaignId(e.target.value); setAdGroupId(""); setAdId(""); }}
-              options={[{ value: "", label: structure.isLoading ? "Loading…" : "Choose…" }, ...campaigns.map((c: any) => ({ value: c.id, label: `${c.name} · ${c.status}${c.read_only ? " · read-only" : ""}` }))]} />
+            <Select aria-label="Campaign" value={campaignId} onChange={(e) => { setCampaignId(e.target.value); setAdGroupId(""); setAdId(""); setConfirmSupersede(false); }}
+              options={[{ value: "", label: structure.isLoading || options.isLoading ? "Loading…" : campaigns.length + planOptions.length ? "Choose…" : "No campaigns for this client yet" },
+                ...campaigns.map((c: any) => { const o = optionOf(c.id); return { value: c.id, label: `${c.name} · Published in Google Ads (${c.status.toLowerCase()})${o?.customer_display ? ` · ${o.customer_display}` : ""}${c.read_only ? ` · ${c.campaign_type} read-only` : ""}` }; }),
+                ...planOptions.map((o: any) => ({ value: o.id, label: `${o.name} · Not published · ${o.approval_status.replace(/_/g, " ").toLowerCase()} (plan v${o.plan_version})${o.customer_display ? ` · ${o.customer_display}` : " · no account bound"}` }))]} />
           </Field>)}
+        {(parentPlan || campaign) && (() => { const o = parentPlan ?? optionOf(campaign.id); return o && (
+          <dl aria-label="Selected campaign" className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md border border-slate-200 px-3 py-2 text-xs md:col-span-3 sm:grid-cols-6">
+            {[["Campaign", o.name], ["Client", o.client], ["Google Ads account", o.customer_display ?? "not bound"], ["Approval", o.approval_status.replace(/_/g, " ").toLowerCase()],
+              ["Publication", o.publication], ["Type", o.campaign_type]].map(([k, v]) => <div key={k}><dt className="text-slate-400">{k}</dt><dd className="text-slate-800">{v}</dd></div>)}
+            {parentPlan && <div className="col-span-full mt-1 text-slate-600">The new ad group is added to this plan as version {parentPlan.plan_version + 1}, with its existing ad groups ({parentPlan.ad_groups.map((g: any) => g.name).join(", ")}) and settings kept. No second campaign is created; the new version needs approval.</div>}
+            {parentPlan?.requires_supersede_confirmation && (
+              <label className="col-span-full mt-1 flex items-start gap-2 text-amber-900"><input type="checkbox" className="mt-0.5" checked={confirmSupersede} onChange={(e) => setConfirmSupersede(e.target.checked)} />
+                This campaign is approved. I understand the new version replaces the approved one and must be approved again.</label>)}
+          </dl>); })()}
         {campaign?.read_only && <Notice tone="amber">{campaign.campaign_type} campaigns are read-only in V1.</Notice>}
         {campaign && ["ad_group", "ad"].includes(spec.needs) && (
           <Field label="Ad group"><Select value={adGroupId} onChange={(e) => { setAdGroupId(e.target.value); setAdId(""); }}
@@ -223,6 +245,7 @@ export function Tasks() {
           { key: "steps", label: "Progress", render: (t) => `${t.steps.filter((s: any) => s.status === "DONE").length}/${t.steps.length}` },
           { key: "created_at", label: "Created", render: (t) => dt(t.created_at) },
           { key: "source_type", label: "Data", render: (t) => <DataSourceBadge source={t.source_type} /> },
+          { key: "actions", label: "", render: (t) => <RowActions taskId={t.id} /> },
         ]} />
       </Card>
     </div>
@@ -241,12 +264,14 @@ export function TaskDetail() {
         actions={<><StatusBadge value={t.status} /><DataSourceBadge source={t.source_type} />
           {t.approval_id && <Link to={`/approvals/${t.approval_id}`}><Button variant="primary">Open approval →</Button></Link>}
           {t.plan_id && <Link to={`/planner/${t.plan_id}`}><Button>View plan</Button></Link>}</>} />
+      <TaskActions task={{ ...t, actions: (t.actions ?? []).filter((a: any) => !(["revise", "regenerate"].includes(a.key) && t.revision?.available)) }} />
       {t.status === "VALIDATION_FAILED" && <Notice tone="red">{t.error}</Notice>}
       {(t.draft_retry?.available || (t.status === "RETRYING_DRAFT" && t.draft_attempts?.at(-1)?.kind !== "revision") || (t.status === "RUNNING" && t.draft_attempts?.at(-1)?.kind === "retry")
         || (t.status === "FAILED" && t.draft_attempts?.at(-1)?.status === "failed")) ? <DraftFailure task={t} />
         : t.status === "FAILED" && <Notice tone="red">{t.error}</Notice>}
       {TERMINAL.includes(t.status) && <AccountBinding task={t} />}
       {(t.revision?.available || t.revision?.reason || t.draft_attempts?.at(-1)?.kind === "revision") && <DraftRevision task={t} />}
+      {t.plan_id && TERMINAL.includes(t.status) && <ChallengerFindings taskId={t.id} />}
       {t.status === "AWAITING_BUDGET_DECISION" && <BudgetDecision task={t} />}
       {t.status === "AWAITING_APPROVAL" && <Notice tone="amber">The workflow stopped at the approval stage. Nothing has been changed in Google Ads.</Notice>}
       {WORKSPACE_TYPES.includes(t.task_type) && <BuildWorkspace task={t} active={!TERMINAL.includes(t.status)} />}
