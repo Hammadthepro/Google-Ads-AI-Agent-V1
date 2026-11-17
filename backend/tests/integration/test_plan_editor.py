@@ -8,7 +8,7 @@ def _build(admin):
     c = admin.post("/clients", {"name": "Editor Test Co", "owner_contact": "o@x.example"}).json()["id"]
     b = admin.post(f"/clients/{c}/businesses", {
         "name": "Editor Biz", "business_type": "home_services", "website_url": "https://www.northsideplumbing.example/",
-        "phone": "(555) 201-4400", "address": "1 Main St, Columbus, OH", "lead_form_url": "https://www.northsideplumbing.example/contact",
+        "phone": "(555) 201-4400", "business_hours": {"mon-fri": "07:00-19:00", "sat": "08:00-16:00", "sun": "closed"}, "address": "1 Main St, Columbus, OH", "lead_form_url": "https://www.northsideplumbing.example/contact",
         "thank_you_url": "https://www.northsideplumbing.example/thank-you", "verified_claims": ["Licensed & Insured"],
         "services": [{"name": "Drain Cleaning", "landing_page_url": "https://www.northsideplumbing.example/drain-cleaning"},
                      {"name": "Water Heater Repair", "landing_page_url": "https://www.northsideplumbing.example/water-heater-repair"}]}).json()["id"]

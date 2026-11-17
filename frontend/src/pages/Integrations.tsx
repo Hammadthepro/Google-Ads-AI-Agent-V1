@@ -140,7 +140,15 @@ function ProviderFacts({ item }: { item: any }) {
       <dl className="mt-3" aria-label="DataForSEO account">
         <Row label="API Login">{saved("login") ? <>Configured <span className="font-normal text-slate-500">(hidden)</span></> : <span className="text-rose-700">Not configured</span>}</Row>
         <Row label="API Password">{saved("password") ? <>Configured <span className="font-normal text-slate-500">(••••••••)</span></> : <span className="text-rose-700">Not configured</span>}</Row>
+        {i.research_block && (
+          <div role="alert" className="mb-2 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-800">
+            <b>{({ account_verification_required: "Account verification required", insufficient_funds: "Insufficient balance", auth_failure: "Credentials rejected",
+              quota_exceeded: "Cost limit reached" } as Record<string, string>)[i.research_block.kind] ?? "Research blocked"}:</b> {i.research_block.message || "DataForSEO refused research requests."}
+            <div className="mt-0.5 text-rose-700">Keyword metrics and competitor overlap will not be measured until this is resolved. The login may still be accepted.</div>
+          </div>)}
         {a ? (<>
+          {a.login_accepted && <Row label="Sign-in">Accepted <span className="font-normal text-slate-500">(User Data API)</span></Row>}
+          {"research_ready" in a && <Row label="Research access">{a.research_ready ? "Ready (Keywords Data API answered)" : <span className="text-rose-700">Blocked</span>}</Row>}
           <Row label="Account balance">{typeof a.balance === "number" ? `$${a.balance.toFixed(2)}` : "not stated by DataForSEO"}</Row>
           <Row label="Account checked">{dt(a.checked_at)} <span className="font-normal text-slate-500">(User Data API — not charged)</span></Row>
         </>) : <Row label="Balance"><span className="text-slate-500">Not read yet: run Test Connection (uses the free User Data API).</span></Row>}

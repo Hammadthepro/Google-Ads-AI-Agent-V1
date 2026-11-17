@@ -144,7 +144,8 @@ PROVIDERS: dict[str, dict] = {
                      "language_code": "Language code (e.g. en)", "labs_location_name": "Competitor research location (country, e.g. United States)"},
         "secrets": {"login": "API Login", "password": "API Password"}, "required": ["login", "password"],
         "default_settings": {"location_name": "United States", "country_iso": "us", "language_code": "en", "labs_location_name": "United States"},
-        "subtests": [("account", "Account (User Data API, not charged)")], "required_subtests": ["account"],
+        "subtests": [("account", "Sign-in (User Data API, not charged)"), ("research", "Research access (Keywords Data API, not charged)")],
+        "required_subtests": ["account", "research"],
         "docs": "https://docs.dataforseo.com/v3/",
     },
     "search_suggestions": {
@@ -1219,7 +1220,9 @@ def _test_tavily(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
 
 
 def _test_dataforseo(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
-    """The User Data API (not charged) proves the login and password and returns the balance. No paid endpoint is called."""
+    """The User Data API (not charged) proves the login and password and returns the balance; the Google Ads locations list (not charged)
+    proves the account may use the research API. Connected only when both pass. No paid endpoint is called."""
+    from app.adapters.base import AdapterError
     from app.adapters.research.dataforseo import DataForSEOAdapter
     from app.core import clock
     if not vals.get("login") or not vals.get("password"):
@@ -1235,8 +1238,20 @@ def _test_dataforseo(vals: dict, http: httpx.Client, steps: Steps, row, target: 
     bal = acc.get("balance")
     steps.ok("User Data API: validate login and read balance",
              f"Login accepted; balance {'$%.2f' % bal if isinstance(bal, (int, float)) else 'not stated'} (not charged)", sub="account")
+    account = {"login_accepted": True, "balance": bal, "checked_at": clock.real_now().isoformat()}
+    # signing in is not enough: an account that still needs verification can sign in but cannot use any research endpoint
+    try:
+        adapter.research_access()
+        steps.ok("Research API access", "The Keywords Data API answered (not charged): research endpoints are usable", sub="research")
+        account["research_ready"] = True
+    except AdapterError as exc:
+        hint = {"account_verification_required": "Complete account verification at app.dataforseo.com, then test again.",
+                "insufficient_funds": "Add funds in the DataForSEO dashboard, then test again.",
+                "rate_limited": "Wait a minute and test again."}.get(exc.kind, "")
+        steps.fail("Research API access", f"{exc.kind}: {exc.message}", sub="research", hint=hint)
+        account.update(research_ready=False, research_blocked_by=exc.kind, research_error=exc.message[:300])
     # the login is a credential too: only the fact that it was accepted is kept and shown, never the login itself
-    return {"account": {"login_accepted": True, "balance": bal, "checked_at": clock.real_now().isoformat()}}
+    return {"account": account}
 
 
 def _test_serpapi(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
@@ -1697,6 +1712,9 @@ def _display(provider: str, row: IntegrationConfig | None, miss: list[str], bloc
         label = "Blocked by dependency"
     elif row and row.status == "REQUIRES_APPROVAL":
         label = "Requires approval"
+    elif provider == "dataforseo" and row and _research_block(row):
+        label = {"account_verification_required": "Account verification required", "insufficient_funds": "Insufficient balance",
+                 "auth_failure": "Connection failed"}.get(_research_block(row)["kind"], "Research blocked")
     elif row and row.last_test_ok is True:
         label = "Connected"
     elif row and row.last_test_ok is False and ((row.discovered or {}).get("test_summary") or {}).get("rate_limited"):
@@ -1706,6 +1724,25 @@ def _display(provider: str, row: IntegrationConfig | None, miss: list[str], bloc
     else:
         label = "Configured, not tested"  # credentials or settings exist, but no real request has succeeded or failed yet
     return {"config": config, "connection": label, "label": label, "testable": True}
+
+
+BLOCKING_RESEARCH_KINDS = ("account_verification_required", "insufficient_funds", "auth_failure", "quota_exceeded")
+
+
+def _research_block(row: IntegrationConfig) -> dict | None:
+    """A DataForSEO account that cannot do research now: the last connection test found research access refused, or a research request
+    since the last successful test failed with a blocking error (verification, funds, authentication). Never shown as Connected then."""
+    acc = (row.discovered or {}).get("account") or {}
+    if acc.get("research_ready") is False:
+        return {"kind": acc.get("research_blocked_by") or "research_blocked", "message": acc.get("research_error") or "", "at": acc.get("checked_at")}
+    from app.models import ProviderCall
+    with session_scope() as db:
+        last = db.scalar(select(ProviderCall).where(ProviderCall.provider == "dataforseo", ProviderCall.cached.is_(False))
+                         .order_by(ProviderCall.created_at.desc()).limit(1))
+    if last is not None and not last.ok and last.error_kind in BLOCKING_RESEARCH_KINDS and \
+            (row.last_success_at is None or last.created_at > row.last_success_at):
+        return {"kind": last.error_kind, "message": last.error, "at": last.created_at.isoformat()}
+    return None
 
 
 def _signed_in_with(provider: str) -> bool:
@@ -1781,6 +1818,7 @@ def serialize(db: Session, provider: str) -> dict:
     if provider == "dataforseo":
         from app.services import provider_calls
         info = {"account": (row.discovered or {}).get("account") if row else None, "usage_30d": {"dataforseo": provider_calls.usage("dataforseo")},
+                "research_block": _research_block(row) if row else None,
                 "endpoints": ["Google Ads: search volume, keywords for keywords, keywords for site (12 requests/minute)",
                               "Labs: competitors domain, SERP competitors, domain intersection, keyword overview, ranked keywords"],
                 "never": "Metrics DataForSEO does not return stay unavailable; nothing is estimated."}

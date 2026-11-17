@@ -38,8 +38,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.adapters.base import (AdapterError, AdapterTimeout, AuthError, InvalidInput, InvalidResponse, NotFoundError, PermissionDenied,
-                               QuotaExceeded, RateLimited, ServiceUnavailable)
+from app.adapters.base import (AccountNotReady, AdapterError, AdapterTimeout, AuthError, InsufficientFunds, InvalidInput, InvalidResponse,
+                               NotFoundError, PermissionDenied, QuotaExceeded, RateLimited, ServiceUnavailable)
 from app.adapters.research.http import request, throttle
 from app.core import clock
 
@@ -54,8 +54,10 @@ MAX_OVERVIEW_KEYWORDS = 700
 MAX_KEYWORD_CHARS, MAX_KEYWORD_WORDS = 80, 10
 
 OK, NO_RESULTS = 20000, 40102
-AUTH = {40100, 40104}
-FUNDS = {40200, 40210, 40203}
+AUTH = {40100}                  # login or password wrong
+NOT_VERIFIED = {40104}          # credentials right, but the account must be verified before the API can be used
+FUNDS = {40200, 40210}          # payment required / insufficient funds
+COST_LIMIT = {40203}            # the account's own cost limit was reached
 DENIED = {40201, 40207}
 RATE = {40202, 40209, 40205, 40206}
 NOT_FOUND = {40400, 40401, 40402}
@@ -80,8 +82,15 @@ def _error(code: int, message: str, status: int | None = None) -> AdapterError:
     msg = f"DataForSEO: {message} (status {code})"
     if code in AUTH:
         return AuthError(msg, adapter=PROVIDER, details={**details, "error_kind": "auth_failure"})
+    if code in NOT_VERIFIED:
+        return AccountNotReady(f"DataForSEO: the account must be verified before the API can be used — complete verification at "
+                               f"app.dataforseo.com (status {code}). The login and password were accepted.", adapter=PROVIDER,
+                               details={**details, "error_kind": "account_verification_required", "blocking": True})
     if code in FUNDS:
-        return QuotaExceeded(msg, adapter=PROVIDER, details=details)
+        return InsufficientFunds(msg + " — add funds in the DataForSEO dashboard", adapter=PROVIDER, details={**details, "blocking": True})
+    if code in COST_LIMIT:
+        return QuotaExceeded(msg + " — the account's own cost limit was reached (app.dataforseo.com/api-settings)", adapter=PROVIDER,
+                             details={**details, "blocking": True})
     if code in DENIED:
         return PermissionDenied(msg, adapter=PROVIDER, details=details)
     if code in RATE:
@@ -115,10 +124,16 @@ class DataForSEOAdapter:
     def _send(self, method: str, path: str, body: list | None = None) -> dict:
         resp = request(self.client, method, f"{BASE}/{path}", "DataForSEO", auth=self._auth, **({"json": body} if body is not None else {}))
         if resp.status_code == 401:
+            try:  # DataForSEO can answer a not-yet-verified account with HTTP 401 and status 40104: that is not a wrong password
+                if int((resp.json() or {}).get("status_code") or 0) in NOT_VERIFIED:
+                    raise _error(int(resp.json()["status_code"]), str(resp.json().get("status_message") or ""))
+            except ValueError:
+                pass
             raise AuthError("DataForSEO rejected the API login or password (HTTP 401)", adapter=PROVIDER,
                             details={"status": 401, "error_kind": "auth_failure"})
         if resp.status_code == 402:
-            raise QuotaExceeded("DataForSEO: payment required, the account balance is too low (HTTP 402)", adapter=PROVIDER, details={"status": 402})
+            raise InsufficientFunds("DataForSEO: payment required, the account balance is too low (HTTP 402)", adapter=PROVIDER,
+                                    details={"status": 402, "blocking": True})
         if resp.status_code == 429:
             raise RateLimited("DataForSEO: too many requests (HTTP 429)", adapter=PROVIDER, details={"status": 429})
         if resp.status_code >= 500:
@@ -189,6 +204,12 @@ class DataForSEOAdapter:
         limits = ((r.get("rates") or {}).get("limits") or {}).get("minute") or {}
         return {"login": r.get("login"), "balance": money.get("balance"), "total_deposited": money.get("total"),
                 "minute_limits": {k: v for k, v in limits.items() if isinstance(v, (int, float))} or None}
+
+    def research_access(self) -> dict:
+        """Proves the account can use the research API, not just sign in: the Google Ads locations list (not charged) answers only for an
+        account allowed to use the Keywords Data API. An unverified account is refused here (40104)."""
+        locs = self.locations("us")
+        return {"ok": True, "locations": len(locs)}
 
     def locations(self, country_iso: str) -> list[dict]:
         """GET keywords_data/google_ads/locations/$country (not charged)."""

@@ -24,7 +24,7 @@ def _client_and_business(admin: Api, name: str) -> tuple[str, str]:
     cid = r.json()["id"]
     r = admin.post(f"/clients/{cid}/businesses", {
         "name": f"{name} (business)", "business_type": "home_services", "website_url": "https://www.northsideplumbing.example/",
-        "phone": "(555) 201-4400", "address": "1200 Example Ave, Columbus, OH", "verified_claims": ["Licensed & Insured"],
+        "phone": "(555) 201-4400", "business_hours": {"mon-fri": "07:00-19:00", "sat": "08:00-16:00", "sun": "closed"}, "address": "1200 Example Ave, Columbus, OH", "verified_claims": ["Licensed & Insured"],
         "services": [{"name": "Drain Cleaning", "landing_page_url": "https://www.northsideplumbing.example/drain-cleaning"}],
         "competitors": [{"name": "Rapid Rooter Columbus", "website_url": "https://www.rapidrooter.example/"}]})
     assert r.status_code == 200, r.text

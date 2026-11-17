@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from app.adapters import registry
+from app.services import competitor_verify, keyword_classify
 from app.services.keyword_labels import label_keyword
 from app.adapters.base import AdapterError
 from app.core import clock
@@ -201,7 +202,7 @@ def _serp_candidates(ctx: dict, serp: dict) -> list[dict]:
     known = {serp_research._host(c.get("website_url") or "") for c in ctx.get("competitors") or []}
     out, seen = [], set()
     for c in serp.get("organic_competitors") or []:
-        if c["domain"] in known or c["domain"] in seen:
+        if c["domain"] in known or c["domain"] in seen or competitor_verify.excluded_reason(c["domain"]):
             continue
         seen.add(c["domain"])
         first = c["appearances"][0]
@@ -210,7 +211,7 @@ def _serp_candidates(ctx: dict, serp: dict) -> list[dict]:
                                  "position": c["best_position"], "retrieved_at": first.get("retrieved_at"),
                                  "served_from_cache": first.get("served_from_cache")}})
     for d in serp.get("advertisers") or []:
-        if d in known or d in seen:
+        if d in known or d in seen or competitor_verify.excluded_reason(d):  # Google's own ads, directories and platforms are not competitors
             continue
         seen.add(d)
         ad = next(a for a in serp.get("sponsored_ads") or [] if a.get("domain") == d)
@@ -240,6 +241,16 @@ def _dataforseo_competitors(ctx: dict, web_candidates: list[dict], serp: dict) -
 
 
 def competitor_audit(ctx: dict, task_id: str | None) -> dict:
+    out = _competitor_audit(ctx, task_id)
+    out["verification"] = competitor_verify.build(ctx, out)
+    v = out["verification"]["counts"]
+    research_events.emit("evidence_validated", f"Competitors: {v['discovered']} discovered, {v['serp_verified']} SERP-verified, "
+                         f"{v['website_verified']} website-verified, {v['market_verified']} market-verified, {v['rejected']} rejected",
+                         stage="competitors", **{k: v[k] for k in ("discovered", "serp_verified", "website_verified", "market_verified", "rejected")})
+    return out
+
+
+def _competitor_audit(ctx: dict, task_id: str | None) -> dict:
     web = web_research.discover_competitors(ctx, stage="competitors")
     serp = serp_research.research(ctx, stage="competitors", parts=("google", "maps", "transparency"))
     if serp.get("used"):
@@ -331,8 +342,20 @@ def _dataforseo_keywords(ctx: dict, dedup: dict, names: list[str], website: dict
         for k in (c.get("ranked_keywords") or [])[:40] + (c.get("intersection_keywords") or [])[:40]:
             add(k["keyword"], "dataforseo_competitor" if "rank" in k else "dataforseo_intersection", f"competitor {c['domain']}", None)
             report["competitor_keywords"] += 1
-    need = [r["keyword"] for r in dedup.values() if r.get("avg_monthly_searches") is None and
-            not any(x["source"] == "keyword_planner" for x in r["sources"])]
+    from app.services import keyword_classify as kc
+    areas = kc.area_terms(ctx)
+    comp_names = {normalize_term(c["name"]) for c in ctx.get("competitors") or []}
+    need, skipped = [], {}
+    for r in dedup.values():
+        if r.get("avg_monthly_searches") is not None or any(x["source"] == "keyword_planner" for x in r["sources"]):
+            continue
+        why = kc.pre_reject(r["keyword"], excluded=ctx.get("excluded") or [], areas=areas, competitors=comp_names, services=names)
+        if why:  # measurement is spent on keywords that can enter the campaign
+            skipped[why] = skipped.get(why, 0) + 1
+            r["measurement_skipped"] = f"not measured: {why}"
+        else:
+            need.append(r["keyword"])
+    report["not_measured_rejected"] = skipped
     met = d4s.keyword_metrics(ad, need, where, stage=stage) if need else {"rows": {}, "sent": 0, "cached": 0, "cost_usd": 0.0, "errors": []}
     filled = 0
     for key, row in met["rows"].items():
@@ -345,6 +368,7 @@ def _dataforseo_keywords(ctx: dict, dedup: dict, names: list[str], website: dict
         r["retrieved_at"] = row.get("retrieved_at")
         filled += 1 if row.get("search_volume") is not None else 0
     report["metrics"] = {"requested": len(need), "with_volume": filled, "requests_sent": met["sent"], "served_from_cache": met["cached"],
+                         "unmeasured": met.get("unmeasured", 0), "blocked_by": (met["errors"][0]["kind"] if met["errors"] else None),
                          "cost_usd": round(met["cost_usd"] + ideas["cost_usd"], 4)}
     report["errors"] = ideas["errors"] + met["errors"]
     return {"report": report, "errors": [{"service": "*", "error": f"DataForSEO {e['step']}: {e['message']}"} for e in report["errors"]]}
@@ -377,6 +401,15 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                                           page_url=s.get("landing_page_url") or lp_map.get(s["name"], ""), city=ctx["city"])
             except AdapterError as exc:
                 errors.append({"service": s["name"], "error": exc.kind, "message": exc.message})
+                if exc.details.get("reason") == "SERVICE_DISABLED":
+                    planner.update(access_level="api_disabled", access_note="The Google Ads API is not enabled in the Google Cloud project.")
+                elif exc.details.get("requires_approval") and exc.details.get("reason") != "DEVELOPER_TOKEN_NOT_APPROVED":
+                    planner.update(access_level="project_not_authorized", access_note=exc.message)
+                elif exc.details.get("requires_approval"):
+                    planner.update(access_level="explorer",
+                                   access_note="The Google Cloud project's Google Ads API access level does not include Keyword Planner "
+                                               "(Explorer access). Apply for Basic or Standard access in the Google Ads API Center; until then "
+                                               "no Keyword Planner volume or bids exist for this run.")
                 research_events.emit("provider_failed", f"Keyword Planner failed for “{s['name']}”: {exc.message} Other sources continue.",
                                      stage=stage, level="warn", provider="keyword_planner", error_kind=exc.kind)
                 if exc.details.get("requires_approval") or exc.kind in ("auth_failure", "permission_denied"):
@@ -484,6 +517,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     for t in table:  # one deterministic ordering from fit, measured demand, CPC and competition (keyword_intel.rank_score)
         t["rank_score"] = keyword_intel.rank_score({**t, "max_cpc": max_bid})
     table.sort(key=lambda x: (x["label"] != "SERVICE", -x["rank_score"], -(x["avg_monthly_searches"] or 0)))
+    measurement = _classify_table(table, ctx, names, brand, comp_names, dedup)
     clusters = {}
     for t in table:
         if t["selected"] and t["ad_group"]:
@@ -496,7 +530,13 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     with_volume = sum(1 for t in table if t["avg_monthly_searches"] is not None)
     research_events.emit("evidence_validated", f"{with_volume} of {len(table)} keyword(s) have observed search volume; the rest are marked unavailable",
                          stage=stage, observed=with_volume, total=len(table))
+    over = {}
+    for o in overlaps:
+        over.setdefault(normalize_term(o["keyword"]), []).append(o)
+    for t in table:
+        t["overlap"] = [{"ad_groups": o["ad_groups"], "type": o["type"], "detail": o.get("detail")} for o in over.get(normalize_term(t["keyword"]), [])]
     out = {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors + d4s["errors"],
+           "measurement": measurement, "classes": keyword_classify.CLASSES,
            "keyword_planner": planner, "discovery": disc["report"], "sources_used": sources_used, "dataforseo": d4s["report"],
            "metrics_policy": "Search volume, CPC, competition and bids come only from Keyword Planner or DataForSEO (Google Ads data, each with "
                              "its source and retrieval time) or are unavailable. "
@@ -507,6 +547,58 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
         out.update(unavailable=not table, not_configured=planner.get("not_configured"),
                    errors=errors + [{"service": "*", "error": planner["reason"]}])
     return out
+
+
+def _classify_table(table: list[dict], ctx: dict, names: list[str], brand: set[str], comp_names: set[str], dedup: dict) -> dict:
+    """Give every row its structured class, location/commercial relevance, selection status (eligible / research_only / rejected, with
+    the reason) and measurement status; drop near-duplicates from selection; report measurement coverage of the eligible keywords."""
+    areas = keyword_classify.area_terms(ctx)
+    seen_near: dict[str, str] = {}
+    for t in table:  # table is already in rank order: the first of a near-duplicate set is the one kept
+        measured = t["avg_monthly_searches"] is not None
+        c = keyword_classify.classify(t["keyword"], label=t["label"], service=t.get("service"), services=names, excluded=ctx["excluded"],
+                                      areas=areas, brand=brand, competitors=comp_names, measured=measured)
+        t.update(keyword_class=c["class"], keyword_class_label=c["class_label"], class_reason=c["class_reason"],
+                 location_relevance=c["location_relevance"], location_reason=c["location_reason"],
+                 commercial_relevance=c["commercial_relevance"], measurement_status=c["measurement_status"])
+        r = dedup.get(normalize_term(t["keyword"])) or {}
+        if not measured:
+            t["unmeasured_reason"] = r.get("measurement_skipped") or next(
+                (v.get("note") for v in (t.get("metrics") or {}).values() if isinstance(v, dict) and v.get("note")), "no provider returned a volume")
+        metric_src = next((v.get("source") for v in (t.get("metrics") or {}).values() if isinstance(v, dict) and v.get("basis") == "observed"), None)
+        t["metric_source"] = metric_src
+        status, reason = c["selection_status"], c["rejection_reason"]
+        if status == "eligible" and not t["selected"]:
+            status = "research_only"
+            reason = ("over the bid limit for this budget" if not t["affordable"] else
+                      "too little measured search volume" if measured else "no measured volume and not enough fit/intent agreement")
+        if status == "eligible":
+            nk = keyword_classify.near_key(t["keyword"])
+            if nk in seen_near:
+                status, reason = "research_only", f"near-duplicate of “{seen_near[nk]}”"
+            else:
+                seen_near[nk] = t["keyword"]
+        if status != "eligible":
+            t["selected"] = False
+        if status == "rejected" and t["keyword_class"] == "irrelevant_location":
+            t["ad_group"] = None
+        t.update(selection_status=status, rejection_reason=reason)
+    eligible = [t for t in table if t["selection_status"] == "eligible"]
+    um = [t for t in eligible if t["measurement_status"] == "unmeasured"]
+    reasons: dict[str, int] = {}
+    for t in um:
+        reasons[t["unmeasured_reason"]] = reasons.get(t["unmeasured_reason"], 0) + 1
+    by_class: dict[str, int] = {}
+    for t in table:
+        by_class[t["keyword_class"]] = by_class.get(t["keyword_class"], 0) + 1
+    return {"total": len(table), "eligible": len(eligible), "eligible_measured": len(eligible) - len(um), "eligible_unmeasured": len(um),
+            "measured_total": sum(1 for t in table if t["measurement_status"] == "measured"),
+            "research_only": sum(1 for t in table if t["selection_status"] == "research_only"),
+            "rejected": sum(1 for t in table if t["selection_status"] == "rejected"),
+            "unmeasured_reasons": [{"reason": k, "count": v} for k, v in sorted(reasons.items(), key=lambda x: -x[1])],
+            "by_class": by_class, "service_areas": sorted(areas),
+            "policy": "Only Keyword Planner or DataForSEO (Google Ads data) supply volume, CPC, competition and bids. An unmeasured keyword "
+                      "has no number; it is never estimated."}
 
 
 def overlap_check(groups: dict[str, list[str]], existing: dict[str, list[str]]) -> list[dict]:

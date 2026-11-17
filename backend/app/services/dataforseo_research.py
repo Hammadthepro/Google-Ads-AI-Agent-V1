@@ -50,11 +50,36 @@ US_STATES = {"AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
 
 
 def adapter_or_reason():
-    """(adapter, None) or (None, reason). Missing credentials are a clear integration error, never a silent fallback."""
+    """(adapter, None) or (None, reason). Missing credentials are a clear integration error, never a silent fallback. A blocking failure
+    recorded earlier in this process is cleared: each run asks the provider again (the account may have been verified meanwhile)."""
     try:
-        return registry.get(PROVIDER), None
+        ad = registry.get(PROVIDER)
+        ad._blocked = None
+        return ad, None
     except IntegrationNotConfigured as exc:
         return None, exc.message
+
+
+BLOCKING = ("account_verification_required", "insufficient_funds", "auth_failure", "quota_exceeded", "permission_denied")
+
+
+def _blocked(ad) -> AdapterError | None:
+    return getattr(ad, "_blocked", None)
+
+
+def _note_failure(ad, exc: AdapterError) -> None:
+    """A blocking failure (verification, funds, credentials) stops every later DataForSEO request of this run: the same answer would
+    come back each time, and each attempt would be another request."""
+    if exc.kind in BLOCKING or exc.details.get("blocking"):
+        ad._blocked = exc
+
+
+def _skip(ad, step: str, out_errors: list) -> bool:
+    exc = _blocked(ad)
+    if exc is None:
+        return False
+    out_errors.append({"step": step, "kind": exc.kind, "message": f"not attempted: {exc.message}", "skipped": True})
+    return True
 
 
 def _settings() -> dict:
@@ -81,6 +106,7 @@ def resolve_location(ad, ctx: dict, stage: str = "keywords") -> dict:
     try:
         locs = provider_calls.call(PROVIDER, "locations", {"country": country_iso}, lambda: ad.locations(country_iso), ttl=LOCATIONS_TTL)
     except AdapterError as exc:
+        _note_failure(ad, exc)
         research_events.emit("provider_failed", f"DataForSEO location list unavailable ({exc.message}); using {default}", stage=stage,
                              level="warn", provider=PROVIDER, error_kind=exc.kind)
         return out
@@ -122,9 +148,12 @@ def keyword_metrics(ad, keywords: list[str], where: dict, *, stage: str = "keywo
         provider_calls.log_cached(PROVIDER, "search_volume")
     for i in range(0, len(todo), MAX_SEARCH_VOLUME):
         batch = todo[i:i + MAX_SEARCH_VOLUME]
+        if _skip(ad, "search_volume", out["errors"]):
+            break
         try:
             res = ad.search_volume(batch, **_where_args(where))
         except AdapterError as exc:
+            _note_failure(ad, exc)
             provider_calls.log_failure(PROVIDER, "search_volume", exc)
             out["errors"].append({"step": "search_volume", "kind": exc.kind, "message": exc.message})
             research_events.emit("provider_failed", f"DataForSEO search volume failed: {exc.message}. Metrics from other sources are kept.",
@@ -146,6 +175,7 @@ def keyword_metrics(ad, keywords: list[str], where: dict, *, stage: str = "keywo
         research_events.emit("keyword_discovery", f"DataForSEO search volume for {len(batch)} keyword(s) "
                              f"({sum(1 for k in batch if (got.get(normalize_term(k)) or {}).get('search_volume') is not None)} with data)",
                              stage=stage, provider=PROVIDER, count=len(batch), seed="search_volume", examples=batch[:5])
+    out["unmeasured"] = sum(1 for k in kws if normalize_term(k) not in rows)  # never filled in: shown as unmeasured, with the error
     return out
 
 
@@ -157,11 +187,14 @@ def keyword_ideas(ad, seeds: list[str], site: str | None, where: dict, *, stage:
     clean = list(dict.fromkeys(" ".join(s.lower().split()) for s in seeds if valid_keyword(s)))
     for i in range(0, min(len(clean), MAX_SEEDS * max_seed_requests), MAX_SEEDS):
         batch = clean[i:i + MAX_SEEDS]
+        if _skip(ad, "keywords_for_keywords", out["errors"]):
+            break
         try:
             res, meta = provider_calls.call(PROVIDER, "keywords_for_keywords", {"seeds": batch, **_where_key(where)},
                                             lambda b=batch: ad.keywords_for_keywords(b, **_where_args(where)), ttl=IDEA_TTL,
                                             cost=lambda v: v.get("cost") or 0, meta=True)
         except AdapterError as exc:
+            _note_failure(ad, exc)
             out["errors"].append({"step": "keywords_for_keywords", "kind": exc.kind, "message": exc.message})
             research_events.emit("provider_failed", f"DataForSEO Keywords For Keywords failed: {exc.message}", stage=stage, level="warn",
                                  provider=PROVIDER, error_kind=exc.kind)
@@ -173,7 +206,7 @@ def keyword_ideas(ad, seeds: list[str], site: str | None, where: dict, *, stage:
         research_events.emit("keyword_discovery", f"{len(res['items'])} DataForSEO keyword idea(s) from {len(batch)} seed(s)"
                              + (" (from cache)" if meta["cached"] else ""), stage=stage, provider=PROVIDER, count=len(res["items"]),
                              seed=", ".join(batch[:3]), examples=[x["keyword"] for x in res["items"][:5]])
-    if site and domain_of(site):
+    if site and domain_of(site) and not _skip(ad, "keywords_for_site", out["errors"]):
         d = domain_of(site)
         try:
             res, meta = provider_calls.call(PROVIDER, "keywords_for_site", {"target": d, **_where_key(where)},
@@ -186,6 +219,7 @@ def keyword_ideas(ad, seeds: list[str], site: str | None, where: dict, *, stage:
             research_events.emit("keyword_discovery", f"{len(res['items'])} DataForSEO keyword idea(s) for {d}" + (" (from cache)" if meta["cached"] else ""),
                                  stage=stage, provider=PROVIDER, count=len(res["items"]), seed=d, examples=[x["keyword"] for x in res["items"][:5]])
         except AdapterError as exc:
+            _note_failure(ad, exc)
             out["errors"].append({"step": "keywords_for_site", "kind": exc.kind, "message": exc.message})
             research_events.emit("provider_failed", f"DataForSEO Keywords For Site failed for {d}: {exc.message}", stage=stage, level="warn",
                                  provider=PROVIDER, error_kind=exc.kind)
@@ -194,10 +228,13 @@ def keyword_ideas(ad, seeds: list[str], site: str | None, where: dict, *, stage:
 
 # ------------------------------------------------------------------------------------------ competitors
 def _labs(ad, op: str, request: dict, fn, errors: list, stage: str):
+    if _skip(ad, op, errors):
+        return None, None
     try:
         res, meta = provider_calls.call(PROVIDER, op, request, fn, ttl=LABS_TTL, cost=lambda v: v.get("cost") or 0, meta=True)
         return res, meta
     except AdapterError as exc:
+        _note_failure(ad, exc)
         errors.append({"step": op, "kind": exc.kind, "message": exc.message})
         research_events.emit("provider_failed", f"DataForSEO {op.replace('_', ' ')} failed: {exc.message}. Other competitor evidence is kept.",
                              stage=stage, level="warn", provider=PROVIDER, error_kind=exc.kind)

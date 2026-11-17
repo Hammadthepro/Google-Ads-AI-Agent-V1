@@ -16,7 +16,7 @@ from app.core import clock
 from app.models import Business, Task
 from app.services import research_events
 
-VERSION = 1
+VERSION = 2  # 2: source ledger, keyword classification and measurement coverage, competitor verification, campaign settings
 KP_PERIOD = "average monthly searches, last 12 months (Google Keyword Planner estimate)"
 
 
@@ -71,6 +71,100 @@ def _sources(events: list[dict]) -> tuple[list[dict], list[dict]]:
             unavailable.append({"what": e["title"], "provider": d.get("provider") or "", "url": d.get("url"), "at": e["at"], "kind": k,
                                 "reason": d.get("reason") or d.get("error") or (f"HTTP {d['status']}" if d.get("status") else "")})
     return out, unavailable
+
+
+SOURCE_STATUSES = ("Verified", "Relevant", "Extracted", "Crawled", "Discovered", "Rejected", "Failed")
+
+
+def source_ledger(events: list[dict], services: list[str], own_domain: str = "") -> dict:
+    """One deduplicated record per source the research touched (search results, pages, Google results pages, ads), with how it was
+    found, what was retrieved and extracted, whether it is relevant and why, and why it failed or was rejected. Statuses never claim
+    more than the events show: a search result nobody opened stays `Discovered`."""
+    from app.core.util import normalize_term
+    from app.services.competitor_verify import excluded_reason
+    svc = [(s, normalize_term(s)) for s in services if s]
+    recs: dict[tuple, dict] = {}
+
+    def get(key, **base):
+        r = recs.get(key)
+        if r is None:
+            r = recs[key] = {"url": None, "domain": None, "title": None, "source_type": None, "discovery_method": None, "provider": None,
+                             "http_status": None, "crawled_at": None, "extraction_status": "not extracted", "evidence": None,
+                             "relevance_score": None, "relevance_reason": None, "verification_status": "Discovered", "failure_reason": None,
+                             "stage": None, **base}
+        return r
+
+    def relevance(text: str) -> tuple[int, str]:
+        t = normalize_term(text or "")
+        full = [s for s, n in svc if n and n in t]
+        if full:
+            return 100, f"names the service “{full[0]}”"
+        part = [s for s, n in svc if n and any(len(w) > 3 and w in t.split() for w in n.split())]
+        if part:
+            return 50, f"partly matches the service “{part[0]}”"
+        return 0, "does not mention any client service"
+
+    for e in events:
+        d, k, st = e.get("data") or {}, e["kind"], e.get("stage") or ""
+        url = d.get("url")
+        if k == "web_result":
+            r = get(("url", url), url=url, domain=_host(url), title=e["title"], source_type="web search result",
+                    discovery_method="web search", provider=d.get("provider") or "web search", stage=st)
+            r["evidence"] = r["evidence"] or "search result title and snippet"
+            why = excluded_reason(_host(url))
+            if why:
+                r.update(verification_status="Rejected", failure_reason=why)
+        elif k == "page_extracted":
+            r = get(("url", url), url=url, domain=_host(url), source_type="web page", discovery_method="crawl" if not st else f"{st} research",
+                    provider="Website crawler", stage=st)
+            text = " ".join([d.get("page_title") or "", d.get("h1") or "", *(d.get("headings") or [])])
+            score, why = relevance(text)
+            r.update(title=d.get("page_title") or e["title"], http_status=r["http_status"] or 200, crawled_at=e["at"],
+                     extraction_status=f"extracted ({d.get('words') or 0} words)" if d.get("words") else "extracted (no text)",
+                     evidence=(f"H1 “{d['h1']}”" if d.get("h1") else None) or (d.get("page_title") or None),
+                     relevance_score=score, relevance_reason=why, failure_reason=None)
+            own = own_domain and _host(url) == own_domain
+            if r["verification_status"] != "Rejected":
+                r["verification_status"] = ("Verified" if score >= 50 and (own or st in ("website", "competitors")) else
+                                            "Relevant" if score >= 50 else "Extracted" if d.get("words") else "Crawled")
+        elif k in ("page_failed", "crawl_blocked"):
+            r = get(("url", url), url=url, domain=_host(url), title=url, source_type="web page", discovery_method="crawl", provider="Website crawler",
+                    stage=st)
+            if r["extraction_status"].startswith("extracted"):
+                continue  # a later retry of the same page succeeded
+            r.update(http_status=d.get("status"), crawled_at=e["at"], verification_status="Failed",
+                     failure_reason=d.get("reason") or d.get("error") or (f"HTTP {d['status']}" if d.get("status") else "could not be fetched"))
+        elif k == "serp_query":
+            key = ("serp", d.get("engine"), d.get("query"), d.get("location"))
+            r = get(key, title=f"{(d.get('engine') or 'google').replace('_', ' ')}: “{d.get('query')}”" + (f" · {d['location']}" if d.get("location") else ""),
+                    source_type="Google results page", discovery_method="search query", provider="SerpApi", stage=st)
+            score, why = relevance(d.get("query") or "")
+            r.update(crawled_at=e["at"], extraction_status="extracted (results, ads, related searches)", http_status=200,
+                     evidence="cached result" if d.get("served_from_cache") else "retrieved live", relevance_score=score, relevance_reason=why,
+                     verification_status="Verified" if score >= 50 else "Extracted")
+        elif k == "sponsored_ad":
+            r = get(("ad", url, d.get("query")), url=url, domain=_host(url), title=e["title"], source_type="public Google ad",
+                    discovery_method=f"seen for “{d.get('query')}”", provider="SerpApi", stage=st)
+            r.update(crawled_at=e["at"], extraction_status="extracted (ad copy)", evidence=d.get("description") or e["title"],
+                     verification_status="Extracted")
+            why = excluded_reason(_host(url))
+            if why:
+                r.update(verification_status="Rejected", failure_reason=why)
+        elif k == "provider_failed" and d.get("provider"):
+            r = get(("provider", d.get("provider"), e["title"]), title=e["title"], source_type="provider request", provider=d.get("provider"),
+                    discovery_method="API request", stage=st)
+            r.update(crawled_at=e["at"], verification_status="Failed", failure_reason=d.get("error_kind") or d.get("reason") or e["title"])
+    out = sorted(recs.values(), key=lambda r: (SOURCE_STATUSES.index(r["verification_status"]), r["provider"] or "", r["title"] or ""))
+    st = Counter(r["verification_status"] for r in out)
+    crawled = sum(1 for r in out if r["crawled_at"])
+    counts = {"discovered": len(out), "crawled": crawled,
+              "extracted": sum(1 for r in out if r["extraction_status"].startswith("extracted")),
+              "relevant": st["Relevant"] + st["Verified"], "verified": st["Verified"], "rejected": st["Rejected"], "failed": st["Failed"],
+              "by_status": {s: st.get(s, 0) for s in SOURCE_STATUSES}}
+    return {"records": out[:1500], "total": len(out), "counts": counts, "statuses": list(SOURCE_STATUSES),
+            "policy": "Discovered = found, not opened. Crawled = fetched. Extracted = content read. Relevant = names a client service. "
+                      "Verified = relevant content from the client's site, a competitor's site or a Google results page for a service. "
+                      "Counts are of distinct sources."}
 
 
 def _competitors(audits: dict, events: list[dict]) -> list[dict]:
@@ -147,12 +241,27 @@ def _keywords(kw: dict, draft: dict, location: str) -> dict:
                      "unavailable_reason": None if measured else (vol["note"] or "No source returned search volume"),
                      "reason": (r.get("label_reason") if r.get("label") == "IRRELEVANT" else r.get("selection_basis") or "")
                                + (f"; relevance {r['relevance_score']}/100" if r.get("relevance_score") is not None else ""),
-                     "uncertainty": r.get("uncertainty")})
+                     "uncertainty": r.get("uncertainty"), "ad_group": r.get("ad_group"),
+                     "keyword_class": r.get("keyword_class"), "keyword_class_label": r.get("keyword_class_label"),
+                     "class_reason": r.get("class_reason"), "intent": r.get("intent"),
+                     "location_relevance": r.get("location_relevance"), "location_reason": r.get("location_reason"),
+                     "commercial_relevance": r.get("commercial_relevance"),
+                     "selection_status": r.get("selection_status") or ("eligible" if r.get("selected") else "research_only"),
+                     "rejection_reason": r.get("rejection_reason"),
+                     "measurement_status": r.get("measurement_status") or ("measured" if measured else "unmeasured"),
+                     "unmeasured_reason": r.get("unmeasured_reason"), "metric_source": r.get("metric_source"),
+                     "overlap": r.get("overlap") or []})
     rows.sort(key=lambda x: (not x["in_plan"], not x["selected_by_research"], -(x["search_volume"] or 0)))
     selected = [x for x in rows if x["in_plan"] or x["selected_by_research"]]
     rejected = [x for x in rows if not (x["in_plan"] or x["selected_by_research"])]
+    d4s = (kw or {}).get("dataforseo") or {}
     return {"keyword_planner": {"available": bool(planner.get("available")), "reason": planner.get("reason") or "",
-                                "failed_services": planner.get("failed_services") or []},
+                                "failed_services": planner.get("failed_services") or [], "access_level": planner.get("access_level"),
+                                "access_note": planner.get("access_note")},
+            "dataforseo": {"used": bool(d4s.get("used")), "reason": d4s.get("reason"), "metrics": d4s.get("metrics") or {},
+                           "errors": d4s.get("errors") or [], "not_measured_rejected": d4s.get("not_measured_rejected") or {}},
+            "measurement_coverage": (kw or {}).get("measurement") or {}, "classes": (kw or {}).get("classes") or {},
+            "overlaps": (kw or {}).get("overlaps") or [], "rows": rows[:3000],
             "selected": selected, "rejected": rejected[:80], "rejected_total": len(rejected),
             "measured": sum(1 for x in rows if x["search_volume"] is not None), "total": len(rows),
             "policy": (kw or {}).get("metrics_policy") or ""}
@@ -186,11 +295,17 @@ def build(db: Session, task: Task, ctx: dict | None = None, draft: dict | None =
     biz = db.get(Business, task.business_id) if task.business_id else None
     location = ", ".join(a.get("label", "") for a in (biz.service_areas or [])[:3]) if biz and biz.service_areas else (biz.address if biz else "")
     sources, unavailable = _sources(events)
+    ledger = source_ledger(events, [sv.name for sv in (biz.services if biz else []) if not sv.is_excluded], _host(biz.website_url) if biz else "")
+    comp_v = ((ctx.get("audits") or {}).get("competitor") or {}).get("verification") or {}
+    from app.services import campaign_settings
+    settings = campaign_settings.resolve(biz, task.fields or {}) if biz else None
     competitors = _competitors(ctx.get("audits") or {}, events)
     kw = _keywords(ctx.get("keywords") or {}, draft or {}, location or "")
     providers = Counter(s["provider"] for s in sources)
     serp = [s for s in sources if s["provider"] == "Google results (SerpApi)" and s["title"].count("“")]
     return {"version": VERSION, "captured_at": clock.now().isoformat(), "task_id": task.id, "sources": sources, "competitors": competitors,
+            "source_ledger": ledger, "competitor_verification": comp_v, "settings": settings,
+            "provider_errors": _provider_errors(unavailable),
             "keywords": kw, "feasibility": _feasibility(ctx.get("feasibility") or {}, competitors, ctx.get("audits") or {}),
             "methodology": {
                 "integrations_used": [{"provider": p, "records": n} for p, n in providers.most_common()],
@@ -203,3 +318,19 @@ def build(db: Session, task: Task, ctx: dict | None = None, draft: dict | None =
                                "Claims in ads are limited to the business's verified claims; competitor offers are context, never copied.",
                                "The budget split and bidding are decided by rules; the AI drafted structure and copy within them."],
                 "events_recorded": len(events)}}
+
+
+def _provider_errors(unavailable: list[dict]) -> list[dict]:
+    """Failures grouped by provider: how many, the distinct reasons, first and last time."""
+    g: dict[str, dict] = {}
+    for u in unavailable:
+        p = u.get("provider") or ("Website crawler" if u["kind"] in ("page_failed", "crawl_blocked") else "other")
+        e = g.setdefault(p, {"provider": p, "count": 0, "reasons": [], "first_at": u["at"], "last_at": u["at"]})
+        e["count"] += 1
+        r = (u.get("reason") or u.get("what") or "")[:200]
+        if r and r not in e["reasons"]:
+            e["reasons"].append(r)
+        e["first_at"], e["last_at"] = min(e["first_at"], u["at"]), max(e["last_at"], u["at"])
+    for e in g.values():
+        e["reasons"] = e["reasons"][:6]
+    return sorted(g.values(), key=lambda e: -e["count"])

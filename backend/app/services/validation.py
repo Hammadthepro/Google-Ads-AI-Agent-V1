@@ -26,6 +26,43 @@ def _err(code, message, target="", phrase="", severity="error"):
     return {"code": code, "message": message, "target": target, "phrase": phrase, "fixable": code in FIXABLE, "severity": severity}
 
 
+def _campaign_construction(payload: dict, ops: list[dict], has_location: bool, group_names: dict, keywords_by_group: dict,
+                           final_urls: set) -> list[dict]:
+    """Blocking issues for every campaign setting a Search campaign must have. Each says what is missing and how to fix it."""
+    out = []
+    st = payload.get("settings") or {}
+    for issue in st.get("issues") or []:
+        out.append(_err(issue["code"], issue["message"], issue.get("field", "")))
+    if not has_location and not any(i["code"] == "NO_TARGET_LOCATION" for i in st.get("issues") or []):
+        out.append(_err("LOCATIONS", "At least one location target is required", "location"))
+    crit = [(op.get("fields") or {}).get("type") for op in ops if op.get("resource") == "campaign_criterion"]
+    if st and "LANGUAGE" not in crit and not any(i["code"] == "UNKNOWN_LANGUAGE" for i in st.get("issues") or []):
+        out.append(_err("NO_LANGUAGE", "No language target: the campaign must target a language (e.g. English).", "language"))
+    camp = next((op.get("fields") or {} for op in ops if op.get("resource") == "campaign" and op.get("op") == "create"), {})
+    if camp:
+        geo = camp.get("geo_target_type_setting") or {}
+        if not geo.get("positive_geo_target_type"):
+            out.append(_err("NO_LOCATION_MODE", "Location targeting mode is not set (Presence or Presence or interest).", "location_targeting_mode"))
+        if not any(k in camp for k in ("maximize_conversions", "target_spend", "manual_cpc", "target_cpa", "maximize_conversion_value")):
+            out.append(_err("NO_BIDDING", "No bidding strategy is set.", "bidding"))
+    if not group_names:
+        out.append(_err("NO_AD_GROUPS", "The campaign has no ad groups.", "ad_groups"))
+    for g, name in group_names.items():
+        if not keywords_by_group.get(g):
+            out.append(_err("NO_KEYWORDS", f"Ad group “{name}” has no keywords.", name))
+    ads_by_group = {(op.get("fields") or {}).get("ad_group", "").replace("temp:", "") for op in ops if op.get("resource") == "ad_group_ad"}
+    for g, name in group_names.items():
+        if g not in ads_by_group:
+            out.append(_err("NO_ADS", f"Ad group “{name}” has no ad.", name))
+    if group_names and not final_urls:
+        out.append(_err("NO_LANDING_PAGE", "No ad has a landing page (final URL).", "landing_pages"))
+    negs = [op for op in ops if op.get("resource") in ("campaign_criterion", "shared_criterion") and (op.get("fields") or {}).get("type") == "KEYWORD"
+            and ((op.get("fields") or {}).get("negative") or op.get("resource") == "shared_criterion")]
+    if not negs:
+        out.append(_err("NO_NEGATIVES", "No negative keywords: job, DIY and free-intent searches would not be excluded.", "negatives"))
+    return out
+
+
 def banned_phrases(business: Business) -> list[str]:
     out = []
     for rule in business.brand_rules or []:
@@ -149,8 +186,8 @@ def validate(db: Session, payload: dict, business: Business, *, existing_keyword
                     errors.append(_err("AD_LENGTH", f"{p} over {PATH_MAX} characters", rsa.get(p)))
             if len(set(h.lower() for h in heads)) != len(heads):
                 warnings.append(_err("AD_COPY", "Duplicate headlines in one ad", severity="warning"))
-    if kind == "BUILD_CAMPAIGN" and not has_location:
-        errors.append(_err("LOCATIONS", "At least one location target is required"))
+    if kind == "BUILD_CAMPAIGN":
+        errors += _campaign_construction(payload, ops, has_location, group_names, keywords_by_group, final_urls)
     # overlap between ad groups (warning) and with existing campaign keywords (error)
     owners: dict[tuple, list[str]] = {}
     for g, kws in keywords_by_group.items():

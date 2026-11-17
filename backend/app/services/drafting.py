@@ -85,7 +85,8 @@ def _spec_payload(payload: dict, top: int) -> dict:
     out = {**_base(payload), "measurement": payload.get("measurement"), "monthly_budget": payload.get("monthly_budget"),
            "feasibility": payload.get("feasibility"), "note": payload.get("note", ""), "services": services,
            "irrelevant_terms": kt.get("irrelevant_terms") or [],
-           **({"search_evidence": payload["search_evidence"]} if payload.get("search_evidence") else {})}
+           **({"search_evidence": payload["search_evidence"]} if payload.get("search_evidence") else {}),
+           **({"competitor_evidence": payload["competitor_evidence"]} if payload.get("competitor_evidence") else {})}
     generic = kws.get("Generic")
     if generic and top:
         out["generic_keywords"] = generic[:top]

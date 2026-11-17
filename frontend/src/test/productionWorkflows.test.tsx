@@ -89,7 +89,7 @@ describe("Research appendix", () => {
       feasibility: { is_estimate: true, verdict: "TIGHT", expected_weekly_leads: 3, limitations: "Projections, not a guarantee." },
       methodology: { events_recorded: 42, integrations_used: [{ provider: "Website crawler", records: 1 }], searches: ["google: “seo agency”"], cached: ["google: “seo agency”"], unavailable: [], derivation: ["One ad group per selected service."] } })) as any;
     mount(<ResearchAppendix planId="p2" />);
-    expect(await screen.findByRole("heading", { name: "Research & Evidence Appendix" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Campaign report" })).toBeInTheDocument();
     expect(screen.getByText(/Plan version 2 · captured with this version/)).toBeInTheDocument();
     const src = screen.getByRole("table", { name: "Research sources" });
     expect(within(src).getByRole("link", { name: "SEO services" })).toHaveAttribute("href", "https://napollo.example/seo");
@@ -97,10 +97,10 @@ describe("Research appendix", () => {
     const comp = screen.getByRole("table", { name: "Competitors" });
     expect(within(comp).getByText("discovered")).toBeInTheDocument();
     expect(within(comp).getByText("website not read")).toBeInTheDocument();
-    const kw = screen.getByRole("table", { name: "Selected keywords" });
-    expect(within(kw).getAllByText("unavailable").length).toBeGreaterThan(0);
+    const kw = screen.getByRole("table", { name: "Keyword research" });
+    expect(within(kw).getAllByText("not measured").length).toBeGreaterThan(0);
     expect(within(kw).queryByText(/\$\d/)).toBeNull();
-    expect(screen.getByText(/Keyword Planner: not used — Keyword Planner is not configured/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Keyword Planner not used: Keyword Planner is not configured/).length).toBeGreaterThan(0);
   });
 });
 

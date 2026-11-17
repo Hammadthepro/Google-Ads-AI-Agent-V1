@@ -309,7 +309,8 @@ def run(db: Session, *, scope: str, payload: dict, challenge_ctx: dict, table: l
     evidence = {**challenge_ctx, "services": payload.get("services"),
                 "research": _evidence_keywords(payload.get("keyword_table")),
                 **({"search_evidence": payload["search_evidence"]} if payload.get("search_evidence") else
-                   {"search_evidence": "none: no Google search was performed for this draft"})}
+                   {"search_evidence": "none: no Google search was performed for this draft"}),
+                "competitor_evidence": payload.get("competitor_evidence") or "none recorded: competitor verification did not run for this draft"}
     report, review_run = challenger.review_draft(db, final, evidence, kind="campaign_draft", task_id=task_id)
     if report.get("performed"):
         challenges["challenger_on_final"] = {"report": report, "run_id": review_run}

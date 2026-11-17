@@ -130,7 +130,7 @@ def test_credentials_are_encrypted_never_returned_and_the_connection_test_is_fre
             row = svc._row(db, "dataforseo")
             assert row.secrets_ciphertext and PASSWORD not in row.secrets_ciphertext and LOGIN not in row.secrets_ciphertext
             res = svc.test_connection(db, "dataforseo", http=httpx.Client(transport=httpx.MockTransport(fake)))
-            assert res["connected"] is True and [c[1] for c in fake.calls] == ["appendix/user_data"]  # nothing paid was called
+            assert res["connected"] is True and [c[1] for c in fake.calls] == ["appendix/user_data", "keywords_data/google_ads/locations/us"]  # nothing paid
             assert fake.calls[0][3] == "Basic " + base64.b64encode(f"{LOGIN}:{PASSWORD}".encode()).decode()  # HTTP Basic, as documented
             item = svc.serialize(db, "dataforseo")
             assert item["info"]["account"]["balance"] == 37.25 and item["label"] == "DataForSEO"
@@ -235,6 +235,9 @@ def test_labs_endpoints_parse_competitors_intersections_overview_and_rankings():
 
 
 def test_location_resolves_to_the_business_city_and_labs_stay_country_level():
+    from app.models import ProviderCache
+    with session_scope() as db:  # (test database) start without a cached location list, so the free locations call is observed
+        db.query(ProviderCache).filter(ProviderCache.provider == "dataforseo").delete()
     fake = FakeD4S()
     registry.override("dataforseo", adapter(fake))
     ctx = {"city": "Harrisburg", "service_areas": [{"label": "Harrisburg, PA", "city": "Harrisburg", "state": "PA"}], "states": ["PA"]}
@@ -338,13 +341,58 @@ def test_a_failing_provider_is_reported_and_nothing_is_fabricated():
     ad = adapter(fake)
     tag = uuid.uuid4().hex[:6]
     met = d4s.keyword_metrics(ad, [f"seo {tag}"], {"location_name": "United States", "language_code": "en"})
-    assert met["rows"] == {} and met["errors"][0]["kind"] == "quota_exceeded"  # no row, no invented number
+    assert met["rows"] == {} and met["errors"][0]["kind"] == "insufficient_funds"  # no row, no invented number
     site = f"https://fresh-{tag}.example"  # (a domain no earlier request cached: a cached answer would correctly be reused)
     comp = d4s.competitor_research(ad, {"website_url": site}, [f"seo {tag}"],
                                    [{"domain": "rivalseo.example", "name": "Rival", "source": "client profile"}],
                                    {"location_name": "United States", "language_code": "en"})
     assert comp["errors"] and all(not c["verified"] for c in comp["competitors"])  # client candidate kept, but not called verified
-    assert provider_calls.usage("dataforseo")["last_error"]["kind"] == "quota_exceeded"
+    assert all(e.get("skipped") for e in comp["errors"])  # a blocking failure stops later requests of the run: nothing more was sent
+    from app.models import ProviderCall
+    with session_scope() as db:  # the refusal is in the usage ledger (newest-row order depends on the test clock, so check the row itself)
+        assert db.query(ProviderCall).filter(ProviderCall.provider == "dataforseo", ProviderCall.ok.is_(False),
+                                             ProviderCall.error_kind == "insufficient_funds").count() >= 1
+    assert provider_calls.usage("dataforseo")["last_error"] is not None
+
+
+def test_unverified_account_40104_is_not_an_auth_error_and_blocks_research():
+    """The ABC regression: login accepted, but the account must be verified (40104). The connection test must not report Connected,
+    the label must say why, and the run must stop after the first refused request."""
+    from app.adapters.base import AccountNotReady
+    def fail(path, body, n):
+        if path.startswith("keywords_data/") or path.startswith("dataforseo_labs/"):
+            return httpx.Response(200, json=env(None, status=40104, message="Please verify your account before using the API."))
+        return None
+    fake = FakeD4S(fail=fail)
+    ad = adapter(fake)
+    with pytest.raises(AccountNotReady) as ei:
+        ad.search_volume(["seo"], location_name="United States", language_code="en")
+    assert ei.value.kind == "account_verification_required" and "verified" in ei.value.message and "40104" in ei.value.message
+    assert not isinstance(ei.value, AuthError)
+    fake.calls.clear()
+    tag = uuid.uuid4().hex[:6]
+    met = d4s.keyword_metrics(ad, [f"a {tag}", f"b {tag}"] + [f"kw{i} {tag}" for i in range(1200)],
+                              {"location_name": "United States", "language_code": "en"})
+    assert met["rows"] == {} and met["errors"][0]["kind"] == "account_verification_required"
+    sent = [c for c in fake.calls if c[1].startswith("keywords_data/google_ads/search_volume")]
+    assert len(sent) == 1  # 1202 keywords would be 2 batches: the second is not sent once the account is known to be unverified
+    assert met["unmeasured"] == 1202  # every keyword is reported as unmeasured; none is given a number
+
+
+def test_connection_test_with_unverified_account_is_not_connected():
+    def fail(path, body, n):
+        if path.startswith("keywords_data/"):
+            return httpx.Response(401, json=env(None, status=40104, message="Please verify your account."))
+        return None
+    with session_scope() as db:
+        svc.save(db, "dataforseo", settings={"location_name": "United States"}, secrets={"login": LOGIN, "password": PASSWORD}, user_id=None)
+    svc.invalidate()
+    with session_scope() as db:
+        res = svc.test_connection(db, "dataforseo", http=httpx.Client(transport=httpx.MockTransport(FakeD4S(fail=fail))))
+        assert res["connected"] is False  # login accepted, research refused: never "connected"
+        item = svc.serialize(db, "dataforseo")
+        assert item["info"]["research_block"]["kind"] == "account_verification_required"
+        assert "verification" in json.dumps(item).lower() and LOGIN not in json.dumps(item) and PASSWORD not in json.dumps(item)
 
 
 def test_research_uses_dataforseo_metrics_with_provenance_end_to_end():

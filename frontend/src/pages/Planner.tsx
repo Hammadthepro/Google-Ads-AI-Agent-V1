@@ -45,8 +45,8 @@ export function DraftView({ draft }: { draft: any }) {
   const groups = draft.ad_groups ?? (draft.keywords ? [draft] : []);
   return (
     <div className="space-y-4">
-      {draft.campaign_name && <KV items={[["Campaign", draft.campaign_name], ["Bidding", draft.bidding_strategy], ["Location", draft.location_note || "—"],
-        ["Schedule", draft.ad_schedule_note || "—"], ["Call asset", draft.use_call_asset ? "yes" : "no"], ["Callouts", draft.callouts?.join(", ") || "—"]]} />}
+      {draft.campaign_name && <KV items={[["Campaign", draft.campaign_name], ["Bidding", draft.bidding_strategy], ["Location", draft.location_note || "From the client profile — see Settings & Budget"],
+        ["Schedule", draft.ad_schedule_note || "From the business hours — see Settings & Budget"], ["Call asset", draft.use_call_asset ? "yes" : "no"], ["Callouts", draft.callouts?.join(", ") || "—"]]} />}
       {draft.rationale && <Notice>{draft.rationale}</Notice>}
       {groups.map((g: any) => (
         <div key={g.name} className="rounded-lg border border-slate-200 p-4">
@@ -99,10 +99,9 @@ export function PlanDetail() {
       <Card title="AI provenance"><KV items={[["Drafting AI", `${p.draft_ai?.provider} · ${p.draft_ai?.model}`], ["Draft prompt", p.draft_ai?.prompt],
         ["Challenger AI", `${p.challenger_ai?.provider ?? "—"} · ${p.challenger_ai?.model ?? ""}`], ["Challenger prompt", p.challenger_ai?.prompt ?? "—"],
         ["Playbook rules applied", p.playbook_rule_ids.length], ["Version (after AI fixes)", p.version]]} /></Card>
-      <Card title="AI draft"><DraftView draft={p.draft} /></Card>
-      <Card title="AI challenger (independent review)"><ChallengerView ch={p.challenger} /></Card>
-      <Card title="Human plan comparison"><HumanComparison hc={p.human_comparison} /></Card>
-      <ResearchAppendix planId={p.id} />
+      <ResearchAppendix planId={p.id} draft={p.draft} adGroups={<DraftView draft={p.draft} />}
+        aiReview={<div className="space-y-4"><div><h4 className="mb-1 text-sm font-semibold">Challenger AI (independent review)</h4><ChallengerView ch={p.challenger} /></div>
+          <div><h4 className="mb-1 text-sm font-semibold">Human plan comparison</h4><HumanComparison hc={p.human_comparison} /></div></div>} />
     </div>
   );
 }

@@ -73,6 +73,16 @@ class QuotaExceeded(AdapterError):
     kind = "quota_exceeded"
 
 
+class AccountNotReady(AdapterError):
+    """The credentials are right, but the provider account cannot use the API yet (e.g. it must be verified first). Not retryable."""
+    kind = "account_verification_required"
+
+
+class InsufficientFunds(QuotaExceeded):
+    """The provider account's balance is too low to pay for the request."""
+    kind = "insufficient_funds"
+
+
 class InvalidResponse(AdapterError):
     """The provider answered, but not with the documented format. Nothing is guessed from it."""
     kind = "invalid_response"
@@ -90,6 +100,8 @@ class BudgetExhausted(AdapterError):
 
 FAILURE_CLASSES: dict[str, type[AdapterError]] = {
     "auth_failure": AuthError,
+    "account_verification_required": AccountNotReady,
+    "insufficient_funds": InsufficientFunds,
     "permission_denied": PermissionDenied,
     "rate_limited": RateLimited,
     "timeout": AdapterTimeout,

@@ -204,7 +204,8 @@ export function PlanReview({ planId, approvalId, canEdit, editable }: { planId: 
       {(versions.data?.length ?? 0) > 1 && <Versions planId={planId} approvalId={approvalId} versions={versions.data} canRestore={canEdit && editable} />}
       {canEdit && editable ? <Card title={<span id="edit">Edit this plan</span>}><PlanEditor approvalId={approvalId} draft={p.draft} scope={p.scope} /></Card>
         : <p className="text-xs text-slate-500">Only open approvals can be edited. <Link className="text-brand-700" to="/approvals">Back to approvals</Link></p>}
-      <ResearchAppendix planId={planId} />
+      <ResearchAppendix planId={planId} draft={p.draft} adGroups={<p className="text-xs text-slate-500">The ad groups and ads of this version are shown with the approval above.</p>}
+        aiReview={<CompetitionPanel comp={p.competition} />} />
     </div>
   );
 }

@@ -278,7 +278,11 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
                     "contains_eu_political_advertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
                     "weekly_conversion_target": float(fields.get("weekly_target") or 0)}},
     ]
-    ops += location_ops(f"temp:{c_ref}", business, fields)
+    from app.services import campaign_settings
+    settings = campaign_settings.resolve(business, fields)
+    if settings["location"]["mode"]:
+        ops += location_ops(f"temp:{c_ref}", business, fields)
+    ops += campaign_settings.criteria_ops(f"temp:{c_ref}", settings)
     negs = [n for n in draft.get("campaign_negatives", []) if n.lower() not in PATTERN_NEGATIVES]
     for n in negs:
         ops.append({"resource": "campaign_criterion", "op": "create",
@@ -330,11 +334,14 @@ def build_campaign_payload(db: Session, task: Task, business: Business, account:
                         "negatives": len(negs) + len(PATTERN_NEGATIVES), "status_on_create": "PAUSED",
                         "network": "Google Search only (Search Partners and Display off)", "geo_target_type": "PRESENCE",
                         "deployment_account": account.customer_id if account else "not linked yet (draft only)",
-                        "locations": fields.get("zip_codes") or f"{fields.get('radius_miles') or business.default_radius_miles} mile radius",
+                        "locations": settings["location"]["label"] or "NOT SET (blocking)",
+                        "location_targeting_mode": settings["location_targeting_mode"]["label"],
+                        "language": settings["language"]["label"] or "NOT SET (blocking)",
+                        "ad_schedule": settings["ad_schedule"]["label"] or "NOT SET (blocking)",
                         **({"renamed_to_avoid_duplicate": True} if renamed else {})},
             "internal": {"weekly_conversion_target": float(fields.get("weekly_target") or 0), "monthly_budget": monthly,
                          "business_id": business.id, "services": [g["service"] for g in draft["ad_groups"]]},
-            "draft_ref": {"campaign_name": draft["campaign_name"]}}
+            "settings": settings, "draft_ref": {"campaign_name": draft["campaign_name"]}}
 
 
 def build_ad_group_payload(account: GoogleAdsAccount, campaign: Campaign, group: dict) -> dict:

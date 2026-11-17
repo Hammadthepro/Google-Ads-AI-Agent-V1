@@ -120,7 +120,7 @@ def _fixture_client(api: Api, name: str, weekly_target: float = 0) -> tuple[str,
     r = api.post("/clients", {"name": name, "owner_contact": "o@v2.example", "backup_contact": "b@v2.example", "tag_access_contact": "w@v2.example"})
     cid = r.json()["id"]
     r = api.post(f"/clients/{cid}/businesses", {
-        "name": name, "business_type": "home_services", "website_url": "https://www.northsideplumbing.example/", "phone": "(555) 201-4400",
+        "name": name, "business_type": "home_services", "website_url": "https://www.northsideplumbing.example/", "phone": "(555) 201-4400", "business_hours": {"mon-fri": "07:00-19:00", "sat": "08:00-16:00", "sun": "closed"},
         "address": "1200 Example Ave, Columbus, OH", "lead_form_url": "https://www.northsideplumbing.example/contact",
         "thank_you_url": "https://www.northsideplumbing.example/thank-you", "verified_claims": ["Licensed & Insured"],
         "services": [{"name": "Drain Cleaning", "landing_page_url": "https://www.northsideplumbing.example/drain-cleaning"}],

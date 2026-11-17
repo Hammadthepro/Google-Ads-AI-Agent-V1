@@ -13,7 +13,7 @@ def _new_client_with_business(admin: Api) -> tuple[str, str]:
     # reuse a fixture website so the crawler works in fixture mode; link the seeded simulated account
     r = admin.post(f"/clients/{client_id}/businesses", {
         "name": "Northside Plumbing (E2E)", "business_type": "home_services", "website_url": "https://www.northsideplumbing.example/",
-        "phone": "(555) 201-4400", "address": "1200 Example Ave, Columbus, OH", "lead_form_url": "https://www.northsideplumbing.example/contact",
+        "phone": "(555) 201-4400", "business_hours": {"mon-fri": "07:00-19:00", "sat": "08:00-16:00", "sun": "closed"}, "address": "1200 Example Ave, Columbus, OH", "lead_form_url": "https://www.northsideplumbing.example/contact",
         "thank_you_url": "https://www.northsideplumbing.example/thank-you", "verified_claims": ["Licensed & Insured", "Same-Day Service"],
         "brand_rules": ["Avoid: cheapest"],
         "services": [{"name": "Drain Cleaning", "landing_page_url": "https://www.northsideplumbing.example/drain-cleaning"},

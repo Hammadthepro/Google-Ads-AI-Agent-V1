@@ -461,6 +461,12 @@ class Runner:
         from app.services import serp_research
         serp_ev = serp_research.evidence_summary(((self.ctx.get("keywords") or {}).get("discovery") or {}).get("serp"))
         ev = {"search_evidence": serp_ev} if serp_ev else {}  # absent = no Google search was performed; the prompt says so
+        cv = (((self.ctx.get("audits") or {}).get("competitor") or {}).get("verification") or {})
+        if cv.get("records"):  # each competitor with its verification status: the AI must not call an unverified one verified
+            ev["competitor_evidence"] = {"counts": {k: cv["counts"][k] for k in ("discovered", "verified", "pending", "rejected")},
+                                         "competitors": [{"name": r["name"], "domain": r["domain"], "status": r["status"],
+                                                          "origin": r["classification"], "evidence": (r["serp_evidence"][:1] or r["service_evidence"][:1])}
+                                                         for r in cv["records"] if r["status"] != "Rejected"][:12]}
         if self.ctx.get("revision"):
             ev["revision"] = self.ctx["revision"]
         if tt == "BUILD_CAMPAIGN":
