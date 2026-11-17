@@ -124,15 +124,20 @@ def _keywords(kw: dict, draft: dict, location: str) -> dict:
         vol = _metric(r, "avg_monthly_searches")
         measured = vol["value"] is not None
         src_labels = sorted({s.get("label") or s.get("source") for s in r.get("sources") or []})
-        kind = ("Keyword Planner measurement" if measured else
+        vsrc = str(vol.get("source") or "")
+        kind = ("DataForSEO measurement (Google Ads data)" if measured and vsrc.startswith("dataforseo") else
+                "Keyword Planner measurement" if measured else
                 "Search suggestion" if any("suggest" in (s.get("source") or "") or "serpapi" in (s.get("source") or "") for s in r.get("sources") or []) else
                 "Website / competitor term" if r.get("sources") else "AI-generated idea")
         used = sorted(in_plan.get(r["keyword"].lower(), set()))
         rows.append({"keyword": r["keyword"], "service": r.get("service"), "label": r.get("label"), "in_plan": bool(used),
                      "match_types": used or r.get("match_types") or [], "selected_by_research": bool(r.get("selected")),
                      "search_volume": vol["value"], "volume_period": KP_PERIOD if measured else None,
-                     "avg_cpc": None, "avg_cpc_note": "Not returned: Keyword Planner returns top-of-page bid ranges, not average CPC",
-                     "competition": r.get("competition"), "competition_index": None,
+                     "avg_cpc": r.get("cpc"),
+                     "avg_cpc_note": (f"Reported by {(_metric(r, 'cpc').get('source') or 'DataForSEO')}" if r.get("cpc") is not None else
+                                      "Not returned: Keyword Planner returns top-of-page bid ranges, not average CPC; no other source reported one"),
+                     "competition_index_source": "dataforseo" if r.get("competition_index") is not None else None,
+                     "competition": r.get("competition"), "competition_index": r.get("competition_index"),
                      "top_of_page_bid_low": (r.get("low_top_of_page_bid_micros") or 0) / 1e6 if r.get("low_top_of_page_bid_micros") else None,
                      "top_of_page_bid_high": (r.get("high_top_of_page_bid_micros") or 0) / 1e6 if r.get("high_top_of_page_bid_micros") else None,
                      "geo": (", ".join(r["planner_location"]) if isinstance(r.get("planner_location"), list) else r.get("planner_location"))

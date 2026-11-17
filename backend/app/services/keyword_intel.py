@@ -32,14 +32,16 @@ TRANSACTIONAL = ("near me", "emergency", "same day", "24 hour", "24/7", "hire", 
 INFORMATIONAL = ("how to", "how do", "how does", "what is", "what are", "why", "diy", "guide", "tutorial", "ideas", "meaning", "definition",
                  "vs", "versus", "reddit", "youtube", "pdf", "course", "training", "jobs", "salary", "career")
 QUESTION_SEEDS = ("how much does {s} cost", "{s} cost")
-METRICS = ("avg_monthly_searches", "competition", "low_top_of_page_bid_micros", "high_top_of_page_bid_micros")
+METRICS = ("avg_monthly_searches", "competition", "low_top_of_page_bid_micros", "high_top_of_page_bid_micros", "cpc")
 METRIC_TYPE = {"avg_monthly_searches": "search_volume", "competition": "competition", "low_top_of_page_bid_micros": "top_of_page_bid_low",
-               "high_top_of_page_bid_micros": "top_of_page_bid_high"}
+               "high_top_of_page_bid_micros": "top_of_page_bid_high", "cpc": "cpc_usd"}
 SOURCE_LABEL = {"suggest:google": "Google Autocomplete", "suggest:duckduckgo": "DuckDuckGo suggestions", "suggest:bing": "Bing suggestions",
                 "client_website": "Client website", "competitor_website": "Competitor website", "search_terms": "Google Ads search terms",
                 "web_search": "Web search results", "keyword_planner": "Keyword Planner",
                 "serpapi_related": "Google related searches (SerpApi)", "serpapi_question": "Google related questions (SerpApi)",
-                "serpapi_autocomplete": "Google Autocomplete (SerpApi)"}
+                "serpapi_autocomplete": "Google Autocomplete (SerpApi)", "dataforseo_ideas": "DataForSEO keyword ideas",
+                "dataforseo_site": "DataForSEO keywords for site", "dataforseo_competitor": "Competitor ranked keywords (DataForSEO Labs)",
+                "dataforseo_intersection": "Shared with a competitor (DataForSEO Labs)"}
 
 
 def intent(kw: str, brand_words: set[str] = frozenset(), competitor_names: set[str] = frozenset()) -> str:
@@ -66,11 +68,56 @@ def planner_metrics(row: dict) -> dict:
     out = {}
     for m in METRICS:
         v = row.get(m)
+        if m == "cpc" and v is None:  # Keyword Planner ideas carry top-of-page bid ranges, not an average CPC
+            out[m] = {"value": None, "source": "google_keyword_planner", "retrieved_at": row.get("retrieved_at"), "metric_type": METRIC_TYPE[m],
+                      "confidence": None, "basis": "unavailable", "note": "Keyword Planner returns top-of-page bid ranges, not an average CPC."}
+            continue
         out[m] = ({"value": v, "source": "google_keyword_planner", "retrieved_at": row.get("retrieved_at"), "metric_type": METRIC_TYPE[m],
                    "confidence": "google_estimate", "basis": "observed"} if v is not None else
                   {"value": None, "source": "google_keyword_planner", "retrieved_at": row.get("retrieved_at"), "metric_type": METRIC_TYPE[m],
                    "confidence": None, "basis": "unavailable", "note": "Keyword Planner returned no value for this metric."})
     return out
+
+
+def dataforseo_values(row: dict) -> dict:
+    """A DataForSEO Google Ads row in this app's metric fields (bids in micros like Keyword Planner). Missing stays None."""
+    usd = lambda v: int(round(float(v) * 1e6)) if isinstance(v, (int, float)) else None  # noqa: E731
+    return {"avg_monthly_searches": row.get("search_volume"), "competition": row.get("competition_level"),
+            "low_top_of_page_bid_micros": usd(row.get("low_top_of_page_bid")), "high_top_of_page_bid_micros": usd(row.get("high_top_of_page_bid")),
+            "cpc": row.get("cpc"), "competition_index": row.get("competition_index"), "monthly_searches": row.get("monthly_searches")}
+
+
+def dataforseo_metrics(row: dict) -> dict:
+    """Per-metric provenance for values from DataForSEO: endpoint, retrieval time, location and language, or why it is unavailable."""
+    vals = dataforseo_values(row)
+    src = row.get("source") or "dataforseo"
+    out = {}
+    for m in METRICS:
+        v = vals.get(m)
+        base = {"source": src, "retrieved_at": row.get("retrieved_at"), "metric_type": METRIC_TYPE[m], "location": row.get("location"),
+                "language": row.get("language"), "served_from_cache": bool(row.get("cached"))}
+        out[m] = ({**base, "value": v, "confidence": "google_ads_estimate", "basis": "observed"} if v is not None else
+                  {**base, "value": None, "confidence": None, "basis": "unavailable", "note": "DataForSEO returned no value for this metric."})
+    return out
+
+
+def rank_score(r: dict) -> float:
+    """Ordering within a label: fit first (relevance 0-100), then measured demand, then affordability of the click and the competition.
+    Only observed values count; an unknown metric adds nothing (it is never treated as zero demand or free clicks)."""
+    import math
+    score = float(r.get("relevance_score") or 0)
+    vol = r.get("avg_monthly_searches")
+    if isinstance(vol, (int, float)) and vol > 0:
+        score += min(30.0, 7.5 * math.log10(1 + vol))
+    if r.get("intent") in ("transactional", "commercial"):
+        score += 5
+    ci = r.get("competition_index")
+    if isinstance(ci, (int, float)):
+        score -= ci / 20.0
+    cpc = r.get("cpc")
+    if isinstance(cpc, (int, float)) and r.get("max_cpc") and cpc > r["max_cpc"]:
+        score -= 10
+    return round(score, 2)
 
 
 class Bag:

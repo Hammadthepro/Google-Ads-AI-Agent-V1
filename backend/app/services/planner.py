@@ -36,8 +36,8 @@ PER_SERVICE, MAX_IRRELEVANT = 25, 40
 
 
 def compact_keywords(table: list[dict]) -> dict:
-    """The researched keywords in the shape the AI needs: per service, [keyword, monthly searches] pairs strongest first (a volume is
-    given only where a source reported one; null means unknown, never zero), plus the terms to exclude. Each keyword appears once:
+    """The researched keywords in the shape the AI needs: per service, [keyword, monthly searches, CPC USD] triples strongest first (a value
+    is given only where a source reported one; null means unknown, never zero), plus the terms to exclude. Each keyword appears once:
     the earlier format repeated every keyword again in a separate volume map, which alone cost ~20% of the draft request."""
     by_service: dict[str, list[list]] = {}
     irrelevant: list[str] = []
@@ -54,7 +54,8 @@ def compact_keywords(table: list[dict]) -> dict:
             continue
         group = by_service.setdefault(r.get("service") or "Generic", [])
         if len(group) < PER_SERVICE:
-            group.append([kw, r.get("avg_monthly_searches")])
+            cpc = r.get("cpc")
+            group.append([kw, r.get("avg_monthly_searches"), round(float(cpc), 2) if isinstance(cpc, (int, float)) else None])
     return {"keywords_by_service": by_service, "irrelevant_terms": irrelevant}
 
 

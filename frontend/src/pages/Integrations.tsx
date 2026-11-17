@@ -132,6 +132,25 @@ function ProviderFacts({ item }: { item: any }) {
         <p className="mt-2 text-xs text-slate-500">{i.never}</p>
       </dl>);
   }
+  if (item.provider === "dataforseo") {
+    const a = i.account;
+    const u = i.usage_30d?.dataforseo;
+    const saved = (k: string) => item.secrets[k]?.saved;
+    return (
+      <dl className="mt-3" aria-label="DataForSEO account">
+        <Row label="API Login">{saved("login") ? <>Configured <span className="font-normal text-slate-500">(hidden)</span></> : <span className="text-rose-700">Not configured</span>}</Row>
+        <Row label="API Password">{saved("password") ? <>Configured <span className="font-normal text-slate-500">(••••••••)</span></> : <span className="text-rose-700">Not configured</span>}</Row>
+        {a ? (<>
+          <Row label="Account balance">{typeof a.balance === "number" ? `$${a.balance.toFixed(2)}` : "not stated by DataForSEO"}</Row>
+          <Row label="Account checked">{dt(a.checked_at)} <span className="font-normal text-slate-500">(User Data API — not charged)</span></Row>
+        </>) : <Row label="Balance"><span className="text-slate-500">Not read yet: run Test Connection (uses the free User Data API).</span></Row>}
+        {u && <Row label="Usage, 30 days (this app)">{u.requests_sent} request(s) sent · {u.served_from_cache} served from cache{u.cost_units ? ` · $${u.cost_units.toFixed(4)} reported cost` : ""}{u.failed ? ` · ${u.failed} failed` : ""}
+          {u.last_error && <div className="text-2xs text-amber-800">Last failure: {u.last_error.kind} — {u.last_error.message}</div>}</Row>}
+        <Row label="Endpoints">{(i.endpoints ?? []).join(" · ")}</Row>
+        <Row label="Last successful connection test">{item.last_success_at ? dt(item.last_success_at) : "Never"}</Row>
+        <p className="mt-2 text-xs text-slate-500">{i.never}</p>
+      </dl>);
+  }
   if (i.usage_30d) {
     const rows = Object.entries(i.usage_30d as Record<string, any>);
     return (

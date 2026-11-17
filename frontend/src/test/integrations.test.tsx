@@ -150,3 +150,38 @@ describe("Integrations dashboard", () => {
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/integrations/crawler/test"))).toBe(true));
   });
 });
+
+describe("DataForSEO card", () => {
+  const D4S = { ...base, provider: "dataforseo", label: "DataForSEO", group: "Research", description: "Keyword Data, Search Volume, CPC and Competitor Research.",
+    missing: [], status: "CONNECTED", display: { config: "Configured", connection: "Connected", label: "Connected", testable: true },
+    settings: { location_name: { label: "Default location (e.g. United States)", value: "United States", source: "saved", required: false } },
+    secrets: { login: { label: "API Login", saved: true, source: "saved", fingerprint: "", required: true },
+               password: { label: "API Password", saved: true, source: "saved", fingerprint: "", required: true } },
+    info: { account: { login_accepted: true, balance: 37.25, checked_at: "2026-11-17T10:00:00Z" },
+            usage_30d: { dataforseo: { requests_sent: 4, served_from_cache: 9, failed: 0, cost_units: 0.31, last_error: null } },
+            endpoints: ["Google Ads: search volume", "Labs: competitors domain"], never: "Metrics DataForSEO does not return stay unavailable; nothing is estimated." } };
+
+  it("shows the connection, balance and usage, takes the login and password as write-only fields, and never displays them", async () => {
+    const sent: any[] = [];
+    canManage = true;
+    globalThis.fetch = vi.fn(async (url: any, init: any = {}) => {
+      const u = String(url), method = init.method ?? "GET";
+      if (method !== "GET") sent.push({ u, method, body: init.body ? JSON.parse(init.body) : undefined });
+      if (u.endsWith("/integrations")) return new Response(JSON.stringify({ integrations: [D4S], mode: { mode: "read_only", label: "", write_keys: {}, real_reads: true, real_writes_possible: false, explanation: "" }, redirect_uri: "" }));
+      return new Response(JSON.stringify(D4S));
+    }) as any;
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><Integrations /></MemoryRouter></QueryClientProvider>);
+    await openProvider(/^DataForSEO/);
+    const facts = await screen.findByLabelText("DataForSEO account");
+    expect(within(facts).getByText("$37.25")).toBeInTheDocument();
+    expect(within(facts).getByText(/4 request\(s\) sent · 9 served from cache · \$0.3100 reported cost/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("agency@example.com");
+    const pw = screen.getByLabelText(/API Password/, { selector: "input" }) as HTMLInputElement;
+    expect(pw.value).toBe("");
+    fireEvent.change(pw, { target: { value: "new-secret-pass" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    await waitFor(() => expect(sent.some((c) => c.method === "PUT" && c.u.endsWith("/integrations/dataforseo"))).toBe(true));
+    expect(sent.find((c) => c.method === "PUT").body.secrets).toEqual({ password: "new-secret-pass" });
+    expect(screen.getAllByRole("button", { name: /Disconnect/ }).length).toBeGreaterThan(0);
+  });
+});

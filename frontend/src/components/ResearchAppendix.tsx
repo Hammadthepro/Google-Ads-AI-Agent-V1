@@ -36,10 +36,10 @@ export function ResearchAppendix({ planId }: { planId: string }) {
   const kwRow = (k: any) => [
     <span className="font-medium text-slate-900">{k.keyword}</span>, (k.match_types ?? []).join(", ") || "—",
     k.search_volume !== null ? <span title={k.volume_period}>{n(k.search_volume)}<span className="block text-2xs text-slate-400">avg/month, 12 mo</span></span> : <NA why={k.unavailable_reason} />,
-    <span className="text-slate-400" title={k.avg_cpc_note}>not returned</span>,
+    k.avg_cpc !== null && k.avg_cpc !== undefined ? <span title={k.avg_cpc_note}>{money(k.avg_cpc)}</span> : <span className="text-slate-400" title={k.avg_cpc_note}>not returned</span>,
     k.competition ?? <NA />, k.competition_index ?? <span className="text-slate-400">not returned</span>,
     k.top_of_page_bid_high ? `${money(k.top_of_page_bid_low) ?? "—"}–${money(k.top_of_page_bid_high)}` : <NA />,
-    k.geo && String(k.geo).includes("(business service area") ? <span title={k.geo}>service area*</span> : (k.geo ?? "—"), k.language ?? "—", <Badge tone={k.measurement === "Keyword Planner measurement" ? "green" : k.measurement === "AI-generated idea" ? "violet" : "slate"}>{k.measurement}</Badge>,
+    k.geo && String(k.geo).includes("(business service area") ? <span title={k.geo}>service area*</span> : (k.geo ?? "—"), k.language ?? "—", <Badge tone={/measurement/.test(k.measurement ?? "") ? "green" : k.measurement === "AI-generated idea" ? "violet" : "slate"}>{k.measurement}</Badge>,
     (k.providers ?? []).join(", ") || "—", <span className="block max-w-[16rem] text-slate-600">{k.reason || k.unavailable_reason}</span>];
   const kwHead = ["Keyword", "Match type", "Search volume", "Avg CPC", "Competition", "Comp. index", "Top-of-page bid", "Geo", "Language", "Measurement", "Provider", "Why"];
   return (

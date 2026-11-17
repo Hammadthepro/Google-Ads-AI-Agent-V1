@@ -95,6 +95,14 @@ def serpapi():
 
 
 @lru_cache
+def dataforseo():
+    vals = integrations_service.ensure_configured("dataforseo")
+    from app.adapters.research.dataforseo import DataForSEOAdapter
+    return DataForSEOAdapter(vals["login"], vals["password"], location_name=vals.get("location_name") or "United States",
+                             language_code=vals.get("language_code") or "en")
+
+
+@lru_cache
 def brave_search():
     vals = integrations_service.ensure_configured("brave_search")
     from app.adapters.research.brave import BraveSearchAdapter
@@ -125,7 +133,7 @@ def geoapify():
 
 ALL = {"google_ads": google_ads, "keyword_research": keyword_research, "places": places, "pagespeed": pagespeed,
        "crawler": crawler, "ai": ai, "challenger_ai": challenger_ai, "auth": auth, "notifier": notifier,
-       "tavily": tavily, "serpapi": serpapi, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
+       "tavily": tavily, "serpapi": serpapi, "dataforseo": dataforseo, "brave_search": brave_search, "search_suggestions": search_suggestions, "openstreetmap": openstreetmap, "geoapify": geoapify}
 
 
 def reset() -> None:

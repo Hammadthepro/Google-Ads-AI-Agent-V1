@@ -100,3 +100,41 @@ def usage(provider: str, *, days: int = 30) -> dict:
                 out["failed"] += n
     out["last_error"] = ({"kind": last_error.error_kind, "message": last_error.error, "at": last_error.created_at.isoformat()} if last_error else None)
     return out
+
+
+# ------------------------------------------------------------------------------------------ item-level cache (metered batch endpoints)
+def cached_items(provider: str, operation: str, requests: list[dict]) -> dict[str, dict]:
+    """For batch endpoints priced per item (e.g. search volume per keyword): which items already have a fresh cached answer.
+    Returns {cache_key: {"value": ..., "cached_at": iso}} for the hits only."""
+    keys = {cache_key({"op": operation, **r}): r for r in requests}
+    if not keys:
+        return {}
+    now = clock.now()
+    with session_scope() as db:
+        rows = db.scalars(select(ProviderCache).where(ProviderCache.provider == provider, ProviderCache.cache_key.in_(list(keys)),
+                                                      ProviderCache.expires_at > now)).all()
+        return {r.cache_key: {"value": r.response.get("value"), "cached_at": r.created_at.isoformat() if r.created_at else None} for r in rows}
+
+
+def store_items(provider: str, operation: str, items: list[tuple[dict, Any]], *, ttl: timedelta, cost: float = 0, sent: int = 0) -> None:
+    """Store each item of one paid batch answer under its own cache key (so the same keyword is not bought again) and record the
+    batch once in the usage ledger with its reported cost."""
+    now = clock.now()
+    with session_scope() as db:
+        for request, value in items:
+            key = cache_key({"op": operation, **request})
+            row = db.scalar(select(ProviderCache).where(ProviderCache.provider == provider, ProviderCache.cache_key == key))
+            if row is None:
+                row = ProviderCache(provider=provider, cache_key=key)
+                db.add(row)
+            row.request, row.response, row.created_at, row.expires_at = redact(request), {"value": value}, now, now + ttl
+    if sent:
+        _log(provider, operation, ok=True, cached=False, cost=float(cost or 0))
+
+
+def log_cached(provider: str, operation: str) -> None:
+    _log(provider, operation, ok=True, cached=True)
+
+
+def log_failure(provider: str, operation: str, error: AdapterError) -> None:
+    _log(provider, operation, ok=False, cached=False, error=error)

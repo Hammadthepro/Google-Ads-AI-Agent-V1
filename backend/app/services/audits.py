@@ -220,15 +220,36 @@ def _serp_candidates(ctx: dict, serp: dict) -> list[dict]:
     return out[:10]
 
 
+def _dataforseo_competitors(ctx: dict, web_candidates: list[dict], serp: dict) -> dict:
+    """DataForSEO competitor discovery and verification (only when configured). Candidates come from the client profile, the website and
+    web research, and SerpApi; DataForSEO adds domains with real search overlap and verifies candidates only on that evidence."""
+    from app.services import dataforseo_research as d4s
+    ad, why = d4s.adapter_or_reason()
+    if ad is None:
+        research_events.emit("provider_unavailable", "DataForSEO is not configured: competitor overlap research was not used", stage="competitors",
+                             level="info", provider="dataforseo", reason=why)
+        return {"used": False, "reason": why}
+    cands = [{"domain": c["website_url"], "name": c["name"], "source": "client profile"} for c in ctx["competitors"] if c.get("website_url")]
+    cands += [{"domain": c.get("website_url") or "", "name": c.get("name") or "", "source": f"web research ({c.get('provider') or 'search'})"}
+              for c in web_candidates or [] if c.get("website_url")]
+    city = ctx.get("city") or ""
+    target_kws = [*ctx["service_names"], *[f"{n} {city}".strip() for n in ctx["service_names"]]]
+    target_kws += [q.get("query") for q in (serp or {}).get("queries") or [] if q.get("ok") and q.get("query")]
+    where = d4s.resolve_location(ad, ctx, "competitors")["labs"]
+    return d4s.competitor_research(ad, ctx, [k for k in target_kws if k], cands, where, stage="competitors")
+
+
 def competitor_audit(ctx: dict, task_id: str | None) -> dict:
     web = web_research.discover_competitors(ctx, stage="competitors")
     serp = serp_research.research(ctx, stage="competitors", parts=("google", "maps", "transparency"))
     if serp.get("used"):
         web["candidates"] = _serp_candidates(ctx, serp) + [c for c in web["candidates"]
                                                            if serp_research._host(c["website_url"]) not in {serp_research._host(x["website_url"]) for x in _serp_candidates(ctx, serp)}]
+    d4s = _dataforseo_competitors(ctx, web["candidates"], serp)
     if not ctx["competitors"]:
         return {"skipped": True, "reason": "No competitors in the business profile (decision D-05)", "web_candidates": web["candidates"],
-                "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp, "source": "LIVE" if serp.get("used") else "NONE"}
+                "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp, "dataforseo": d4s,
+                "source": "LIVE" if serp.get("used") or d4s.get("used") else "NONE"}
     out, client_services = [], {normalize_term(s) for s in ctx["service_names"]}
     try:
         kw_adapter = registry.get("keyword_research")
@@ -264,7 +285,7 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
                                             task_id=task_id)
         ads_analysis = {**parsed.model_dump(), "verification": "Pasted by the team — not verified as currently running."}
     return {"competitors": out, "pasted_ads_analysis": ads_analysis, "web_candidates": web["candidates"],
-            "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp,
+            "web_discovery": {k: v for k, v in web.items() if k != "candidates"}, "serp": serp, "dataforseo": d4s,
             "keyword_sources": ["Keyword Planner URL seeds (" + kw_adapter.source + ")"] if kw_adapter else [],
             "missing_sources": ["Paid competitor bidding data (Semrush or similar) not connected"]
             + ([] if serp.get("used") else ["Google results (SerpApi) not configured: no public ads or organic rankings were observed"]),
@@ -272,6 +293,63 @@ def competitor_audit(ctx: dict, task_id: str | None) -> dict:
 
 
 # ------------------------------------------------------------------ 4d keyword research
+def _dataforseo_keywords(ctx: dict, dedup: dict, names: list[str], website: dict, competitors: dict, stage: str) -> dict:
+    """DataForSEO's part of keyword research (only when it is configured): ideas from the services and the client's site, competitor
+    keyword opportunities from verified competitors, then Google Ads metrics for every candidate that has none yet. Keyword Planner
+    values are never overwritten. Failures are reported and everything already found is kept."""
+    from app.services import dataforseo_research as d4s
+    ad, why = d4s.adapter_or_reason()
+    if ad is None:
+        research_events.emit("provider_unavailable", "DataForSEO is not configured: its keyword ideas and metrics were not used", stage=stage,
+                             level="info", provider="dataforseo", reason=why)
+        return {"report": {"used": False, "reason": why}, "errors": []}
+    where = d4s.resolve_location(ad, ctx, stage)["keywords"]
+    report = {"used": True, "where": where, "ideas": 0, "competitor_keywords": 0, "metrics": {}, "errors": []}
+
+    def add(kw: str, source: str, detail: str, row: dict | None, service: str | None = None):
+        key = normalize_term(kw)
+        if not key or len(key.split()) > 8:
+            return
+        src = {"source": source, "label": keyword_intel.SOURCE_LABEL.get(source, source), "detail": detail}
+        if key in dedup:
+            if not any(x["source"] == source for x in dedup[key]["sources"]):
+                dedup[key]["sources"].append(src)
+            return
+        dedup[key] = {"keyword": " ".join(kw.lower().split()), **{m: None for m in keyword_intel.METRICS}, "seed": source, "source": "LIVE",
+                      "sources": [src], "service_hint": service,
+                      "metrics": keyword_intel.unavailable_metrics("No metrics attached yet."), "metrics_unavailable": list(keyword_intel.METRICS)}
+    seeds = names + [f"{n} {ctx.get('city') or ''}".strip() for n in names]
+    ideas = d4s.keyword_ideas(ad, seeds, ctx.get("website_url"), where, stage=stage)
+    for x in ideas["ideas"]:
+        o = x["origin"]
+        add(x["keyword"], "dataforseo_site" if o["endpoint"] == "keywords_for_site" else "dataforseo_ideas",
+            f"site {o['source_domain']}" if o.get("source_domain") else "seeds: " + ", ".join(o.get("seeds", [])[:4]), x)
+    report["ideas"] = len(ideas["ideas"])
+    for c in ((competitors or {}).get("dataforseo") or {}).get("competitors") or []:
+        if not c.get("verified"):
+            continue
+        for k in (c.get("ranked_keywords") or [])[:40] + (c.get("intersection_keywords") or [])[:40]:
+            add(k["keyword"], "dataforseo_competitor" if "rank" in k else "dataforseo_intersection", f"competitor {c['domain']}", None)
+            report["competitor_keywords"] += 1
+    need = [r["keyword"] for r in dedup.values() if r.get("avg_monthly_searches") is None and
+            not any(x["source"] == "keyword_planner" for x in r["sources"])]
+    met = d4s.keyword_metrics(ad, need, where, stage=stage) if need else {"rows": {}, "sent": 0, "cached": 0, "cost_usd": 0.0, "errors": []}
+    filled = 0
+    for key, row in met["rows"].items():
+        r = dedup.get(key)
+        if r is None or any(x["source"] == "keyword_planner" for x in r["sources"]):
+            continue
+        r.update({k: v for k, v in keyword_intel.dataforseo_values(row).items()})
+        r["metrics"] = keyword_intel.dataforseo_metrics(row)
+        r["metrics_unavailable"] = [m for m, v in r["metrics"].items() if v["basis"] == "unavailable"]
+        r["retrieved_at"] = row.get("retrieved_at")
+        filled += 1 if row.get("search_volume") is not None else 0
+    report["metrics"] = {"requested": len(need), "with_volume": filled, "requests_sent": met["sent"], "served_from_cache": met["cached"],
+                         "cost_usd": round(met["cost_usd"] + ideas["cost_usd"], 4)}
+    report["errors"] = ideas["errors"] + met["errors"]
+    return {"report": report, "errors": [{"service": "*", "error": f"DataForSEO {e['step']}: {e['message']}"} for e in report["errors"]]}
+
+
 def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, task_id: str | None,
                      services: list[dict] | None = None, existing_keywords: dict[str, list[str]] | None = None,
                      daily_budget: float | None = None) -> dict:
@@ -337,6 +415,7 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
         dedup[key] = {"keyword": c["keyword"], **{m: None for m in keyword_intel.METRICS}, "seed": c["sources"][0]["source"], "source": "LIVE",
                       "sources": c["sources"], "metrics": keyword_intel.unavailable_metrics(no_metrics_reason), "service_hint": c.get("service_hint"),
                       "metrics_unavailable": list(keyword_intel.METRICS)}
+    d4s = _dataforseo_keywords(ctx, dedup, names, website, competitors, stage)
     serp = disc["report"].get("serp") or {}
     observed = {normalize_term(q["query"]): q for q in serp.get("queries") or [] if q.get("ok") and q.get("engine") == "google"}
     for key, r in dedup.items():
@@ -398,10 +477,13 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
                       "relevance_score": score, "relevance_basis": basis, "sources": r["sources"], "metrics": r["metrics"],
                       "first_party": r.get("first_party"), "landing_page": lp_map.get(r.get("service") or "", ""),
                       "selection_basis": "observed volume" if vol is not None else "relevance and intent (no volume data)",
-                      "uncertainty": uncertainty,
+                      "uncertainty": uncertainty, "cpc": r.get("cpc"), "competition_index": r.get("competition_index"),
+                      "monthly_searches": r.get("monthly_searches"),
                       # Keyword Planner's own request parameters for this row (absent when the row has no planner metrics)
                       "planner_location": r.get("location"), "planner_language": r.get("language"), "retrieved_at": r.get("retrieved_at")})
-    table.sort(key=lambda x: (x["label"] != "SERVICE", -(x["avg_monthly_searches"] or 0), -x["relevance_score"]))
+    for t in table:  # one deterministic ordering from fit, measured demand, CPC and competition (keyword_intel.rank_score)
+        t["rank_score"] = keyword_intel.rank_score({**t, "max_cpc": max_bid})
+    table.sort(key=lambda x: (x["label"] != "SERVICE", -x["rank_score"], -(x["avg_monthly_searches"] or 0)))
     clusters = {}
     for t in table:
         if t["selected"] and t["ad_group"]:
@@ -414,9 +496,10 @@ def keyword_research(db: Session, ctx: dict, website: dict, competitors: dict, t
     with_volume = sum(1 for t in table if t["avg_monthly_searches"] is not None)
     research_events.emit("evidence_validated", f"{with_volume} of {len(table)} keyword(s) have observed search volume; the rest are marked unavailable",
                          stage=stage, observed=with_volume, total=len(table))
-    out = {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors,
-           "keyword_planner": planner, "discovery": disc["report"], "sources_used": sources_used,
-           "metrics_policy": "Search volume, competition and bids come only from Keyword Planner (Google estimates) or are unavailable. "
+    out = {"keywords": table, "clusters": clusters, "negative_ideas": negatives, "overlaps": overlaps, "errors": errors + d4s["errors"],
+           "keyword_planner": planner, "discovery": disc["report"], "sources_used": sources_used, "dataforseo": d4s["report"],
+           "metrics_policy": "Search volume, CPC, competition and bids come only from Keyword Planner or DataForSEO (Google Ads data, each with "
+                             "its source and retrieval time) or are unavailable. "
                              "relevance_score is this app's fit score, not search volume. First-party clicks/conversions come from the account's own search terms.",
            "match_type_policy": "EXACT + PHRASE in main ad groups; BROAD only in an approved test ad group once conversions are recorded reliably.",
            "source": SourceType.combine(kw.source if kw else None, "LIVE" if disc["candidates"] else None)}

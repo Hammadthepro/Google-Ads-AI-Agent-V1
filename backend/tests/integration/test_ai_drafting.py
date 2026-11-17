@@ -185,9 +185,9 @@ def test_compact_keyword_input_never_invents_volumes_and_is_bounded():
     rows += [{"keyword": "unselected", "label": "SERVICE", "service": "Drain Cleaning", "selected": False, "avg_monthly_searches": 5000}]
     out = planner.compact_keywords(rows)
     pairs = out["keywords_by_service"]["Drain Cleaning"]
-    assert len(pairs) == planner.PER_SERVICE and "unselected" not in [k for k, _ in pairs]
-    assert pairs[0] == ["drain cleaning 1", 99]  # strongest known volume first
-    assert all(v is None for k, v in pairs if int(k.rsplit(" ", 1)[1]) % 2 == 0)  # unknown stays unknown (null), never 0
+    assert len(pairs) == planner.PER_SERVICE and "unselected" not in [k for k, _, _ in pairs]
+    assert pairs[0] == ["drain cleaning 1", 99, None]  # strongest known volume first; no CPC was reported, so none is given
+    assert all(v is None for k, v, _ in pairs if int(k.rsplit(" ", 1)[1]) % 2 == 0)  # unknown stays unknown (null), never 0
     assert len(out["irrelevant_terms"]) == planner.MAX_IRRELEVANT
-    assert len({k for k, _ in pairs}) == len(pairs)  # each keyword once
+    assert len({k for k, _, _ in pairs}) == len(pairs)  # each keyword once
     assert len(json.dumps(out)) < len(json.dumps(rows)) / 3

@@ -132,6 +132,21 @@ PROVIDERS: dict[str, dict] = {
         "targets": {"account": "Check account", "search": "Run one live search"},
         "docs": "https://serpapi.com/search-api",
     },
+    "dataforseo": {
+        "label": "DataForSEO", "group": "Research",
+        "description": "Keyword Data, Search Volume, CPC and Competitor Research. Google Ads keyword data through DataForSEO (search volume, "
+                       "monthly searches, CPC, competition, top-of-page bids) for the target location and language, keyword ideas from seeds and "
+                       "from websites, and DataForSEO Labs competitor research: domains sharing search visibility, domains ranking for the target "
+                       "keywords and the keywords they share. Keyword Planner stays the first metrics source and SerpApi stays the source of what "
+                       "Google showed; DataForSEO fills the gaps. Requests are charged by DataForSEO: each keyword's data is cached for 30 days, the "
+                       "Google Ads endpoints are limited to 12 requests a minute, and the connection test uses the free User Data API.",
+        "settings": {"location_name": "Default location (e.g. United States)", "country_iso": "Country code for city matching (e.g. us)",
+                     "language_code": "Language code (e.g. en)", "labs_location_name": "Competitor research location (country, e.g. United States)"},
+        "secrets": {"login": "API Login", "password": "API Password"}, "required": ["login", "password"],
+        "default_settings": {"location_name": "United States", "country_iso": "us", "language_code": "en", "labs_location_name": "United States"},
+        "subtests": [("account", "Account (User Data API, not charged)")], "required_subtests": ["account"],
+        "docs": "https://docs.dataforseo.com/v3/",
+    },
     "search_suggestions": {
         "label": "Search suggestions (keyword discovery)", "group": "Research",
         "description": "Free keyword discovery from public search-suggestion endpoints (Google Autocomplete, DuckDuckGo, Bing). They return the phrases people "
@@ -1203,6 +1218,27 @@ def _test_tavily(vals: dict, http: httpx.Client, steps: Steps, row, target: str 
     return {}
 
 
+def _test_dataforseo(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
+    """The User Data API (not charged) proves the login and password and returns the balance. No paid endpoint is called."""
+    from app.adapters.research.dataforseo import DataForSEOAdapter
+    from app.core import clock
+    if not vals.get("login") or not vals.get("password"):
+        steps.fail("Credentials present", "API Login and API Password are required", sub="account")
+        return {}
+    steps.ok("Credentials present", sub="account")
+    adapter = DataForSEOAdapter(vals["login"], vals["password"], http, location_name=vals.get("location_name") or "United States",
+                                language_code=vals.get("language_code") or "en", retries=0)
+    acc = _research_step(steps, "User Data API: validate login and read balance", adapter.user_data, sub="account",
+                         hint="Check the API login and password at app.dataforseo.com/api-access (they differ from the website password).")
+    if acc is None:
+        return {}
+    bal = acc.get("balance")
+    steps.ok("User Data API: validate login and read balance",
+             f"Login accepted; balance {'$%.2f' % bal if isinstance(bal, (int, float)) else 'not stated'} (not charged)", sub="account")
+    # the login is a credential too: only the fact that it was accepted is kept and shown, never the login itself
+    return {"account": {"login_accepted": True, "balance": bal, "checked_at": clock.real_now().isoformat()}}
+
+
 def _test_serpapi(vals: dict, http: httpx.Client, steps: Steps, row, target: str = "all") -> dict:
     """The Account API proves the key and returns the plan and searches left WITHOUT using a search credit. A live search (1 credit)
     runs only when that sub-test is requested explicitly."""
@@ -1324,7 +1360,7 @@ def _test_geoapify(vals: dict, http: httpx.Client, steps: Steps, row, target: st
     return {}
 
 
-_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "serpapi": _test_serpapi, "brave_search": _test_brave_search, "web_fetch": _test_web_fetch,
+_TESTERS: dict[str, Callable] = {"tavily": _test_tavily, "serpapi": _test_serpapi, "dataforseo": _test_dataforseo, "brave_search": _test_brave_search, "web_fetch": _test_web_fetch,
                                  "search_suggestions": _test_search_suggestions,
                                  "openstreetmap": _test_openstreetmap, "geoapify": _test_geoapify,"keyword_planner": _test_keyword_planner, "smtp": _test_smtp, "database": _test_database, "redis": _test_redis,
                                  "google_ads": _test_google_ads, "ga4": _test_ga4, "groq": _test_groq,
@@ -1742,6 +1778,12 @@ def serialize(db: Session, provider: str) -> dict:
                 "engines": ["google (organic, sponsored ads, related searches, related questions, local pack)", "google_maps", "google_autocomplete",
                             "google_ads_transparency_center (" + ("on" if (vals.get("ads_transparency") or "off") == "on" else "off") + ")"],
                 "never": "No search volume, CPC or competitor performance comes from SerpApi."}
+    if provider == "dataforseo":
+        from app.services import provider_calls
+        info = {"account": (row.discovered or {}).get("account") if row else None, "usage_30d": {"dataforseo": provider_calls.usage("dataforseo")},
+                "endpoints": ["Google Ads: search volume, keywords for keywords, keywords for site (12 requests/minute)",
+                              "Labs: competitors domain, SERP competitors, domain intersection, keyword overview, ranked keywords"],
+                "never": "Metrics DataForSEO does not return stay unavailable; nothing is estimated."}
     if provider in ("tavily", "brave_search", "openstreetmap", "geoapify", "search_suggestions"):
         from app.services import provider_calls
         names = {"search_suggestions": ["suggest_google", "suggest_duckduckgo", "suggest_bing"]}.get(provider, [provider])

@@ -28,7 +28,7 @@ export function pathOf(url: string): string {
 export const PROVIDER_LABEL: Record<string, string> = {
   google: "Google Autocomplete", duckduckgo: "DuckDuckGo", bing: "Bing", keyword_planner: "Keyword Planner", crawler: "Website crawler",
   tavily: "Tavily web search", openstreetmap: "OpenStreetMap", openstreetmap_overpass: "OpenStreetMap", openstreetmap_nominatim: "OpenStreetMap",
-  serpapi: "Google results (SerpApi)", geoapify: "Geoapify", geoapify_places: "Geoapify", geoapify_geocoding: "Geoapify", places: "Google Places", google_ads: "Google Ads", search_suggestions: "Search suggestions",
+  serpapi: "Google results (SerpApi)", dataforseo: "DataForSEO", geoapify: "Geoapify", geoapify_places: "Geoapify", geoapify_geocoding: "Geoapify", places: "Google Places", google_ads: "Google Ads", search_suggestions: "Search suggestions",
 };
 export const providerLabel = (p?: string) => (p ? PROVIDER_LABEL[p] ?? p : "");
 
